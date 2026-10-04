@@ -1,0 +1,242 @@
+# clm-lib: Technical Specification
+
+Version: 1.2 | 4 October 2026
+
+Repository: `clm-lib` | Python package: `clm_lib` | CLI: `clm-lib`
+
+This file defines the implementation requirements and acceptance criteria. User-facing setup and usage live in `README.md`; measured outcomes live in `docs/results.md`; implementation design lives in `docs/architecture.md`.
+
+## 1. Purpose and intended outcome
+
+`clm-lib` is a small, runnable Python experiment that implements Context Language Model (CLM) behaviour on top of an existing hosted model. It demonstrates model-directed changes to live working context, including the ability for the model to write and reuse its own context-management helper code, and compares this against summary-based context management on synthetic tasks.
+
+The project delivers a small reusable library core, with a demo agent and an evaluation harness built on top of it. Becoming a standalone CLM library is an explicit goal; the initial API may remain experimental.
+
+This is an independent implementation of publicly described concepts (see §11). It is not a port of, and does not copy code from, the reference implementation. Substantive departures from this specification must be recorded in the implementation notes rather than silently changing the objective.
+
+## 2. What counts as CLM here
+
+The runtime exposes its current working conversation as an editable file. The model generates code that can inspect and transform that file. After execution, the runtime validates the candidate and uses the accepted contents to construct the next model request. Without an edit, ordinary appending continues.
+
+Required distinction: this file is authoritative for the editable portion of the next input. Updating a notes file while replaying the unchanged old conversation is not sufficient. Neither is a developer-written summariser presented as CLM.
+
+| Component | Responsibility |
+| --- | --- |
+| Model | Decide what to retain, remove, rewrite or reorganise; generate editing code and optional reusable helpers. |
+| Runtime | Expose context; execute code in isolation; validate and apply edits; assemble requests; enforce budgets; record evidence. |
+| Provider adapter | Make stateless model calls and return text, usage and errors. No invisible conversation replay. |
+| Evaluator | Check the task answer against ground truth the agent cannot access. |
+
+System instructions, the original task and enforced limits remain outside the editable region (a protected prefix, consistent with the reference harness). The runtime must allow general transformations of working content, not merely a menu of delete/summarise actions. Structural validation is appropriate; it cannot establish that a retained claim is true.
+
+Creating helpers during a run is distinct from improving a skill across runs or changing model weights. This version implements neither cross-run skill optimisation nor training. A new helper is not required on every run, and helpers must not be described as emerging spontaneously when the prompt requests one.
+
+## 3. Architecture and interfaces
+
+### 3.1 Tooling
+
+Python 3.11+, managed with uv. ruff for linting, pytest for tests, lightweight type checking (mypy). Keep dependencies small.
+
+### 3.2 Layout
+
+Suggested layout, adaptable to existing conventions:
+
+```text
+src/clm_lib/
+  context.py       # working-context schema, revisions, candidate validation
+  runner.py        # agent loop, modes and budgets
+  provider.py      # one real adapter and a scripted test adapter
+  executor.py      # isolated Python execution
+  baseline.py      # summary policy
+  tracing.py       # requests, context revisions, usage and costs
+  tasks.py         # fixture generation and scoring
+  cli.py
+tests/
+configs/
+docs/architecture.md
+docs/results.md
+docs/blog-notes.md
+README.md
+SPEC.md
+pyproject.toml
+.env.example
+.gitignore
+```
+
+Use a small importable runner and explicit provider/executor interfaces. The `clm-lib` CLI calls the same `clm_lib` core. Keep synthetic task/scoring logic separate from context-management operations and include a minimal Python usage example. The library must be usable locally without package publication. No plugin registry, database, web UI, orchestration framework or package publication is needed.
+
+### 3.3 Request format and model actions
+
+The model returns one JSON action per call: either `execute` with Python source, or `final` with a structured answer. The schema is documented and responses are validated. Use provider-supported structured output where available; otherwise permit at most one bounded repair retry. Never parse arbitrary prose as executable code.
+
+Each request is rendered fresh from: protected instructions, the original task, and the editable transcript. The transcript is data within the request, not a mechanism for inventing provider system roles. This avoids broken native tool-call/result pairings when history is edited. The representation is identical across modes, except for the context-edit capability and management instructions. The exact protocol is an engineering choice for this experiment, not a claim to reproduce every reference detail.
+
+### 3.4 Working-context file
+
+Working turns are stored in a documented JSON file with stable IDs and textual bodies. Editing may delete, rewrite, combine and create working entries, including notes. Authoritative revision metadata is kept outside the model-writable file. The model must be able to author its own Python transformations, not only invoke prewritten compaction functions. Mutable notes must never replace the original task or authoritative evaluator records.
+
+### 3.5 One iteration
+
+1. Mirror the accepted working state into the per-run workspace; retain the previous valid version externally.
+2. Build and record the actual outgoing request, its context revision and a content hash. Apply context/call/cost limits.
+3. Call the provider. Record response and usage. A valid final answer ends the task.
+4. For an execution action, run its Python in the task sandbox. The model can read fixtures, write helpers and edit the context file there.
+5. Read the candidate. Reject malformed structure, duplicate IDs, disallowed roles, excessive size or other explicit format violations. On failure retain the previous valid context and record a rejection receipt. Do not execute host-side code while parsing.
+6. Accept a valid revision atomically. Append a bounded execution result/receipt according to a documented ordering rule. Do not reinsert the full pre-edit history. Preserve complete execution history separately in the immutable trace.
+7. Continue with the accepted state. Identify whether an edit actually changed content, rather than counting every file write as useful editing.
+
+The specification and tests must state exactly whether the latest command/result is preserved after an edit, and the next-request trace must make this auditable. Append only a small receipt where necessary; a deleted large observation must not reappear inside that receipt.
+
+### 3.6 Execution isolation
+
+Model-generated code must not run unrestricted on the host that holds API credentials and personal files. The preferred executor is a Docker sandbox with: no network, a non-root user, dropped capabilities, memory/CPU/process/time limits, a read-only fixture mount, and a dedicated writable workspace containing the editable file and helpers. Credentials, the provider client, evaluator answers, immutable traces and the user's home directory stay outside it. The Docker socket is never mounted inside the sandbox. Reuse an appropriate standard image; avoid unnecessary infrastructure.
+
+Host-side edit application is separate from container execution. Validate candidate size and file type; reject symlinks and paths escaping the expected workspace. Use per-run containers/workspaces and bounded output capture. Both comparison arms get equivalent fixture access and output caps.
+
+If Docker is unavailable, an already-available, genuinely isolated executor may be used if suitable. A Python subprocess with a timeout is not equivalent isolation. The runtime must never silently fall back to unrestricted execution of generated code; if no isolated executor exists, live and sandboxed runs are blocked with an explanation.
+
+## 4. Model access, cost and limits
+
+### 4.1 Provider
+
+Implement one provider first, preferably Anthropic; an OpenAI-compatible endpoint is an acceptable alternative. Only add a second provider if it resolves an actual access problem. Provider, model and endpoint are configurable. Model identifiers must be verified against provider documentation or APIs, not assumed.
+
+Credentials are resolved only through the provider SDK's supported configuration mechanisms. The library never prints, logs or copies credential values, never logs authenticated headers, and never reads credential stores or other projects directly. Diagnostics may report only whether a credential source is available. If indispensable connection information is missing, offline functionality must still work and the tool must name the smallest missing setting.
+
+### 4.2 Cost control
+
+Default live-validation ceiling: USD 10 total, covering smoke calls, all modes, summaries, malformed-output retries and interrupted runs. The spend ledger persists across invocations. A lower user-specified budget takes precedence; the ceiling is never increased automatically.
+
+Before calls, resolve dated model prices from official sources or explicit configuration, and conservatively estimate the maximum next-request cost from input and output limits. Reserve that amount before dispatch. Account for cache pricing and provider usage semantics. Stop before dispatch if the remaining budget is insufficient. If cost cannot be bounded (for example an unknown model price), live mode stays blocked with an actionable explanation. Show incurred cost and estimated/reserved cost separately; do not promise an exact billing cap where provider reporting prevents one.
+
+### 4.3 Run limits
+
+Defaults: sequential requests; at most 20 model calls per task (compaction, summary and formatting retries included); 2,048 output tokens per call; 30 seconds per code execution; finite API timeouts and retries. Limits are configurable, recorded in every run, and shared across comparison arms. Honour the model's actual context capacity, reserving output headroom.
+
+## 5. Run modes
+
+### A. Summary baseline
+
+Same task-solving model, execution tool, fixtures, answer format, context budget and limits as CLM. The baseline can write ordinary helper files but has no authoritative context-edit file. At a declared token threshold, the model is asked to summarise older history while preserving task-relevant exact details, unresolved questions and failed approaches. A declared small recent tail is retained and the protected prefix is unchanged. The summary replaces the summarised section rather than being appended.
+
+Summary calls and their cost are counted. Threshold and tail configuration are recorded. The summary prompt must not be deliberately weak or detail-destroying. If the summary remains too large, apply a bounded retry, then return an explicit overflow result; never silently truncate critical information.
+
+### B. CLM evaluation
+
+The context file is exposed and the model is told it can edit it and author helpers as useful. Budget occupancy information and threshold reminders are provided. The runtime does not provide a bespoke prewritten editing algorithm, disclose fixture ground truth, force a helper, or require an edit every step.
+
+The same warning/pressure thresholds as the baseline apply: the baseline triggers its prescribed summary; CLM receives a request to manage its context. CLM may edit earlier if the model chooses. Enough room is reserved to request an edit before exceeding the limit. If recovery fails within the shared limits, the run is recorded as failed or exhausted.
+
+### C. Guided helper demonstration
+
+The agent is explicitly prompted to create a reusable context-management helper, invoke it at least twice, and revise it if useful. Code, executions, revisions and resulting requests are recorded. A model-created helper run twice is the target; a meaningful code revision is a stretch outcome, never faked or manufactured after the run.
+
+This mode is labelled a prompted capability demonstration and is excluded from the baseline-vs-CLM effectiveness comparison. No helper appearing in mode B is a legitimate result. Mode C must not be presented as spontaneous behaviour or as evidence of lower cost.
+
+## 6. Synthetic task and fixtures
+
+A fictional service-incident investigation requiring inspection of multiple local log/configuration files. Fixtures are generated deterministically, with one development instance and three held-out instances of the same task family. Held-out instances differ in concrete entities, values and evidence arrangements, not just answer wording. Evaluation seeds and prompt versions are frozen before comparative runs; documentation must state that all instances share one synthetic generator.
+
+Each task has:
+
+- a root cause supported by traceable evidence;
+- one exact configuration value or identifier required for the answer;
+- a superseded observation that must not override a clearly authoritative later update;
+- plausible but irrelevant observations and repeated log content;
+- a concrete remedy that follows from the evidence.
+
+The answer is structured with `root_cause`, `required_value`, `remedy` and `evidence_refs`. A deterministic scorer checks supported cause/remedy categories, the exact value and valid supporting source references, reporting component scores and strict all-components success. Another paid model is not used as the primary judge. Ground-truth answers stay outside the sandbox and agent-visible prompts.
+
+The working-context budget is moderate and configurable, initially around 8K input tokens, to exercise management in short runs. Total fixture material exceeds that budget, but no individual required observation exceeds the executor output cap. Relevant evidence stays reachable and files are line-addressable. The agent may search efficiently rather than read everything; tasks must not force wasteful behaviour just to cause overflow.
+
+If development runs do not create context pressure, fixture volume or budget may be adjusted once before freezing the evaluation, and the change recorded. If evaluated agents avoid pressure by reading efficiently, that is reported; tasks must not be made progressively harder until CLM wins. This is a controlled stress test, not an estimate of normal production savings.
+
+## 7. Evidence and reporting
+
+Generated runs are stored under a gitignored directory, separating editable context, the immutable chronological event history, and evaluator results. Each run records configuration and model identity, fixture seed/hash, prompt version, limits, mode, start/end times, status and stopping reason.
+
+Required measurements:
+
+- task correctness and component scores;
+- total provider calls, executions, summaries, edit attempts, accepted/rejected edits and retries;
+- cached and uncached input, cache-write tokens where applicable, output tokens, and any separately billed reasoning usage;
+- provider-reported versus locally estimated usage, clearly labelled and without double counting;
+- total dollar cost using documented prices, or an explicit unavailable status;
+- elapsed time, peak working-context size, and context revisions;
+- any human intervention after a run starts.
+
+Exact requests are preserved (excluding secrets and request headers) so it is provable what the model saw. Context diffs and generated scripts are saved. Executable code returned by the model is recorded before it runs, and helper file contents before/after executions are recorded so authorship and reuse are reviewable. Evaluator truth stays out of model-visible snapshots until final scoring.
+
+Minimum context size, edit count and generated-code volume are not success objectives. Lower cost with worse task quality is a tradeoff, not an unqualified improvement. Failed and exhausted runs are included in outcome reports and cost totals. Infrastructure-invalid runs are labelled separately with their spent cost preserved, never silently replaced. No statistical-significance claims are made from this small pilot.
+
+## 8. Verification and evaluation protocol
+
+### 8.1 Offline tests
+
+Focused offline tests use a scripted provider, which must be unable to silently substitute for the real adapter in live mode:
+
+1. Remove a unique marker through the actual executor/read-back path; assert it is absent from the very next assembled request while the original event log retains it.
+2. Rewrite a value, retain an exact required fact and reorganise entries; assert the resulting outgoing payload matches the accepted version.
+3. Attempt malformed/oversized/duplicate-ID edits; assert the previous valid state survives and a bounded receipt is provided.
+4. Verify protected original task/system text cannot be replaced by edits, including text pretending to be a system message.
+5. Verify model-generated code cannot see a dummy secret environment variable or the evaluator answer path. These check the configured boundary; they are not a proof of sandbox security.
+6. Exercise summary replacement, context overflow recovery and stop conditions.
+7. Verify all call types, rejected edits and retries are included in accounting, and that no call starts after exhaustion of the remaining reserved budget.
+8. Verify scoring distinguishes correct, unsupported and stale-constraint answers; verify fresh runs cannot inherit helpers or context from earlier runs.
+
+Lint and type checks run alongside these tests.
+
+### 8.2 Live validation sequence
+
+With valid access and isolation:
+
+- one minimal real provider smoke call;
+- one bounded guided helper demonstration on the development instance, plus basic troubleshooting;
+- freeze prompts/configuration, then attempt three held-out tasks × two modes (summary and CLM) × two repetitions = 12 comparative runs, sequentially, alternating mode order across pairs;
+- stop at the budget ceiling if the full matrix cannot fit, and report completed cells, missing cells and paired results without treating incomplete cells as failures or evidence of a win.
+
+Both arms use the same model version and sampling settings; seeds are used only if supported and identical randomness is not claimed. Held-out failures must not be repeatedly tuned against and still called held-out results. If tuning after evaluation is essential, that set is relabelled development and the earlier outcomes are preserved.
+
+## 9. Deliverables and acceptance
+
+A documented CLI covering: an environment doctor with no secret output; offline tests/demo; one live run; the guided helper demo; a bounded comparison; and report generation. README shows the exact commands that work. No web UI.
+
+Required files:
+
+- installable/importable Python package and CLI;
+- configuration examples and `.env.example` containing names/placeholders only;
+- synthetic fixture generator, task definitions and scorer;
+- focused tests and a reproducible dependency setup;
+- README with quickstart, model/access setup, sandbox prerequisites, run commands, budgets, architecture and limitations;
+- `docs/results.md` with actual completed outcomes, cost provenance, run IDs and any blockers;
+- `docs/blog-notes.md` with an accurate project description, candidate trace excerpts and limitations, not a fabricated success story;
+- an implementation note listing important design choices and departures from the reference and this spec.
+
+Completion levels:
+
+| Level | Evidence |
+| --- | --- |
+| Mechanism implemented | Offline tests prove actual next-request replacement, protected prefix and recovery. |
+| Live mechanism verified | A real model-generated edit changes a subsequent real request and the task continues. |
+| Helper demonstration | A real model authors and reuses a helper, with prompting disclosed. Reported if not observed. |
+| Pilot evaluated | Comparative runs are scored and all costs/statuses reported, including missing cells. |
+| Benefit observed | Results support a specific quality/cost claim on this small task set. Not required for completion. |
+
+The live and helper levels are never reported complete based on scripted model doubles. If the model does not edit or produce helpers within the allotted attempts, the functioning capability is delivered with that finding. If credentials, executor setup or budget block live work, the offline implementation is still complete and the exact remaining action and command are documented.
+
+No claim of a general-purpose library or benchmark reproduction beyond what exists.
+
+## 10. Scope exclusions
+
+No RLM, multi-agent system or delegation infrastructure, persistent-memory platform, cross-task helper selection, RL/fine-tuning, Suffix Cache Reuse, model-server changes, production deployment, broad framework integration or automatic publication of packages or articles. No copying of the official implementation or any other repository's code. The described concepts are implemented independently with ordinarily licensed dependencies, and the research is credited.
+
+## 11. Public references and source discipline
+
+Use the paper for research claims and current official implementation documentation for runtime details. Blog posts are commentary, not independent replication. The reference revision consulted is pinned in the implementation notes. The official research repository is licensed CC BY-NC 4.0; its source must not be copied into this differently licensed library. This project is original code, not a port.
+
+- Paper: https://arxiv.org/html/2609.37725v1
+- Official repository: https://github.com/facebookresearch/context-language-models
+- Reviewed harness documentation: https://github.com/facebookresearch/context-language-models/blob/18dc11115f50f261233c5bba7937834491e307e8/clm/clm_harness/README.md
+- Separate skill-evolution workflow (background reading only): https://github.com/facebookresearch/context-language-models/blob/18dc11115f50f261233c5bba7937834491e307e8/clm/clm_icl/README.md
+
+This is an engineering experiment inspired by CLM. Its action protocol, synthetic tasks and runtime are not an exact reproduction of the authors' benchmark setup, and nothing here implies the paper guarantees savings with a particular model or workload.

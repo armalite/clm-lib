@@ -1,0 +1,41 @@
+[project]
+name = "clm-lib"
+version = "0.1.0"
+description = "Experimental library for agents that edit their own working context and write their own context-management code, inspired by Context Language Models."
+readme = "README.md"
+license = "Apache-2.0"
+authors = [{ name = "armalite" }]
+requires-python = ">=3.11"
+dependencies = ["anthropic>=0.60"]
+
+[project.scripts]
+clm-lib = "clm_lib.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.6", "mypy>=1.10"]
+
+[build-system]
+requires = ["uv_build>=0.12.7,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+ignore = ["RUF001", "E501"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = false
+warn_unused_ignores = true
+warn_redundant_casts = true
+disallow_untyped_defs = true
+check_untyped_defs = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+markers = ["docker: requires a running Docker daemon and the sandbox image"]

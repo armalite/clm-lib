@@ -1,0 +1,25 @@
+# USD per million tokens. Source: Anthropic pricing page, retrieved 2026-10-04.
+# Thinking tokens are billed as output tokens. Standard (global) routing; no batch/fast mode.
+source = "https://platform.claude.com/docs/en/about-claude/pricing"
+retrieved = "2026-10-04"
+
+[models.claude-opus-5-5]
+input = 4.00
+cache_write_5m = 5.00
+cache_write_1h = 8.00
+cache_read = 0.20
+output = 20.00
+
+[models.claude-sonnet-5-5]
+input = 2.00
+cache_write_5m = 2.50
+cache_write_1h = 4.00
+cache_read = 0.20
+output = 10.00
+
+[models.claude-haiku-4-5]
+input = 1.00
+cache_write_5m = 1.25
+cache_write_1h = 2.00
+cache_read = 0.10
+output = 5.00
