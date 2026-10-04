@@ -177,9 +177,15 @@ def rescore(run_dir: Path) -> dict[str, Any] | None:
 
     answer = next((e["answer"] for e in _events(run_dir) if e.get("event") == "final_answer"), None)
     truth_path = run_dir / "evaluator" / "truth.json"
-    if answer is None or not truth_path.exists():
+    if not truth_path.exists():
         return None
     t = _load(truth_path)
+    if t.get("kind") == "coding":
+        # Coding checks are deterministic data; the recorded score is the current score.
+        score: dict[str, Any] = _load(run_dir / "evaluator" / "score.json")
+        return score
+    if answer is None:
+        return None
     truth = Truth(
         cause=t["cause"],
         remedies=t["remedies"],
@@ -251,7 +257,7 @@ def build_report(
         "Outcome columns: recorded at run time (score/1) and re-scored from the same answer with "
         "the current scorer (score/2, post-hoc `setting=value` correction).",
         "",
-        "| run | label | mode | task | status | outcome score/1 | outcome score/2 | strict score/2 | cause/remedy/value/evidence | calls (act/rep/sum/retry) | exec | edits ok/unch/rej | summaries | pressure steps | in/out tokens | peak req tok (rep) | bound held | cost $ | elapsed s |",
+        "| run | label | mode | task | status | outcome (recorded) | outcome (current scorer) | strict (current) | components: cause/remedy/value/evidence, or coding checks by category | calls (act/rep/sum/retry) | exec | edits ok/unch/rej | summaries | pressure steps | in/out tokens | peak req tok (rep) | bound held | cost $ | elapsed s |",
         "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     rescored: dict[str, dict[str, Any] | None] = {}
@@ -259,20 +265,33 @@ def build_report(
         c, sc = m["counts"], m["score"]
         rs = rescore(run_dir)
         rescored[m["run_id"]] = rs
-        comp = rs and {
-            "cause": float(rs["cause_ok"]),
-            "remedy": float(rs["remedy_ok"]),
-            "value": float(rs["value_status"] == "exact"),
-            "evidence": sum(rs["groups_covered"].values()) / max(1, len(rs["groups_covered"])),
-        }
-        comp = comp or sc["components"]
+        if rs and "by_category" in rs:  # coding task: evaluator checks by requirement category
+            comp_str = f"{rs['passed']}/{rs['checks']} checks; " + "; ".join(
+                f"{k} {v['passed']}/{v['total']}" + (f" (stale {v['stale']})" if v["stale"] else "")
+                for k, v in sorted(rs["by_category"].items())
+            )
+        else:
+            comp = (
+                {
+                    "cause": float(rs["cause_ok"]),
+                    "remedy": float(rs["remedy_ok"]),
+                    "value": float(rs["value_status"] == "exact"),
+                    "evidence": sum(rs["groups_covered"].values())
+                    / max(1, len(rs["groups_covered"])),
+                }
+                if rs
+                else sc["components"]
+            )
+            comp_str = (
+                f"{comp.get('cause', 0):.0f}/{comp.get('remedy', 0):.0f}/"
+                f"{comp.get('value', 0):.0f}/{comp.get('evidence', 0):.2f}"
+            )
         u = m["usage_provider_reported"]
         n, held = bound_checks(run_dir)
         lines.append(
             f"| {m['run_id']} | {m.get('label', '')} | {m['mode']} | {m['task']} | {m['status']} | "
             f"{sc['outcome']} | {rs['outcome'] if rs else 'no answer'} | "
-            f"{rs['strict_success'] if rs else False} | {comp['cause']:.0f}/{comp['remedy']:.0f}/"
-            f"{comp['value']:.0f}/{comp['evidence']:.2f} | {c['provider_calls']} ({c['action_calls']}/"
+            f"{rs['strict_success'] if rs else False} | {comp_str} | {c['provider_calls']} ({c['action_calls']}/"
             f"{c['repair_calls']}/{c['summary_calls']}/{c['api_retries']}) | {c['executions']} | "
             f"{c['edits_accepted_changed']}/{c['edits_unchanged_write']}/{c['edits_rejected']} | "
             f"{c['summaries_applied']} | {c['pressure_steps']} | {u['input_tokens_uncached']}/"

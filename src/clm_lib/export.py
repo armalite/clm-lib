@@ -192,10 +192,31 @@ def _metrics_row(run_id: str, role: str, src: Path, charged: float) -> dict[str,
         outcome_current=rs["outcome"] if rs else "no_answer",
         strict_current=bool(rs and rs["strict_success"]),
         scorer_current=SCORER_VERSION,
-        cause_ok=bool(rs and rs["cause_ok"]),
-        remedy_ok=bool(rs and rs["remedy_ok"]),
-        value_status=rs["value_status"] if rs else "missing",
-        evidence_groups=json.dumps(rs["groups_covered"] if rs else {}),
+    )
+    if rs and "by_category" in rs:  # coding task
+        row["scorer_current"] = rs.get("scorer_version", row["scorer_current"])
+        row.update(
+            completed=rs["completed"],
+            checks_total=rs["checks"],
+            checks_passed=rs["passed"],
+            stale_checks=rs["stale"],
+            import_error=rs["import_error"],
+            evaluation_error=rs.get("evaluation_error"),
+        )
+        for cat, v in sorted(rs["by_category"].items()):
+            row[f"{cat}_passed"], row[f"{cat}_total"], row[f"{cat}_stale"] = (
+                v["passed"],
+                v["total"],
+                v["stale"],
+            )
+    else:
+        row.update(
+            cause_ok=bool(rs and rs["cause_ok"]),
+            remedy_ok=bool(rs and rs["remedy_ok"]),
+            value_status=rs["value_status"] if rs else "missing",
+            evidence_groups=json.dumps(rs["groups_covered"] if rs else {}),
+        )
+    row.update(
         provider_calls=c["provider_calls"],
         action_calls=c["action_calls"],
         repair_calls=c["repair_calls"],

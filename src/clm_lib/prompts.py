@@ -11,7 +11,7 @@ from .context import Entry
 
 PROMPT_VERSION = "2026-10-04.1"
 
-PROTOCOL = """You are an investigation agent working through a strict JSON protocol.
+PROTOCOL = """You are {agent_role} working through a strict JSON protocol.
 
 Each request contains three sections:
 - <task>: the fixed task. It is never edited and always present.
@@ -21,8 +21,7 @@ Each request contains three sections:
 
 Reply with exactly one JSON object and nothing else:
   {{"action": "execute", "thought": "<optional, one or two sentences>", "code": "<python source>"}}
-  {{"action": "final", "answer": {{"root_cause": "...", "required_value": "...", "remedy": "...",
-                                 "evidence_refs": ["path:line", ...]}}}}
+{final_example}
 
 "execute" runs your code as a new Python 3.12 process (standard library only) in a sandbox with
 no network and a {exec_timeout}s time limit. The working directory /task/workspace is writable and
@@ -31,6 +30,17 @@ come back, truncated to {output_cap} characters per stream, as an observation en
 what you need: search and filter (with line numbers) instead of printing whole files.
 "final" ends the task; you get one final answer.
 """
+
+# Task-kind specific protocol fragments. The "incident" values reproduce the original text
+# byte for byte, so incident-task prompts (experiments 001-003) are unchanged.
+AGENT_ROLE = {"incident": "an investigation agent", "coding": "a software engineering agent"}
+FINAL_EXAMPLE = {
+    "incident": (
+        '  {"action": "final", "answer": {"root_cause": "...", "required_value": "...", "remedy": "...",\n'
+        '                                 "evidence_refs": ["path:line", ...]}}'
+    ),
+    "coding": '  {"action": "final", "answer": {"summary": "<what you implemented and changed>"}}',
+}
 
 CLM_INSTRUCTIONS = """
 CONTEXT EDITING (you control your working context):
@@ -100,6 +110,21 @@ Drop repetition and raw log dumps. Use compact bullet points. Plain text only. S
 requested length; it is set so the agent has room to continue."""
 
 
+SUMMARY_SYSTEM_TOKEN_TAIL_CODING = """You compress an agent's working transcript. The agent is
+implementing a Python package whose requirements arrive in stages, and will keep working after your
+summary replaces the entries below. The transcript may include an earlier summary: carry its facts
+forward. Preserve, exactly where relevant:
+- every requirement currently in force, with the stage that introduced or last changed it;
+- every superseded rule, what replaced it, and in which stage;
+- exact numbers, thresholds, rates, formats, function names and signatures;
+- which files and functions exist and what they implement;
+- the latest test results (which tests fail and why) and remaining work, including stages still
+  to be released.
+Drop repetition, full code listings and raw test dumps (the code is in the workspace files). Use
+compact bullet points. Plain text only. Stay within the requested length; it is set so the agent has
+room to continue."""
+
+
 def system_prompt(
     mode: str,
     *,
@@ -111,8 +136,14 @@ def system_prompt(
     max_body: int,
     summary_policy: str = "fixed-tail/1",
     tail_tokens: int = 0,
+    task_kind: str = "incident",
 ) -> str:
-    text = PROTOCOL.format(exec_timeout=exec_timeout, output_cap=output_cap)
+    text = PROTOCOL.format(
+        exec_timeout=exec_timeout,
+        output_cap=output_cap,
+        agent_role=AGENT_ROLE[task_kind],
+        final_example=FINAL_EXAMPLE[task_kind],
+    )
     if mode in ("clm", "guided"):
         text += CLM_INSTRUCTIONS.format(max_entries=max_entries, max_body=max_body)
     else:

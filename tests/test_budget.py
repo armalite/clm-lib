@@ -189,3 +189,25 @@ def test_compare_halts_on_accounting_bound_violation(cfg: Any, tmp_path: Path) -
     assert all("accounting assumption failed" in c["reason"] for c in cells[1:])
     rec = json.loads(out.read_text())
     assert rec["halted"] and rec["frozen"]["prompt_version"] and "code_state" in rec["frozen"]
+    assert rec["frozen"]["scorer_version"] == ["score/2"]
+    assert rec["frozen"]["generator_version"] == ["incident-gen/1"]  # heldout-* tasks
+
+
+def test_explicit_ceiling_change_is_recorded_and_preserves_spend(tmp_path: Path) -> None:
+    path = tmp_path / "l.json"
+    led = Ledger.open(path, 10.0)
+    led.settle(led.reserve(0.5, "r1", "action"), actual_usd=0.25, status="ok")
+    with pytest.raises(ValueError, match="reason"):
+        Ledger.set_ceiling(path, 40.0, "")
+    change = Ledger.set_ceiling(path, 40.25, "user authorised +$30 for experiment 004")
+    assert change["from_usd"] == 10.0 and change["to_usd"] == 40.25
+    assert change["spent_at_change_usd"] == pytest.approx(0.25)
+    reopened = Ledger.open(path, 40.25)
+    assert reopened.ceiling_usd == 40.25 and reopened.spent_usd == pytest.approx(0.25)
+    assert len(reopened.entries) == 1 and len(reopened.ceiling_history) == 1
+    # A lower configured ceiling still wins when opening (never raised implicitly).
+    assert Ledger.open(path, 10.0).ceiling_usd == 10.0
+    held = Ledger.open(path, 40.25)
+    held.reserve(0.1, "r2", "action")
+    with pytest.raises(LedgerBusy):
+        Ledger.set_ceiling(path, 50.0, "should be refused while pending")

@@ -9,12 +9,13 @@
 | 001: short incident pilot | Tasks finished in 3–4 calls before either context-management method activated (0 edits, 0 summaries). A separate prompted run demonstrated real context replacement and helper use. | [001](https://github.com/armalite/clm-lib-test-results/tree/main/experiments/001-short-incident-pilot) |
 | 002: staged incident under context pressure | Both methods active in every run. CLM 6/6 strict successes vs the baseline's 4/6, about 38% lower mean cost, mostly from avoiding summary calls. This is a small synthetic pilot against one baseline. | [002](https://github.com/armalite/clm-lib-test-results/tree/main/experiments/002-staged-incident-context-pressure) |
 | 003: robust summary comparison | Against `token-tail/1`, a baseline that handles large recent entries and leaves room, both approaches got 6/6 strict successes. CLM was still about 25% cheaper and 28% faster, matching the baseline's spending on summary calls. | [003](https://github.com/armalite/clm-lib-test-results/tree/main/experiments/003-robust-summary-comparison) |
+| 004: coding with changing requirements | On an invoice-package task with requirements added and replaced over four stages, both approaches got 12/12 strict successes with no regressions or stale rules. CLM was about 25% cheaper, matching the baseline's spending on summary calls. | [004](https://github.com/armalite/clm-lib-test-results/tree/main/experiments/004-coding-changing-requirements) |
 
 The previous, longer version of this file is archived verbatim in the results repository as [`notes/clm-lib-results-log-2026-10-04.md`](https://github.com/armalite/clm-lib-test-results/blob/main/notes/clm-lib-results-log-2026-10-04.md). The draft blog notes moved there too, to [`notes/blog-notes.md`](https://github.com/armalite/clm-lib-test-results/blob/main/notes/blog-notes.md).
 
 ## Spend
 
-The active ledger is `runs/ledger.json` in this repository (gitignored). Totals so far: **USD 8.917** of the USD 10 ceiling (experiments 001–002 USD 5.251; experiment 003 USD 3.666), all from provider-reported usage, with no unresolved assumed charges. **USD 1.083 remains**, which is not enough for another 12-run comparison at current per-run costs. The ledger was never reset or raised. Historical snapshots are exported to the results repository's `ledger-snapshots/`.
+The active ledger is `runs/ledger.json` in this repository (gitignored). Totals so far: **USD 16.214** (experiments 001–003 USD 8.917; experiment 004 USD 7.297), all from provider-reported usage, with no unresolved assumed charges. The ceiling was raised once, explicitly, for experiment 004: from USD 10 to USD 38.917 (recorded in the ledger's `ceiling_history`). It was never reset. Live commands for experiment 004 use `configs/exp004.toml`; a config with a lower ceiling lowers it again. Historical snapshots are exported to the results repository's `ledger-snapshots/`.
 
 ## Live accounting checks
 
@@ -85,6 +86,10 @@ Phases 2–4 (smoke, guided dev run, frozen comparison) were **not run**. `ANTHR
 Verification: `ruff check`, `ruff format --check` and `mypy src` are clean; **56 passed**. `doctor --sandbox` is unchanged.
 
 Live phases: **still not run**. `ANTHROPIC_API_KEY` is still unset in the agent process (`doctor`). Live spend $0.00; cumulative $0.00 of $10.00.
+
+## Coding task family and evaluator (2026-10-05)
+
+`coding.py` adds an invoice-package task with staged, superseding requirements and a sandboxed evaluator (SPEC §15). Tests: `tests/test_coding.py`. They cover stage visibility, evaluator isolation, read-only visible tests, and scoring of correct, regressed, stale-rule and unsubmitted solutions. Incident prompts are verified byte-identical.
 
 ## Summary-baseline policies (2026-10-04)
 

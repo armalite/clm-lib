@@ -46,6 +46,21 @@ STAGED_ACTION_SCHEMA: dict[str, Any] = {
 }
 
 
+# Coding tasks: staged actions with a final answer that only summarises the submitted work.
+CODING_ACTION_SCHEMA: dict[str, Any] = {
+    **STAGED_ACTION_SCHEMA,
+    "properties": {
+        **STAGED_ACTION_SCHEMA["properties"],
+        "answer": {
+            "type": "object",
+            "properties": {"summary": {"type": "string"}},
+            "required": ["summary"],
+            "additionalProperties": False,
+        },
+    },
+}
+
+
 @dataclass
 class ModelRequest:
     system: str

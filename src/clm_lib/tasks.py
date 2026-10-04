@@ -73,6 +73,14 @@ INSTANCES: dict[str, InstanceSpec] = {
     "staged-eval-4": InstanceSpec("staged-eval-4", 3204, "staged_pool", "staged-eval"),
     "staged-eval-5": InstanceSpec("staged-eval-5", 3205, "staged_pool", "staged-eval"),
     "staged-eval-6": InstanceSpec("staged-eval-6", 3206, "staged_pool", "staged-eval"),
+    # Experiment 004: coding task with changing requirements (coding.py). Each instance has a
+    # different schedule of added and replaced rules; dev instances are for calibration only.
+    "coding-dev-1": InstanceSpec("coding-dev-1", 4101, "coding_invoice", "coding-dev"),
+    "coding-dev-2": InstanceSpec("coding-dev-2", 4102, "coding_invoice", "coding-dev"),
+    "coding-eval-1": InstanceSpec("coding-eval-1", 4201, "coding_invoice", "coding-eval"),
+    "coding-eval-2": InstanceSpec("coding-eval-2", 4202, "coding_invoice", "coding-eval"),
+    "coding-eval-3": InstanceSpec("coding-eval-3", 4203, "coding_invoice", "coding-eval"),
+    "coding-eval-4": InstanceSpec("coding-eval-4", 4204, "coding_invoice", "coding-eval"),
 }
 HELDOUT = ("heldout-1", "heldout-2", "heldout-3")
 STAGED_EVAL = ("staged-eval-1", "staged-eval-2", "staged-eval-3")
@@ -107,12 +115,15 @@ class TaskInstance:
     spec: InstanceSpec
     prompt: str
     files: dict[str, str]
-    truth: Truth = field(repr=False)
+    truth: Any = field(repr=False)  # Truth (incident tasks) or coding.CodingTruth
     # Staged tasks: stages[k] holds the files released at stage k+1 (union == files) and
     # stage_updates[k] the update message shown when that stage is released.
     stages: list[dict[str, str]] = field(default_factory=list)
     stage_updates: list[str] = field(default_factory=list)
     generator_version: str = GENERATOR_VERSION
+    kind: str = "incident"  # "incident" | "coding"
+    # Files copied into the agent workspace at the start (coding tasks: the project skeleton).
+    workspace_seed: dict[str, str] = field(default_factory=dict)
 
     @property
     def staged(self) -> bool:
@@ -853,6 +864,10 @@ def generate(name: str) -> TaskInstance:
         from .staged import generate_staged
 
         return generate_staged(spec)
+    if spec.scenario == "coding_invoice":
+        from .coding import generate_coding
+
+        return generate_coding(spec)
     files, truth = _GENERATORS[spec.scenario](spec)
     return TaskInstance(spec=spec, prompt=task_prompt(files), files=files, truth=truth)
 

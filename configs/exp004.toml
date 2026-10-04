@@ -1,0 +1,49 @@
+# Experiment 004 configuration (coding task): experiment 003's settings (token-tail/1 baseline,
+# 8K whole-request budget, same model/effort) except max_calls 30 and max_output_tokens 4096,
+# needed for a four-stage coding task, and the authorised ledger ceiling. Prompt caching is not
+# used (no cache_control is sent).
+# All limits are recorded in every run and shared by both arms.
+runs_dir = "runs"
+
+[provider]
+name = "anthropic"
+model = "claude-opus-5-5"     # verified via the models endpoint by `clm-lib doctor --probe`
+base_url = ""                 # empty: SDK default (or ANTHROPIC_BASE_URL)
+effort = "low"                # output_config.effort; thinking cannot be disabled on this model
+structured_output = true      # output_config.format json_schema for actions
+timeout_s = 120
+api_retries = 2               # runtime-level retries; SDK retries are disabled
+
+[limits]
+max_calls = 30                # per task: actions + repairs + summaries + API retries
+max_output_tokens = 4096
+exec_timeout_s = 30
+output_cap_chars = 6000       # per stream
+context_budget_tokens = 8000  # whole request input
+pressure_ratio = 0.70
+recovery_reserve_tokens = 1000
+spill_min_chars = 1500
+initial_chars_per_token = 3.0
+max_code_chars = 20000
+
+[baseline]
+policy = "token-tail/1"     # experiment 003; experiments 001/002 used "fixed-tail/1"
+tail_entries = 4
+summary_max_chars = 3000
+summary_retries = 1
+tail_ratio = 0.15            # token-tail/1: verbatim recent-entry allowance (fraction of budget)
+newest_ratio = 0.25          # token-tail/1: newest entry kept verbatim if it fits this fraction
+target_ratio = 0.50          # token-tail/1: desired request size after compaction
+summary_min_chars = 600
+
+[budget]
+ceiling_usd = 38.916744            # total live-validation ceiling; ledger keeps the lowest ever set
+min_run_reserve_usd = 0.75    # compare: do not start a run with less remaining
+ledger = "runs/ledger.json"
+prices = "configs/prices.toml"
+
+[sandbox]
+image = "python:3.12-slim"
+memory = "512m"
+cpus = 1.0
+pids_limit = 128

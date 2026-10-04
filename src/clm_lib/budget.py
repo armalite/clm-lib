@@ -121,6 +121,8 @@ class Ledger:
     _open: dict[str, Reservation] = field(default_factory=dict)
     limit_usd: float | None = None  # optional lower cap for this process
     start_spent_usd: float = 0.0
+    # Explicit, user-authorised ceiling changes (never automatic); see set_ceiling.
+    ceiling_history: list[dict[str, Any]] = field(default_factory=list)
 
     @classmethod
     def open(cls, path: Path, ceiling_usd: float, limit_usd: float | None = None) -> Ledger:
@@ -134,6 +136,7 @@ class Ledger:
             data = json.loads(path.read_text(encoding="utf-8"))
             ceiling = min(float(data["ceiling_usd"]), ceiling_usd)
             led = cls(path, ceiling, data.get("entries", []))
+            led.ceiling_history = data.get("ceiling_history", [])
             pending = data.get("pending", [])
             live = [p for p in pending if _pid_alive(int(p.get("pid", -1)))]
             if live:
@@ -237,6 +240,7 @@ class Ledger:
             "ceiling_usd": self.ceiling_usd,
             "note": "Charged = provider-usage cost, or the full reservation when the outcome is unknown.",
             "reservation_bound": BOUND_BASIS,
+            "ceiling_history": self.ceiling_history,
             "entries": self.entries,
             "pending": [
                 {
@@ -252,6 +256,32 @@ class Ledger:
         }
         tmp.write_text(json.dumps(doc, indent=1), encoding="utf-8")
         os.replace(tmp, self.path)
+
+    @classmethod
+    def set_ceiling(cls, path: Path, new_ceiling: float, reason: str) -> dict[str, Any]:
+        """Explicitly change the stored ceiling (for a user-authorised budget change).
+
+        Spend records are untouched. The change is appended to ``ceiling_history``. Note that
+        opening the ledger with a lower configured ceiling still lowers the effective ceiling.
+        """
+        if not reason.strip():
+            raise ValueError("a reason is required to change the ledger ceiling")
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if data.get("pending"):
+            raise LedgerBusy("cannot change the ceiling while reservations are pending")
+        led = cls(path, float(data["ceiling_usd"]), data.get("entries", []))
+        led.ceiling_history = data.get("ceiling_history", [])
+        change = {
+            "ts": datetime.now(UTC).isoformat(timespec="seconds"),
+            "from_usd": led.ceiling_usd,
+            "to_usd": round(new_ceiling, 6),
+            "spent_at_change_usd": round(led.spent_usd, 6),
+            "reason": reason,
+        }
+        led.ceiling_history.append(change)
+        led.ceiling_usd = round(new_ceiling, 6)
+        led._save()
+        return change
 
     def summary(self) -> dict[str, Any]:
         by_kind: dict[str, float] = {}

@@ -91,10 +91,13 @@ class SummaryPolicy:
         attempt: int,
         max_tokens: int,
         limit_chars: int | None = None,
+        system: str | None = None,
     ) -> ModelRequest:
+        """``system`` overrides the policy's summariser instructions (e.g. for coding tasks)."""
         limit = limit_chars if limit_chars is not None else self.char_limit(attempt)
+        default = SUMMARY_SYSTEM if self.policy == FIXED_TAIL else SUMMARY_SYSTEM_TOKEN_TAIL
         return ModelRequest(
-            system=SUMMARY_SYSTEM if self.policy == FIXED_TAIL else SUMMARY_SYSTEM_TOKEN_TAIL,
+            system=system or default,
             user=summary_user(task, older, limit),
             max_tokens=max_tokens,
             purpose="summary",

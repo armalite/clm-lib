@@ -1,0 +1,160 @@
+{
+ "id": "004-coding-changing-requirements",
+ "title": "Does model-controlled context editing help an agent implement changing requirements while preserving existing functionality?",
+ "provenance": {
+  "source_repo": "https://github.com/armalite/clm-lib",
+  "comparison_commit": "9e843c2a56444c0fdcc81e64c8d454e1a3d393a3",
+  "comparison_tree_state": "HEAD plus uncommitted changes (coding task family, coding evaluator, task-kind prompt variants, ledger ceiling command, exp004 config); the full uncommitted source was saved by `compare` as artifacts/comparisons/20261004T111345/20261004T111345.patch with its sha256 in the frozen block",
+  "calibration_tree_state": "the same uncommitted source as the comparison (no source edits between calibration and freezing)",
+  "generator_version": "invoice-gen/1",
+  "scorer": "invoice-checks/1 (recorded in each run's evaluator/score.json; the comparison frozen block's scorer_version field wrongly reads score/2, the incident-scorer constant)",
+  "summary_policy": "token-tail/1",
+  "prompt_caching": "not used",
+  "price_source": "https://platform.claude.com/docs/en/about-claude/pricing (retrieved 2026-10-04)",
+  "budget": "ledger ceiling raised once, explicitly, from USD 10 to USD 38.916744 (spend at change USD 8.916744) for at most USD 30 of experiment-004 spend"
+ },
+ "settings": {
+  "config": "configs/exp004.toml",
+  "model": "claude-opus-5-5",
+  "effort": "low",
+  "max_calls": 30,
+  "max_output_tokens": 4096,
+  "context_budget_tokens": 8000,
+  "pressure_ratio": 0.7,
+  "recovery_reserve_tokens": 1000,
+  "exec_timeout_s": 30,
+  "baseline_policy": "token-tail/1",
+  "tail_ratio": 0.15,
+  "newest_ratio": 0.25,
+  "target_ratio": 0.5,
+  "evaluation_tasks": [
+   "coding-eval-1",
+   "coding-eval-2",
+   "coding-eval-3",
+   "coding-eval-4"
+  ],
+  "repetitions": 3,
+  "mode_order": "alternating per matched pair (pair 0: summary first)"
+ },
+ "runs": [
+  {
+   "run_id": "20261004T110623-summary-coding-dev-1-3c5d",
+   "role": "calibration",
+   "note": "calibration 1a: token-tail/1 baseline on coding-dev-1"
+  },
+  {
+   "run_id": "20261004T110755-clm-coding-dev-1-9116",
+   "role": "calibration",
+   "note": "calibration 1b: clm on coding-dev-1 (matched)"
+  },
+  {
+   "run_id": "20261004T110921-summary-coding-dev-2-4e2e",
+   "role": "calibration",
+   "note": "calibration 2a: token-tail/1 baseline on coding-dev-2"
+  },
+  {
+   "run_id": "20261004T111036-clm-coding-dev-2-189d",
+   "role": "calibration",
+   "note": "calibration 2b: clm on coding-dev-2 (matched)"
+  },
+  {
+   "run_id": "20261004T111345-summary-coding-eval-1-94d3",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T111451-clm-coding-eval-1-194f",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T111556-clm-coding-eval-2-c105",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T111655-summary-coding-eval-2-0ded",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T111800-summary-coding-eval-3-7b9c",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T111927-clm-coding-eval-3-6f2e",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T112024-clm-coding-eval-4-abe2",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T112130-summary-coding-eval-4-28a7",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T112253-summary-coding-eval-1-2812",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T112358-clm-coding-eval-1-a6f4",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T112500-clm-coding-eval-2-c5e5",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T112556-summary-coding-eval-2-c489",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T112722-summary-coding-eval-3-3269",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T112842-clm-coding-eval-3-a41e",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T112943-clm-coding-eval-4-476a",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T113054-summary-coding-eval-4-0afb",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T113214-summary-coding-eval-1-364b",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T113319-clm-coding-eval-1-2128",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T113536-clm-coding-eval-2-55b1",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T113635-summary-coding-eval-2-5375",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T113745-summary-coding-eval-3-643e",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T113933-clm-coding-eval-3-b1c2",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T114031-clm-coding-eval-4-76a3",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T114124-summary-coding-eval-4-ad31",
+   "role": "evaluation"
+  }
+ ],
+ "comparisons": [
+  "20261004T111345"
+ ]
+}

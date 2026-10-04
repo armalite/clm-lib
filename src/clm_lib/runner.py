@@ -21,14 +21,16 @@ from __future__ import annotations
 import json
 import re
 import secrets
+import shutil
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from .baseline import SummaryPolicy
 from .budget import BudgetExhausted, Ledger, ModelPrice, input_token_bound
+from .coding import CODING_SCORER_VERSION
 from .config import Config
 from .context import (
     CONTEXT_FILENAME,
@@ -39,10 +41,17 @@ from .context import (
     total_chars,
     unified_diff,
 )
-from .executor import ExecResult, Executor, ExecutorUnavailable
-from .prompts import PROMPT_VERSION, render_entries, render_user, system_prompt
+from .executor import DockerExecutor, ExecResult, Executor, ExecutorUnavailable
+from .prompts import (
+    PROMPT_VERSION,
+    SUMMARY_SYSTEM_TOKEN_TAIL_CODING,
+    render_entries,
+    render_user,
+    system_prompt,
+)
 from .provider import (
     ACTION_SCHEMA,
+    CODING_ACTION_SCHEMA,
     STAGED_ACTION_SCHEMA,
     ModelRequest,
     ModelResponse,
@@ -51,7 +60,6 @@ from .provider import (
 )
 from .tasks import (
     SCORER_VERSION,
-    Score,
     TaskInstance,
     no_answer_score,
     score_answer,
@@ -81,7 +89,7 @@ class RunResult:
     task: str
     status: str
     stop_reason: str
-    score: Score
+    score: Any  # tasks.Score (incident) or coding.CodingScore
     metrics: dict[str, Any]
 
 
@@ -121,8 +129,15 @@ class _Usage:
     assumed_cost_usd: float = 0.0
 
 
+INCIDENT_FIELDS = ("root_cause", "required_value", "remedy", "evidence_refs")
+CODING_FIELDS = ("summary",)
+
+
 def parse_action(
-    text: str, max_code_chars: int, allow_advance: bool = False
+    text: str,
+    max_code_chars: int,
+    allow_advance: bool = False,
+    answer_fields: tuple[str, ...] = INCIDENT_FIELDS,
 ) -> tuple[dict[str, Any] | None, str]:
     """Return (action, error). Only a whole-response JSON object is accepted."""
     raw = text.strip()
@@ -147,10 +162,10 @@ def parse_action(
         return obj, ""
     if kind == "final":
         ans = obj.get("answer")
-        need = ("root_cause", "required_value", "remedy", "evidence_refs")
+        need = answer_fields
         if not isinstance(ans, dict) or any(k not in ans for k in need):
             return None, f"final action needs answer with fields {list(need)}"
-        if not isinstance(ans["evidence_refs"], list):
+        if "evidence_refs" in need and not isinstance(ans["evidence_refs"], list):
             return None, "evidence_refs must be a list of strings"
         return obj, ""
     return None, "action must be 'execute' or 'final'"
@@ -267,6 +282,7 @@ class _Run:
             max_body=self.climits.max_body_chars,
             summary_policy=self.policy.policy,
             tail_tokens=self.policy.tail_tokens,
+            task_kind=task.kind,
         )
 
     # --------------------------------------------------------------- helpers
@@ -484,7 +500,12 @@ class _Run:
         for attempt in range(self.policy.retries + 1):
             limit = self.policy.char_limit(attempt, room, self.cpt)
             req = self.policy.request(
-                self.task.prompt, older, attempt, self.lim.max_output_tokens, limit
+                self.task.prompt,
+                older,
+                attempt,
+                self.lim.max_output_tokens,
+                limit,
+                system=SUMMARY_SYSTEM_TOKEN_TAIL_CODING if self.task.kind == "coding" else None,
             )
             resp = self.call(
                 req,
@@ -881,7 +902,15 @@ class _Run:
 
     # --------------------------------------------------------------- loop
     def loop(self) -> tuple[str, str]:
-        schema = STAGED_ACTION_SCHEMA if self.task.staged else ACTION_SCHEMA
+        coding = self.task.kind == "coding"
+        schema = (
+            CODING_ACTION_SCHEMA
+            if coding
+            else STAGED_ACTION_SCHEMA
+            if self.task.staged
+            else ACTION_SCHEMA
+        )
+        fields = CODING_FIELDS if coding else INCIDENT_FIELDS
         staged = self.task.staged
         while True:
             self.step += 1
@@ -899,7 +928,7 @@ class _Run:
             req = ModelRequest(self.system, user, self.lim.max_output_tokens, "action", schema)
             resp = self.call(req, "action", {"pressure": pressure, "recovery": recovery})
             self.timeline[-1]["reported_input_tokens"] = self.last_reported_input
-            action, err = parse_action(resp.text, self.lim.max_code_chars, staged)
+            action, err = parse_action(resp.text, self.lim.max_code_chars, staged, fields)
             if action is None:
                 self.trace.event(
                     "invalid_action", step=self.step, error=err, stop_reason=resp.stop_reason
@@ -913,7 +942,7 @@ class _Run:
                     self.system, user + note, self.lim.max_output_tokens, "repair", schema
                 )
                 resp = self.call(repair, "repair", {"error": err})
-                action, err = parse_action(resp.text, self.lim.max_code_chars, staged)
+                action, err = parse_action(resp.text, self.lim.max_code_chars, staged, fields)
                 if action is None:
                     self.trace.event("invalid_action", step=self.step, error=err, after_repair=True)
                     return "failed_protocol", f"invalid response after repair: {err}"
@@ -990,12 +1019,17 @@ class _Run:
     def execute(self) -> RunResult:
         self.task.write_fixtures(self.fx, 1 if self.task.staged else None)
         (self.ws / "helpers").mkdir()
+        for rel, text in self.task.workspace_seed.items():
+            path = self.ws / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
         run_meta = {
             "run_id": self.run_id,
             "label": self.label,
             "mode": self.mode,
             "comparison_arm": self.mode in ("summary", "clm"),
             "task": self.task.spec.name,
+            "task_kind": self.task.kind,
             "split": self.task.spec.split,
             "scenario_hidden_from_model": True,
             "fixture_seed": self.task.spec.seed,
@@ -1076,18 +1110,69 @@ class _Run:
             "timeline": tl,
         }
 
+    def evaluate_coding(self, completed: bool) -> Any:
+        """Score the submitted workspace in a fresh sandbox; never run it on the host."""
+        from .coding import EVAL_RUNNER, checks_json, score_coding
+
+        ev = self.dir / "evaluator"
+        skip = shutil.ignore_patterns(
+            CONTEXT_FILENAME, f".{CONTEXT_FILENAME}.host-tmp", "spill", "__pycache__"
+        )
+        shutil.copytree(self.ws, ev / "submission", ignore=skip)  # recorded submission
+        work, fx = ev / "_eval_work", ev / "_eval_fixtures"
+        shutil.copytree(ev / "submission", work)  # disposable copy the evaluation may alter
+        fx.mkdir()
+        (fx / "checks.json").write_text(checks_json(self.task.truth), encoding="utf-8")
+        error: str | None = None
+        output: str | None = None
+        if not isinstance(self.r.executor, DockerExecutor):
+            error = "coding evaluation requires the Docker executor"
+        else:
+            evaluator = replace(self.r.executor, timeout_s=180, output_cap_bytes=2_000_000)
+            try:
+                res = evaluator.run(EVAL_RUNNER, work, fx)
+                output = res.stdout
+                self.trace.write("evaluator/eval_stdout.txt", res.stdout)
+                self.trace.write("evaluator/eval_stderr.txt", res.stderr)
+                if res.timed_out or res.exit_code not in (0, None):
+                    error = f"evaluator exit {res.exit_code} timed_out={res.timed_out}"
+            except ExecutorUnavailable as exc:
+                error = f"evaluator unavailable: {exc}"
+        shutil.rmtree(work, ignore_errors=True)
+        shutil.rmtree(fx, ignore_errors=True)
+        score = score_coding(self.task.truth, output, completed, error)
+        self.trace.event(
+            "coding_evaluation",
+            outcome=score.outcome,
+            passed=score.passed,
+            checks=score.checks,
+            stale=score.stale,
+            error=error,
+        )
+        return score
+
     def finish(self, status: str, reason: str, human: str) -> RunResult:
         # Ground truth is written only now, outside the sandbox mounts.
         truth = self.task.truth
-        score = (
-            score_answer(self.answer, truth, self.task.files)
-            if self.answer
-            else no_answer_score(truth)
-        )
+        score: Any
+        if self.task.kind == "coding":
+            score = self.evaluate_coding(completed=self.answer is not None)
+        else:
+            score = (
+                score_answer(self.answer, truth, self.task.files)
+                if self.answer
+                else no_answer_score(truth)
+            )
         self.trace.write_json("evaluator/truth.json", truth.to_dict())
         self.trace.write_json(
             "evaluator/score.json",
-            {**score.to_dict(), "components": score.components, "scorer_version": SCORER_VERSION},
+            {
+                **score.to_dict(),
+                "components": score.components,
+                "scorer_version": CODING_SCORER_VERSION
+                if self.task.kind == "coding"
+                else SCORER_VERSION,
+            },
         )
         elapsed = time.monotonic() - self.t_start
         u = self.u
@@ -1098,7 +1183,8 @@ class _Run:
             "task": self.task.spec.name,
             "status": status,
             "stop_reason": reason,
-            "valid_for_comparison": status not in INVALID_FOR_COMPARISON,
+            "valid_for_comparison": status not in INVALID_FOR_COMPARISON
+            and getattr(score, "outcome", "") != "evaluation_error",
             "human_intervention": human,
             "started": self.started,
             "ended": now_iso(),

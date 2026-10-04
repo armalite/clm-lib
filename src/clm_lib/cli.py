@@ -446,6 +446,7 @@ def run_matrix(
     runner: Runner, cfg: Config, tasks: list[str], reps: int, out: Path, stamp: str
 ) -> tuple[list[dict[str, Any]], int]:
     """Sequential comparison matrix; returns (cells, exit code). Never parallel."""
+    from .coding import CODING_SCORER_VERSION
     from .prompts import PROMPT_VERSION
     from .tasks import SCORER_VERSION
 
@@ -460,7 +461,13 @@ def run_matrix(
         "prompt_version": PROMPT_VERSION,
         # Per-task generator versions (staged tasks use their own generator).
         "generator_version": sorted({generate(t).generator_version for t in tasks}),
-        "scorer_version": SCORER_VERSION,
+        # Per-task scorer versions (coding tasks use their own evaluator).
+        "scorer_version": sorted(
+            {
+                CODING_SCORER_VERSION if generate(t).kind == "coding" else SCORER_VERSION
+                for t in tasks
+            }
+        ),
         "summary_policy": cfg.baseline.policy,
         "config": cfg.to_dict(),
         "code_state": code_state(),
@@ -573,6 +580,11 @@ def cmd_export(args: argparse.Namespace) -> int:
 
 def cmd_budget(args: argparse.Namespace) -> int:
     cfg = _config(args)
+    if args.set_ceiling is not None:
+        change = Ledger.set_ceiling(
+            _resolve(cfg.budget.ledger), args.set_ceiling, args.reason or ""
+        )
+        print(json.dumps({"ceiling_change": change}, indent=1))
     print(json.dumps(_ledger(cfg, None).summary(), indent=1))
     return 0
 
@@ -635,6 +647,13 @@ def build_parser() -> argparse.ArgumentParser:
     ex.set_defaults(func=cmd_export)
 
     b = sub.add_parser("budget", help="show the persistent spend ledger")
+    b.add_argument(
+        "--set-ceiling",
+        type=float,
+        default=None,
+        help="explicitly change the stored ceiling (user-authorised; recorded)",
+    )
+    b.add_argument("--reason", default="", help="required with --set-ceiling")
     b.set_defaults(func=cmd_budget)
     return ap
 
