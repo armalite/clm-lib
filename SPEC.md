@@ -1,14 +1,15 @@
 # clm-lib: Technical Specification
 
-Version: 1.3 | 4 October 2026
+Version: 1.4 | 4 October 2026
 
 Repository: `clm-lib` | Python package: `clm_lib` | CLI: `clm-lib`
 
-This file defines the implementation requirements and acceptance criteria. User-facing setup and usage live in `README.md`; measured outcomes live in `docs/results.md` and the results repository (§13); implementation design lives in `docs/architecture.md`.
+This file defines the implementation requirements and acceptance criteria. User-facing setup and usage live in `README.md`; measured outcomes and experiment write-ups live in the results repository (§13), with a short overview in `docs/results.md`; implementation design lives in `docs/architecture.md`.
 
 Version history:
 - 1.2: the original specification. Its evaluation protocol (§8.2) was executed as experiment 001.
 - 1.3: adds experiment 002, a staged incident task under sustained context pressure (§12), and the results export (§13). Requirements in §1–§11 are unchanged except where §12 extends them.
+- 1.4: experiment write-ups move to the results repository, and the exporter preserves human-maintained documents (§13). The blog notes and detailed results move there too (§9).
 
 ## 1. Purpose and intended outcome
 
@@ -58,8 +59,7 @@ src/clm_lib/
 tests/
 configs/
 docs/architecture.md
-docs/results.md
-docs/blog-notes.md
+docs/results.md      # short results overview + library verification history
 README.md
 SPEC.md
 pyproject.toml
@@ -216,8 +216,8 @@ Required files:
 - synthetic fixture generator, task definitions and scorer;
 - focused tests and a reproducible dependency setup;
 - README with quickstart, model/access setup, sandbox prerequisites, run commands, budgets, architecture and limitations;
-- `docs/results.md` with actual completed outcomes, cost provenance, run IDs and any blockers;
-- `docs/blog-notes.md` with an accurate project description, candidate trace excerpts and limitations, not a fabricated success story;
+- `docs/results.md` with a short results overview, cost totals and library verification history, linking to the results repository;
+- in the results repository: experiment write-ups with actual outcomes, cost provenance, run IDs and blockers, and draft blog notes (`notes/blog-notes.md`) with an accurate project description, trace excerpts and limitations, not a fabricated success story;
 - an implementation note listing important design choices and departures from the reference and this spec.
 
 Completion levels:
@@ -297,16 +297,17 @@ Reports show paired results and per-arm aggregates for all assigned runs, with r
 
 ## 13. Results export
 
-Completed experiment evidence is copied (never moved) to a separate results repository, one directory per experiment. Each directory contains:
-- `README.md`: question, setup, outcome and limitations;
-- `protocol.md`: planned procedure versus later changes;
-- `manifest.json`: run IDs and roles, settings, source commit and uncommitted-source patches, prompt, generator and scorer versions, fixture and ledger checksums, redactions;
-- `report.md`, plus per-run `metrics.json` and `metrics.csv`;
-- `artifacts/`, with runs separated by role (`evaluation`, `guided`, `calibration`, `smoke`, `access-failure`).
+Completed experiment evidence is copied (never moved) to a separate results repository, one directory per experiment.
 
-Further requirements:
-- **Checksums:** every exported run directory carries `SHA256SUMS`. Re-exporting identical evidence is a no-op, and different evidence under an existing run ID is refused.
-- **Fixtures:** exported once per task and verified against each run's on-disk copy. For staged runs, only the stages that run released are compared.
-- **Ledger:** snapshots are historical copies; the active ledger stays in this repository.
+**Ownership:**
+- **clm-lib** owns experiment *selection*: `experiments/<id>/experiment.json`, with run IDs, roles, settings and provenance notes, but no findings. It also owns the exporter, raw runs and the active ledger.
+- **The results repository** owns every human-written document (the root `README.md`, and per experiment `README.md`, `SUMMARY.md` and `protocol.md`), historical protocols, provenance patches and all exported evidence.
+
+**Exporter behaviour:**
+- **Human documents:** the exporter never overwrites a human-maintained document. If one is missing, it creates a generic starter (or copies a seed found next to `experiment.json` on a first export) and reports doing so. No experiment-specific findings are embedded in the exporter.
+- **Generated files:** `manifest.json`, `report.md`, `metrics.json` and `metrics.csv` are regenerated on every export. The root `EXPORT_FORMAT.md` describes the layout, ownership and checksum policy.
+- **Immutable evidence:** run, fixture, comparison and source trees under `artifacts/` each carry `SHA256SUMS`. Re-exporting identical evidence is a no-op, and a different tree under an existing name is refused. For staged runs, fixtures are verified against the stages each run released.
+- **Experiment-level checksums:** `experiments/<id>/SHA256SUMS` covers `artifacts/**` and the generated files, and excludes human-maintained documents, so editing a write-up is never mistaken for corrupted evidence. Its existing `artifacts/` entries are re-verified before it is rewritten; a mismatch stops the export.
+- **Ledger:** snapshots are historical copies; the active ledger stays in clm-lib.
 - **Exclusions:** credentials and request headers are never present or exported. Local account identifiers are redacted and the redaction documented.
 - **Corrections:** post-hoc scorer corrections keep both the original and the corrected results.

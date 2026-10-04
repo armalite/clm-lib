@@ -127,7 +127,7 @@ Live commands are paid. Each call goes through a persistent ledger (`runs/ledger
 
 ## Experimental results
 
-Source of truth: [clm-lib-test-results](https://github.com/armalite/clm-lib-test-results). Summary in [docs/results.md](docs/results.md).
+Detailed write-ups and evidence: [clm-lib-test-results](https://github.com/armalite/clm-lib-test-results). Library verification history: [docs/results.md](docs/results.md).
 
 **Experiment 002: staged incident under context pressure** ([evidence and write-up](https://github.com/armalite/clm-lib-test-results/tree/main/experiments/002-staged-incident-context-pressure)). Frozen comparison: 3 synthetic evaluation instances × 2 repetitions per arm, `claude-opus-5-5` at effort `low`, an 8K-token request budget.
 
@@ -150,6 +150,22 @@ Source of truth: [clm-lib-test-results](https://github.com/armalite/clm-lib-test
 **Experiment 001: short single-stage incidents** ([evidence and write-up](https://github.com/armalite/clm-lib-test-results/tree/main/experiments/001-short-incident-pilot)).
 - The model solved each task in 3–4 calls, so neither arm ever managed context (0 edits, 0 summaries). The comparison doesn't speak to CLM's effectiveness.
 - A separate, explicitly prompted guided run showed real context replacement and helper use.
+
+## Where things live
+
+| This repository (clm-lib) | [clm-lib-test-results](https://github.com/armalite/clm-lib-test-results) |
+| --- | --- |
+| Library code, tests, examples, evaluation tooling | Experiment write-ups, summaries, findings and the results index |
+| Task generators, scorers and configs | Historical protocols, frozen configuration and source provenance |
+| `experiments/<id>/experiment.json` (which runs make up an experiment) | Exported run artifacts, metrics, reports and manifests |
+| The export utility, raw `runs/` and the active spend ledger | Ledger snapshots (historical copies) |
+
+To publish a new experiment:
+1. Add `experiments/<id>/experiment.json` listing its runs and roles.
+2. Run `clm-lib export experiments/<id> --dest ../clm-lib-test-results`.
+3. Write or edit `README.md`, `SUMMARY.md` and `protocol.md` **in the results repository**. The exporter creates starters if they are missing and never overwrites them.
+
+The results repository's `EXPORT_FORMAT.md` describes the layout and checksum policy.
 
 ## Sandbox prerequisites
 
@@ -178,7 +194,7 @@ src/clm_lib/
   report.py     markdown report from evidence
   export.py     results-repository export
   cli.py
-experiments/<id>/   experiment definitions (run roles, provenance) and hand-written notes
+experiments/<id>/   experiment selection only: experiment.json (run ids, roles, settings, provenance)
 runs/               raw run artifacts and the active ledger (gitignored)
 ```
 

@@ -22,5 +22,5 @@ Recurring instructions for coding assistants working in this repository.
   - `uv run mypy src`
   - `uv run pytest` (Docker-backed tests need a running Docker daemon and the sandbox image; see README)
 - Live API calls cost money. Use only bounded commands that go through the persistent budget ledger (`clm-lib budget` shows it). Never raise the configured ceiling automatically.
-- Run artefacts go under `runs/` (gitignored). Results that are reported go in `docs/results.md`, with run IDs and cost provenance, including failed, exhausted or missing runs.
+- Run artefacts go under `runs/` (gitignored). Experiment results are exported with `clm-lib export` and written up **in the results repository** (`../clm-lib-test-results`), with run IDs and cost provenance, including failed, exhausted or missing runs. Never edit exported artifacts to make an export pass. `docs/results.md` here stays a short overview with links.
 - Keep scope small: no multi-agent or delegation infrastructure, web UI, database or plugin registry.

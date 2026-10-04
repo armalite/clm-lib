@@ -1,7 +1,6 @@
 {
  "id": "002-staged-incident-context-pressure",
  "title": "Staged incident with evidence over time: does CLM context editing change outcomes or cost versus summarisation under sustained pressure?",
- "status": "complete; both arms managed context in every run; CLM 6/6 strict vs summary 4/6, CLM cheaper in all 6 pairs (exploratory, n=6 per arm)",
  "provenance": {
   "source_repo": "https://github.com/armalite/clm-lib",
   "comparison_commit": "1230323abd6331be6b7191ad0d74c97e1a19dc02",

@@ -1,7 +1,6 @@
 {
  "id": "001-short-incident-pilot",
  "title": "Short single-stage incident tasks: does CLM context editing change outcomes or cost versus summarisation?",
- "status": "complete; context management was not exercised (0 CLM edits, 0 summaries in the comparison)",
  "provenance": {
   "source_repo": "https://github.com/armalite/clm-lib",
   "live_runs_commit": "1230323abd6331be6b7191ad0d74c97e1a19dc02",
@@ -25,28 +24,90 @@
   "pressure_ratio": 0.7,
   "recovery_reserve_tokens": 1000,
   "summary_tail_entries": 4,
-  "evaluation_tasks": ["heldout-1", "heldout-2", "heldout-3"],
+  "evaluation_tasks": [
+   "heldout-1",
+   "heldout-2",
+   "heldout-3"
+  ],
   "repetitions": 2,
   "mode_order": "alternating per matched pair (pair 0: summary first)"
  },
  "runs": [
-  {"run_id": "20261004T031059-smoke", "role": "access-failure", "note": "smoke attempt before a usable key existed; credential refresh failed, no model request sent, $0"},
-  {"run_id": "20261004T065324-smoke", "role": "smoke", "note": "minimal structured-output call; all checks passed"},
-  {"run_id": "20261004T065342-guided-dev-a667", "role": "guided", "note": "explicitly prompted helper demonstration on the dev task; not comparative"},
-  {"run_id": "20261004T065458-summary-dev-fac1", "role": "calibration", "note": "dev-task summary-mode run to check the SPEC section 6 pressure condition before the comparison; not comparative"},
-  {"run_id": "20261004T065603-summary-heldout-1-c374", "role": "evaluation"},
-  {"run_id": "20261004T065621-clm-heldout-1-14ea", "role": "evaluation"},
-  {"run_id": "20261004T065635-clm-heldout-2-d648", "role": "evaluation"},
-  {"run_id": "20261004T065650-summary-heldout-2-f005", "role": "evaluation", "note": "score/1 incorrect, score/2 correct (setting=value answer form)"},
-  {"run_id": "20261004T065705-summary-heldout-3-ad62", "role": "evaluation"},
-  {"run_id": "20261004T065720-clm-heldout-3-6b8e", "role": "evaluation"},
-  {"run_id": "20261004T065739-clm-heldout-1-5e39", "role": "evaluation"},
-  {"run_id": "20261004T065753-summary-heldout-1-c23c", "role": "evaluation"},
-  {"run_id": "20261004T065808-summary-heldout-2-a058", "role": "evaluation"},
-  {"run_id": "20261004T065825-clm-heldout-2-8578", "role": "evaluation"},
-  {"run_id": "20261004T065841-clm-heldout-3-96d3", "role": "evaluation"},
-  {"run_id": "20261004T065902-summary-heldout-3-6505", "role": "evaluation"}
+  {
+   "run_id": "20261004T031059-smoke",
+   "role": "access-failure",
+   "note": "smoke attempt before a usable key existed; credential refresh failed, no model request sent, $0"
+  },
+  {
+   "run_id": "20261004T065324-smoke",
+   "role": "smoke",
+   "note": "minimal structured-output call; all checks passed"
+  },
+  {
+   "run_id": "20261004T065342-guided-dev-a667",
+   "role": "guided",
+   "note": "explicitly prompted helper demonstration on the dev task; not comparative"
+  },
+  {
+   "run_id": "20261004T065458-summary-dev-fac1",
+   "role": "calibration",
+   "note": "dev-task summary-mode run to check the SPEC section 6 pressure condition before the comparison; not comparative"
+  },
+  {
+   "run_id": "20261004T065603-summary-heldout-1-c374",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T065621-clm-heldout-1-14ea",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T065635-clm-heldout-2-d648",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T065650-summary-heldout-2-f005",
+   "role": "evaluation",
+   "note": "score/1 incorrect, score/2 correct (setting=value answer form)"
+  },
+  {
+   "run_id": "20261004T065705-summary-heldout-3-ad62",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T065720-clm-heldout-3-6b8e",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T065739-clm-heldout-1-5e39",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T065753-summary-heldout-1-c23c",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T065808-summary-heldout-2-a058",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T065825-clm-heldout-2-8578",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T065841-clm-heldout-3-96d3",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T065902-summary-heldout-3-6505",
+   "role": "evaluation"
+  }
  ],
- "comparisons": ["20261004T065603"],
- "source_patches": ["source/score-v2-correction.patch", "source/report-rescoring-and-export.patch"]
+ "comparisons": [
+  "20261004T065603"
+ ],
+ "source_patches": [
+  "source/score-v2-correction.patch",
+  "source/report-rescoring-and-export.patch"
+ ]
 }
