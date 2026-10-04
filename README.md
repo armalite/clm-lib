@@ -31,12 +31,12 @@ flowchart TD
 - **Helpers are optional too.** The model may write reusable helper modules and call them in later steps, but editing `context.json` directly is just as much CLM.
 - **The record is separate.** A complete trace (every request as sent, responses, accepted revisions with diffs, the model's code, and helper files before and after each step) is kept outside the editable context. Edits change what the model sees next, never the record.
 - **No training.** This runs an existing model (`claude-opus-5-5`) through a runtime. It does not train or fine-tune a new model.
-- **Staged tasks.** In experiment 002, evidence arrives in three stages. The `advance` action releases the next stage into the read-only task files. A `final` answer is accepted only once all stages are out. Single-stage tasks don't have `advance`.
+- **Staged tasks.** In staged incident tasks, evidence arrives in three stages. The `advance` action releases the next stage into the read-only task files. A `final` answer is accepted only once all stages are out. Single-stage incident tasks don't have `advance`.
 
 Modes:
 - **`summary` (baseline):** the same model, tools and limits, but no editable file. When a request reaches 70% of the budget, a separate model call summarises the older entries, and the summary replaces them. Two selectable policies (`[baseline] policy` in the config):
-  - `fixed-tail/1` (default; used by experiments 001 and 002): the newest 4 entries are kept as they are, whatever their size.
-  - `token-tail/1` (experiment 003, `configs/exp003.toml`):
+  - `fixed-tail/1` (default): the newest 4 entries are kept as they are, whatever their size.
+  - `token-tail/1` (selected in `configs/exp003.toml`):
     - recent entries are kept up to a token allowance (15% of the budget), and the newest entry is kept if it fits 25%;
     - larger recent entries are summarised too;
     - summaries are sized so the request drops to about 50% of the budget, leaving room to keep working.
@@ -55,15 +55,15 @@ Modes:
 ## Tasks and scoring
 
 The tasks are synthetic production-incident investigations over local logs, configs, change records, metrics and notes, with deterministic ground truth that is never visible to the agent.
-- **Experiment 001** used single-stage incidents (`dev`, `heldout-1..3`).
-- **Experiment 002** uses staged incidents (`staged-dev-*` for calibration, `staged-eval-*` for evaluation). Evidence arrives in three stages, released when the agent sends an `advance` action. Later stages supersede earlier values and an earlier hypothesis, so useful facts have to survive while the investigation continues.
+- **Single-stage incident tasks** (`dev`, `heldout-1..3`): all evidence is available from the start.
+- **Staged incident tasks** (`staged-dev-*` for calibration, `staged-eval-*` for evaluation): evidence arrives in three stages, released when the agent sends an `advance` action. Later stages supersede earlier values and an earlier hypothesis, so useful facts have to survive while the investigation continues.
 
 The answer has four fields: `root_cause`, `required_value`, `remedy` and `evidence_refs`. The scorer checks:
 - the cause code and the remedy code;
 - the exact current value. The superseded "stale" values are flagged as `stale_value`, and a superseded cause as `stale_hypothesis`.
 - that the `path:line` references exist and cover every required evidence group: the symptom and the current-value record; staged tasks also need the origin record from stage 1.
 
-**Strict success** requires all of them. The scorer does **not** judge explanation prose, and it does not check that the retained context was true; it only checks the final answer against ground truth. scorer `score/2` also accepts answers written as `setting=value` (a disclosed post-hoc correction in experiment 001).
+**Strict success** requires all of them. The scorer does **not** judge explanation prose, and it does not check that the retained context was true; it only checks the final answer against ground truth. Scorer `score/2` also accepts answers written as `setting=value`; it was a post-hoc correction to `score/1`, and both versions are kept.
 
 ## Quickstart (offline, no API calls)
 
@@ -133,29 +133,7 @@ Live commands are paid. Each call goes through a persistent ledger (`runs/ledger
 
 ## Experimental results
 
-Detailed write-ups and evidence: [clm-lib-test-results](https://github.com/armalite/clm-lib-test-results). Library verification history: [docs/results.md](docs/results.md).
-
-**Experiment 002: staged incident under context pressure** ([evidence and write-up](https://github.com/armalite/clm-lib-test-results/tree/main/experiments/002-staged-incident-context-pressure)). Frozen comparison: 3 synthetic evaluation instances × 2 repetitions per arm, `claude-opus-5-5` at effort `low`, an 8K-token request budget.
-
-| | Summary baseline | CLM |
-| --- | --- | --- |
-| Strict task success | 4/6 | 6/6 |
-| Completed with an answer | 5/6 | 6/6 |
-| Mean cost per run | $0.372 | $0.231 |
-| Mean elapsed time | 99 s | 56 s |
-| Mean model calls | 12.0 (8.2 action + 3.8 summary) | 10.2 (all action) |
-| Mean cumulative input tokens | 56,000 | 44,060 |
-| Mean cumulative output tokens | 7,377 | 2,741 |
-
-- **CLM edited while the work continued, without being asked to.** Every CLM run made 2–6 accepted edits (20 in total, none rejected). The first edits came at steps 2–4, still in stage 1, and first appeared in the requests for steps 3–5. Every baseline run summarised: 23 summary calls produced 20 accepted summaries. The other 3 were too large to fit, all in the run that overflowed.
-- **The efficiency gain came from avoiding separate summary calls.** Summary calls were 46% of the baseline's cost. CLM actually made more action calls and executions than the baseline.
-- **Both baseline failures are mechanical.** One run ended in an explicit context overflow: its kept-verbatim recent tail held a large observation. The other cited an evidence range broader than the task's 20-line limit.
-- **Better reasoning or retention has not been demonstrated.** Every completed answer, in both arms, had the correct diagnosis, remedy and current value, and cited the early stage-1 fact.
-- **This is an exploratory comparison:** three synthetic instances, twice each per arm, with one model and one baseline policy. It makes no significance claims, and a stronger baseline is untested.
-
-**Experiment 001: short single-stage incidents** ([evidence and write-up](https://github.com/armalite/clm-lib-test-results/tree/main/experiments/001-short-incident-pilot)).
-- The model solved each task in 3–4 calls, so neither arm ever managed context (0 edits, 0 summaries). The comparison doesn't speak to CLM's effectiveness.
-- A separate, explicitly prompted guided run showed real context replacement and helper use.
+Comparative experiments and their findings are published in [clm-lib-test-results](https://github.com/armalite/clm-lib-test-results), alongside protocols, settings and recorded evidence. These are exploratory synthetic evaluations, not a reproduction of the CLM paper's benchmarks.
 
 ## Where things live
 
@@ -195,7 +173,7 @@ src/clm_lib/
   budget.py     dated prices, reservations, persistent ledger
   tracing.py    append-only events, saved requests, scripts, diffs, file snapshots
   tasks.py      single-stage incident fixtures + scorer
-  staged.py     staged incident fixtures (experiment 002)
+  staged.py     staged incident fixtures
   prompts.py    frozen prompt text and request rendering
   report.py     markdown report from evidence
   export.py     results-repository export
