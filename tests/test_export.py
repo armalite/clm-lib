@@ -196,3 +196,40 @@ def test_write_tree_checks_files_on_disk_not_just_the_checksum_list(tmp_path: Pa
     (dest / "extra.txt").write_bytes(b"x")
     with pytest.raises(ExportConflict, match="unrecorded files"):
         write_tree(dest, files)
+
+
+def test_manifest_reports_the_scorer_of_the_exported_tasks(
+    make_runner: Any, tmp_path: Path
+) -> None:
+    """Regression: coding experiments were exported with the incident scorer (score/2)."""
+    coding_runner, _ = make_runner(
+        [{"action": "advance"}] * 3 + [{"action": "final", "answer": {"summary": "x"}}],
+        executor=FakeExecutor(),
+    )
+    coding = coding_runner.run(generate("coding-dev-1"), "clm")
+    incident_runner, _ = make_runner([execute("a"), FINAL], executor=FakeExecutor())
+    incident = incident_runner.run(generate("dev"), "clm")
+    runs_root = coding.run_dir.parent
+    assert incident.run_dir.parent == runs_root
+
+    def manifest(run_ids: list[str], name: str) -> dict[str, Any]:
+        exp = tmp_path / name
+        exp.mkdir()
+        spec = {
+            "id": name,
+            "title": "t",
+            "runs": [{"run_id": r, "role": "evaluation"} for r in run_ids],
+            "comparisons": [],
+        }
+        (exp / "experiment.json").write_text(json.dumps(spec))
+        export_experiment(exp, runs_root, tmp_path / "ledger.json", tmp_path / "results")
+        out = tmp_path / "results" / "experiments" / name
+        return json.loads((out / "manifest.json").read_text())
+
+    only_coding = manifest([coding.run_id], "998-coding")
+    assert only_coding["exported_with"]["current_scorer"] == "invoice-checks/1"
+    mixed = manifest([coding.run_id, incident.run_id], "997-mixed")
+    assert mixed["exported_with"]["current_scorer"] == ["invoice-checks/1", "score/2"]
+    assert (
+        manifest([incident.run_id], "996-incident")["exported_with"]["current_scorer"] == "score/2"
+    )

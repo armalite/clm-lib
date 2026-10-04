@@ -10,12 +10,17 @@
 | 002: staged incident under context pressure | Both methods active in every run. CLM 6/6 strict successes vs the baseline's 4/6, about 38% lower mean cost, mostly from avoiding summary calls. This is a small synthetic pilot against one baseline. | [002](https://github.com/armalite/clm-lib-test-results/tree/main/experiments/002-staged-incident-context-pressure) |
 | 003: robust summary comparison | Against `token-tail/1`, a baseline that handles large recent entries and leaves room, both approaches got 6/6 strict successes. CLM was still about 25% cheaper and 28% faster, matching the baseline's spending on summary calls. | [003](https://github.com/armalite/clm-lib-test-results/tree/main/experiments/003-robust-summary-comparison) |
 | 004: coding with changing requirements | On an invoice-package task with requirements added and replaced over four stages, both approaches got 12/12 strict successes with no regressions or stale rules. CLM was about 25% cheaper, matching the baseline's spending on summary calls. | [004](https://github.com/armalite/clm-lib-test-results/tree/main/experiments/004-coding-changing-requirements) |
+| 005: harder coding accuracy | Stopped after calibration: with interacting, partially changing rules over 6 or 8 stages, both approaches passed every hidden check in all 8 calibration runs. By the pre-registered rule, the evaluation was not run, and no correctness claim is made. | [005](https://github.com/armalite/clm-lib-test-results/tree/main/experiments/005-harder-coding-accuracy) |
 
 The previous, longer version of this file is archived verbatim in the results repository as [`notes/clm-lib-results-log-2026-10-04.md`](https://github.com/armalite/clm-lib-test-results/blob/main/notes/clm-lib-results-log-2026-10-04.md). The draft blog notes moved there too, to [`notes/blog-notes.md`](https://github.com/armalite/clm-lib-test-results/blob/main/notes/blog-notes.md).
 
 ## Spend
 
-The active ledger is `runs/ledger.json` in this repository (gitignored). Totals so far: **USD 16.214** (experiments 001–003 USD 8.917; experiment 004 USD 7.297), all from provider-reported usage, with no unresolved assumed charges. The ceiling was raised once, explicitly, for experiment 004: from USD 10 to USD 38.917 (recorded in the ledger's `ceiling_history`). It was never reset. Live commands for experiment 004 use `configs/exp004.toml`; a config with a lower ceiling lowers it again. Historical snapshots are exported to the results repository's `ledger-snapshots/`.
+The active ledger is `runs/ledger.json` in this repository (gitignored). Totals so far: **USD 19.933** (experiments 001–003 USD 8.917; experiment 004 USD 7.297; experiment 005 USD 3.719, calibration only), all from provider-reported usage, with no unresolved assumed charges. The ceiling was changed twice, each time explicitly and with a recorded reason (`ceiling_history`):
+- for experiment 004, from USD 10 to USD 38.917;
+- for experiment 005, to USD 46.214 (spend at the change + USD 30).
+
+It was never reset. Live commands now need a config whose ceiling is not below USD 46.214, such as `configs/exp005.toml`; a config with a lower ceiling (for example `exp004.toml`) lowers it again. Historical snapshots are exported to the results repository's `ledger-snapshots/`.
 
 ## Live accounting checks
 
@@ -86,6 +91,15 @@ Phases 2–4 (smoke, guided dev run, frozen comparison) were **not run**. `ANTHR
 Verification: `ruff check`, `ruff format --check` and `mypy src` are clean; **56 passed**. `doctor --sandbox` is unchanged.
 
 Live phases: **still not run**. `ANTHROPIC_API_KEY` is still unset in the agent process (`doctor`). Live spend $0.00; cumulative $0.00 of $10.00.
+
+## Second coding generator and evaluator (2026-10-05)
+
+`coding2.py` and `invoice_ref2.py` add `invoice-gen/2` and `invoice-checks/2` (SPEC §16). The tests are in `tests/test_coding2.py`:
+- the reference agrees with an independent implementation on every hidden check and on more than 10,000 random inputs;
+- every forgotten rule, outdated rule, over-applied partial change, calculation-order mistake and refund interaction mistake fails hidden checks in the expected category on every instance;
+- in the sandbox, the independent implementation is strictly successful, faulty submissions and wrong return types are detected, stage visibility and isolation hold, and regressions need snapshot evidence.
+
+The export manifest now reports each task's scorer (`test_manifest_reports_the_scorer_of_the_exported_tasks`). `compare --order balanced` is tested by `test_balanced_order_alternates_within_each_instance`. With ruff, format and mypy clean, **104 passed**.
 
 ## Coding task family and evaluator (2026-10-05)
 

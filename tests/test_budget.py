@@ -211,3 +211,26 @@ def test_explicit_ceiling_change_is_recorded_and_preserves_spend(tmp_path: Path)
     held.reserve(0.1, "r2", "action")
     with pytest.raises(LedgerBusy):
         Ledger.set_ceiling(path, 50.0, "should be refused while pending")
+
+
+def test_balanced_order_alternates_within_each_instance(cfg: Any, tmp_path: Path) -> None:
+    from clm_lib.cli import run_matrix
+    from clm_lib.runner import Runner
+
+    prov = ScriptedProvider([FINAL] * 40)
+    led = Ledger.open(tmp_path / "l.json", 100.0)
+    runner = Runner(
+        cfg, prov, FakeExecutor(), led, TEST_PRICE, live=False, runs_dir=tmp_path / "runs"
+    )
+    tasks = ["heldout-1", "heldout-2", "heldout-3", "dev"]
+    cells, code = run_matrix(runner, cfg, tasks, 3, tmp_path / "c.json", "t", "balanced")
+    assert code == 0 and len(cells) == 24
+    first = {(c["task"], c["rep"]): c["order"][0] for c in cells}
+    for i, task in enumerate(tasks):
+        seq = [first[(task, rep)] for rep in (1, 2, 3)]
+        start = "summary" if i % 2 == 0 else "clm"
+        other = "clm" if start == "summary" else "summary"
+        assert seq == [start, other, start]
+    assert sum(1 for c in cells if c["mode"] == c["order"][0] == "summary") == 6
+    rec = json.loads((tmp_path / "c.json").read_text())
+    assert rec["frozen"]["mode_order"] == "balanced" and rec["frozen"]["reps"] == 3

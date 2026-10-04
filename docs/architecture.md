@@ -187,6 +187,22 @@ Ground truth exists only in memory until the run ends, then goes to `evaluator/`
   - the action steps, executions and advances that followed it.
 - **Scoring additions:** an `origin` evidence group (the stage-1 release-note line), `stale_causes` (the superseded timeout hypothesis gives outcome `stale_hypothesis`), and two stale values (the build default and the repo config default).
 
+## Coding tasks, second generator (experiment 005)
+
+- **Modules:** `coding2.py` (`invoice-gen/2`) uses `invoice_ref2.py` for expected results. `invoice_ref2.py` is standalone (standard library only), so tests can install it verbatim in the sandbox as a known or deliberately faulty submission. Fault flags exist only for evaluator validation.
+- **Check selection** is predicate-based:
+  - module checks must differ from the result with that module forgotten (`retained`, `final_stage`) or with its old version (`replaced`);
+  - `kept_part` checks must match the old version but differ from an over-applied partial change;
+  - `interaction` checks must depend on at least three rules.
+  - Input kinds per module (for example, bulk qty at and one below the threshold, a discount crossing the shipping threshold, refunds crossing thresholds or going negative) are cycled, so boundary kinds always appear.
+- **Stale variants:** each check records the result under the old version of every changed rule whose old version differs, and a failed output matching one is reported as stale for that rule.
+- **Snapshots:** `advance_step` copies the workspace to `evaluator/snapshots/stage-k` before releasing stage k+1. The evaluator directory is never mounted. `evaluate_coding` runs the same sandboxed evaluator on each snapshot with that stage's hidden checks.
+- **Scorer version per task:** `TaskInstance.scorer_version` and `tasks.scorer_version_for()` give the scorer per task. They are used for `evaluator/score.json`, the comparison `frozen` block, and (through the metrics rows) the export manifest.
+- **Tests:**
+  - `tests/test_coding2.py`, with `tests/coding2_solutions.py` holding the independent implementation and the faulty submissions;
+  - `test_manifest_reports_the_scorer_of_the_exported_tasks` in `tests/test_export.py`;
+  - `test_balanced_order_alternates_within_each_instance` in `tests/test_budget.py`.
+
 ## Design choices
 
 - **JSON-lines transcript with escaping** instead of nonce delimiters: it's simple and can't be forged.

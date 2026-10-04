@@ -443,12 +443,22 @@ def code_state() -> dict[str, Any]:
 
 
 def run_matrix(
-    runner: Runner, cfg: Config, tasks: list[str], reps: int, out: Path, stamp: str
+    runner: Runner,
+    cfg: Config,
+    tasks: list[str],
+    reps: int,
+    out: Path,
+    stamp: str,
+    order: str = "pair",
 ) -> tuple[list[dict[str, Any]], int]:
-    """Sequential comparison matrix; returns (cells, exit code). Never parallel."""
-    from .coding import CODING_SCORER_VERSION
+    """Sequential comparison matrix; returns (cells, exit code). Never parallel.
+
+    ``order`` sets which arm runs first in each matched pair: "pair" alternates by pair index
+    (the original scheme), "balanced" alternates by instance index plus repetition, so repeated
+    runs of one instance also alternate.
+    """
     from .prompts import PROMPT_VERSION
-    from .tasks import SCORER_VERSION
+    from .tasks import scorer_version_for
 
     patch = source_patch()
     if patch:
@@ -462,12 +472,10 @@ def run_matrix(
         # Per-task generator versions (staged tasks use their own generator).
         "generator_version": sorted({generate(t).generator_version for t in tasks}),
         # Per-task scorer versions (coding tasks use their own evaluator).
-        "scorer_version": sorted(
-            {
-                CODING_SCORER_VERSION if generate(t).kind == "coding" else SCORER_VERSION
-                for t in tasks
-            }
-        ),
+        "scorer_version": sorted({scorer_version_for(generate(t)) for t in tasks}),
+        "mode_order": order,
+        "tasks": tasks,
+        "reps": reps,
         "summary_policy": cfg.baseline.policy,
         "config": cfg.to_dict(),
         "code_state": code_state(),
@@ -477,15 +485,16 @@ def run_matrix(
     stopped = ""
     exit_code = 0
     for rep in range(1, reps + 1):
-        for task in tasks:
-            order = ["summary", "clm"] if pair % 2 == 0 else ["clm", "summary"]
-            for mode in order:
+        for index, task in enumerate(tasks):
+            parity = pair if order == "pair" else index + rep - 1
+            arms = ["summary", "clm"] if parity % 2 == 0 else ["clm", "summary"]
+            for mode in arms:
                 cell: dict[str, Any] = {
                     "task": task,
                     "rep": rep,
                     "mode": mode,
                     "pair": pair,
-                    "order": order,
+                    "order": arms,
                 }
                 if not stopped and runner.ledger.remaining_usd < cfg.budget.min_run_reserve_usd:
                     stopped = (
@@ -536,7 +545,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
     stamp = f"{datetime.now(UTC):%Y%m%dT%H%M%S}"
     out = _runs_dir(cfg) / "comparisons" / f"{stamp}.json"
     out.parent.mkdir(parents=True, exist_ok=True)
-    cells, code = run_matrix(runner, cfg, tasks, args.reps, out, stamp)
+    cells, code = run_matrix(runner, cfg, tasks, args.reps, out, stamp, args.order)
     done = sum(1 for c in cells if c["status"] != "missing")
     print(f"comparison {stamp}: {done}/{len(cells)} cells run; record {out}")
     if code:
@@ -633,6 +642,12 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--reps", type=int, default=2)
     c.add_argument("--tasks", default="", help=f"comma list (default {','.join(HELDOUT)})")
     c.add_argument("--max-usd", type=float, default=None)
+    c.add_argument(
+        "--order",
+        choices=("pair", "balanced"),
+        default="pair",
+        help="arm order: alternate by pair index (default) or by instance and repetition",
+    )
     c.set_defaults(func=cmd_compare)
 
     rp = sub.add_parser("report", help="markdown report from recorded runs and the ledger")

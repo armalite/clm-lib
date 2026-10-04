@@ -1,0 +1,83 @@
+{
+ "id": "005-harder-coding-accuracy",
+ "title": "Does CLM affect correctness on a coding task with changing, interacting requirements?",
+ "provenance": {
+  "source_repo": "https://github.com/armalite/clm-lib",
+  "calibration_commit": "817198b6a7a25082d4210255a003d4f53921eb93",
+  "calibration_tree_state": "HEAD plus uncommitted changes (invoice-gen/2 generator and reference, invoice-checks/2 evaluator with stage snapshots, balanced compare order, exporter scorer-metadata fix, exp005 config); source patch sha256 8325b1e23ce4deded81835cf0eaaae40a11c3debc87a56ee8ed4c04da39dc76f, saved locally in runs/provenance/exp005-calibration.patch; no source edits during calibration",
+  "generator_version": "invoice-gen/2",
+  "scorer": "invoice-checks/2 (recorded in each run's evaluator/score.json)",
+  "summary_policy": "token-tail/1",
+  "prompt_version": "2026-10-04.1",
+  "prompt_caching": "not used",
+  "price_source": "https://platform.claude.com/docs/en/about-claude/pricing (retrieved 2026-10-04)",
+  "budget": "ledger ceiling set once, explicitly, from USD 38.916744 to USD 46.213524 (spend at change USD 16.213524) for at most USD 30 of experiment-005 spend; calibration sub-limit USD 10",
+  "outcome": "calibration only: both workload levels produced strict success in all 8 runs, so by the pre-registered rule the evaluation was not run"
+ },
+ "settings": {
+  "config": "configs/exp005.toml",
+  "model": "claude-opus-5-5",
+  "effort": "low",
+  "max_calls": 45,
+  "max_output_tokens": 4096,
+  "context_budget_tokens": 8000,
+  "pressure_ratio": 0.7,
+  "recovery_reserve_tokens": 1000,
+  "exec_timeout_s": 30,
+  "baseline_policy": "token-tail/1",
+  "tail_ratio": 0.15,
+  "newest_ratio": 0.25,
+  "target_ratio": 0.5,
+  "calibration_tasks": [
+   "coding2-dev-1",
+   "coding2-dev-2",
+   "coding2h-dev-1",
+   "coding2h-dev-2"
+  ],
+  "evaluation_tasks": [],
+  "planned_evaluation": "coding2h-eval-1..6 (or coding2-eval-1..6) x 3 repetitions x 2 arms, --order balanced; not run"
+ },
+ "runs": [
+  {
+   "run_id": "20261004T224741-summary-coding2-dev-1-7820",
+   "role": "calibration",
+   "note": "calibration B1a: token-tail/1 baseline on coding2-dev-1 (base workload)"
+  },
+  {
+   "run_id": "20261004T224934-clm-coding2-dev-1-e39f",
+   "role": "calibration",
+   "note": "calibration B1b: clm on coding2-dev-1 (matched)"
+  },
+  {
+   "run_id": "20261004T225109-clm-coding2-dev-2-e628",
+   "role": "calibration",
+   "note": "calibration B2a: clm on coding2-dev-2 (base workload)"
+  },
+  {
+   "run_id": "20261004T225247-summary-coding2-dev-2-4c47",
+   "role": "calibration",
+   "note": "calibration B2b: token-tail/1 baseline on coding2-dev-2 (matched)"
+  },
+  {
+   "run_id": "20261004T225529-summary-coding2h-dev-1-caad",
+   "role": "calibration",
+   "note": "calibration H1a: token-tail/1 baseline on coding2h-dev-1 (harder variant)"
+  },
+  {
+   "run_id": "20261004T225826-clm-coding2h-dev-1-ce5f",
+   "role": "calibration",
+   "note": "calibration H1b: clm on coding2h-dev-1 (matched)"
+  },
+  {
+   "run_id": "20261004T230046-clm-coding2h-dev-2-5f50",
+   "role": "calibration",
+   "note": "calibration H2a: clm on coding2h-dev-2 (harder variant)"
+  },
+  {
+   "run_id": "20261004T230250-summary-coding2h-dev-2-05a6",
+   "role": "calibration",
+   "note": "calibration H2b: token-tail/1 baseline on coding2h-dev-2 (matched)"
+  }
+ ],
+ "comparisons": []
+}

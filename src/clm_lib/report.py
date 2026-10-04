@@ -251,11 +251,21 @@ def build_report(
             "- by call kind: " + ", ".join(f"{k} ${v:.4f}" for k, v in sorted(by_kind.items())),
             "",
         ]
+    coding_scorers = sorted(
+        {
+            str(_load(d / "evaluator" / "score.json").get("scorer_version"))
+            for d, _ in runs
+            if (d / "evaluator" / "truth.json").exists()
+            and _load(d / "evaluator" / "truth.json").get("kind") == "coding"
+        }
+    )
     lines += [
         "## Runs",
         "",
-        "Outcome columns: recorded at run time (score/1) and re-scored from the same answer with "
-        "the current scorer (score/2, post-hoc `setting=value` correction).",
+        "Outcome columns: recorded at run time and re-scored with the current scorer. Incident "
+        "tasks: recorded with score/1 and re-scored from the same answer with score/2 (post-hoc "
+        "`setting=value` correction). Coding tasks: deterministic evaluator checks "
+        f"({', '.join(coding_scorers) or 'none'}); the recorded score is the current score.",
         "",
         "| run | label | mode | task | status | outcome (recorded) | outcome (current scorer) | strict (current) | components: cause/remedy/value/evidence, or coding checks by category | calls (act/rep/sum/retry) | exec | edits ok/unch/rej | summaries | pressure steps | in/out tokens | peak req tok (rep) | bound held | cost $ | elapsed s |",
         "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
@@ -344,8 +354,8 @@ def build_report(
                 continue
             k = len(ms)
             lines.append(
-                f"- {arm}: {k} runs; strict success score/1 "
-                f"{sum(m['score']['strict_success'] for m, _ in ms)}/{k}, score/2 "
+                f"- {arm}: {k} runs; strict success recorded "
+                f"{sum(m['score']['strict_success'] for m, _ in ms)}/{k}, current scorer "
                 f"{sum(bool(r and r['strict_success']) for _, r in ms)}/{k}; mean cost "
                 f"${sum(m['cost']['incurred_usd'] for m, _ in ms) / k:.4f}; mean calls "
                 f"{sum(m['counts']['provider_calls'] for m, _ in ms) / k:.2f}; edits "
@@ -355,7 +365,7 @@ def build_report(
             )
         lines.append("")
         lines += [
-            "| pair | task | rep | mode | status | outcome score/1 | strict score/1 | cost $ | run |",
+            "| pair | task | rep | mode | status | outcome (recorded) | strict (recorded) | cost $ | run |",
             "|---|---|---|---|---|---|---|---|---|",
         ]
         for cell in comp["cells"]:

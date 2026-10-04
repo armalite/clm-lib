@@ -1,6 +1,6 @@
 # clm-lib: Technical Specification
 
-Version: 1.6 | 5 October 2026
+Version: 1.7 | 5 October 2026
 
 Repository: `clm-lib` | Python package: `clm_lib` | CLI: `clm-lib`
 
@@ -12,6 +12,7 @@ Version history:
 - 1.4: experiment write-ups move to the results repository, and the exporter preserves human-maintained documents (§13). The blog notes and detailed results move there too (§9).
 - 1.5: adds a selectable, versioned summary-baseline policy (§14) for experiment 003. The original policy stays the default.
 - 1.6: adds a coding task family with changing requirements and a sandboxed evaluator (§15), and an explicit, recorded ledger-ceiling change.
+- 1.7: adds a second coding generator with interacting, partially changing rules, an evaluator with richer categories, exact type checks and stage snapshots (§16), a balanced comparison order, and per-task scorer metadata in comparisons and exports.
 
 ## 1. Purpose and intended outcome
 
@@ -338,3 +339,19 @@ The summary baseline's policy is selected by `[baseline] policy`, and recorded i
   - **Categories:** `retained` (regression), `replaced` (with stale-rule detection) and `final_stage`.
   - **Strict success:** all checks pass and the agent submitted. Checks are components of a task, not independent samples.
 - **Ledger ceiling:** it may be changed only by an explicit command with a recorded reason (`ceiling_history`). It is never raised automatically, and opening the ledger with a lower configured ceiling still lowers it.
+
+## 16. Coding tasks with interacting, partially changing rules
+
+- **Generator:** `invoice-gen/2` (`coding2.py`, reference rules in `invoice_ref2.py`). `invoice-gen/1` stays unchanged and reproducible.
+- **Workload levels:** a base workload (`coding2-*`, 6 stages) and a predefined harder variant (`coding2h-*`, the same schedule plus 2 stages), both defined before any calibration.
+- **Rules:** rules interact across the calculation, and a CHANGED rule may replace only part of an earlier rule. It names the stage it modifies; the parts not mentioned stay in force. Requirements stay precise and rereadable. Visible tests are rewritten at each stage for every rule in force.
+- **Disclosure:** checks and visible tests use only fields and functions disclosed by that stage.
+- **Evaluator `invoice-checks/2`:**
+  - It keeps every §15 guarantee: host-side generation, inputs different from the visible tests, scoring in a fresh sandbox, and no host execution of model code.
+  - **Categories:** `retained`, `replaced` (with the old rule's result recorded, so stale-rule output is distinguished from other failures), `kept_part`, `interaction` and `final_stage`, plus a `boundary` flag.
+  - **Exact types:** return types and keys are checked exactly; a missing function or a wrong type fails.
+  - **Wording:** a failure of a retained rule is a *retained-rule failure*. It is a *regression* only with evidence that the rule worked earlier.
+  - **Snapshots:** on each `advance`, the runtime copies the workspace host-side, outside every mount. After the run, each copy is scored against hidden checks for the rules then in force.
+  - **Validation:** the evaluator is validated offline against an independently written correct implementation and deliberately faulty ones: forgotten and outdated rules, over-applied partial changes, calculation-order mistakes and interaction mistakes.
+- **Comparison order:** `compare --order balanced` alternates the first arm across instances and across repetitions within an instance. The default `pair` order is unchanged.
+- **Scorer metadata:** the comparison `frozen.scorer_version` and the export manifest's `exported_with.current_scorer` report each task's own scorer. A selection mixing scorers gives a sorted list.

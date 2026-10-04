@@ -30,7 +30,6 @@ from typing import Any
 
 from .baseline import SummaryPolicy
 from .budget import BudgetExhausted, Ledger, ModelPrice, input_token_bound
-from .coding import CODING_SCORER_VERSION
 from .config import Config
 from .context import (
     CONTEXT_FILENAME,
@@ -59,10 +58,10 @@ from .provider import (
     ProviderError,
 )
 from .tasks import (
-    SCORER_VERSION,
     TaskInstance,
     no_answer_score,
     score_answer,
+    scorer_version_for,
 )
 from .tracing import RunTrace, now_iso, sha256_text, snapshot_files
 
@@ -963,6 +962,13 @@ class _Run:
         """Release the next evidence stage (staged tasks only)."""
         thought = str(action.get("thought", ""))[:1000]
         if self.stage < self.task.n_stages:
+            if getattr(self.task.truth, "snapshot_checks", None):
+                # Host-side copy of the workspace at the end of this stage (evaluator-only).
+                shutil.copytree(
+                    self.ws,
+                    self.dir / "evaluator" / "snapshots" / f"stage-{self.stage}",
+                    ignore=self._submission_ignore(),
+                )
             self.stage += 1
             self.task.write_fixtures(self.fx, self.stage)
             released = self.task.stages[self.stage - 1]
@@ -1110,19 +1116,21 @@ class _Run:
             "timeline": tl,
         }
 
-    def evaluate_coding(self, completed: bool) -> Any:
-        """Score the submitted workspace in a fresh sandbox; never run it on the host."""
-        from .coding import EVAL_RUNNER, checks_json, score_coding
-
-        ev = self.dir / "evaluator"
-        skip = shutil.ignore_patterns(
+    @staticmethod
+    def _submission_ignore() -> Any:
+        return shutil.ignore_patterns(
             CONTEXT_FILENAME, f".{CONTEXT_FILENAME}.host-tmp", "spill", "__pycache__"
         )
-        shutil.copytree(self.ws, ev / "submission", ignore=skip)  # recorded submission
-        work, fx = ev / "_eval_work", ev / "_eval_fixtures"
-        shutil.copytree(ev / "submission", work)  # disposable copy the evaluation may alter
+
+    def _sandbox_eval(
+        self, runner_code: str, source: Path, checks: str, name: str
+    ) -> tuple[str | None, str | None]:
+        """Run evaluator code against a disposable copy of ``source`` in a fresh sandbox."""
+        ev = self.dir / "evaluator"
+        work, fx = ev / f"_eval_work_{name}", ev / f"_eval_fixtures_{name}"
+        shutil.copytree(source, work)  # disposable copy the evaluation may alter
         fx.mkdir()
-        (fx / "checks.json").write_text(checks_json(self.task.truth), encoding="utf-8")
+        (fx / "checks.json").write_text(checks, encoding="utf-8")
         error: str | None = None
         output: str | None = None
         if not isinstance(self.r.executor, DockerExecutor):
@@ -1130,17 +1138,46 @@ class _Run:
         else:
             evaluator = replace(self.r.executor, timeout_s=180, output_cap_bytes=2_000_000)
             try:
-                res = evaluator.run(EVAL_RUNNER, work, fx)
+                res = evaluator.run(runner_code, work, fx)
                 output = res.stdout
-                self.trace.write("evaluator/eval_stdout.txt", res.stdout)
-                self.trace.write("evaluator/eval_stderr.txt", res.stderr)
+                self.trace.write(f"evaluator/{name}_stdout.txt", res.stdout)
+                self.trace.write(f"evaluator/{name}_stderr.txt", res.stderr)
                 if res.timed_out or res.exit_code not in (0, None):
                     error = f"evaluator exit {res.exit_code} timed_out={res.timed_out}"
             except ExecutorUnavailable as exc:
                 error = f"evaluator unavailable: {exc}"
         shutil.rmtree(work, ignore_errors=True)
         shutil.rmtree(fx, ignore_errors=True)
-        score = score_coding(self.task.truth, output, completed, error)
+        return output, error
+
+    def evaluate_coding(self, completed: bool) -> Any:
+        """Score the submitted workspace in a fresh sandbox; never run it on the host."""
+        from . import coding, coding2
+
+        ev = self.dir / "evaluator"
+        shutil.copytree(self.ws, ev / "submission", ignore=self._submission_ignore())
+        truth = self.task.truth
+        score: Any
+        if self.task.generator_version != coding2.GENERATOR_VERSION:
+            output, error = self._sandbox_eval(
+                coding.EVAL_RUNNER, ev / "submission", coding.checks_json(truth), "eval"
+            )
+            score = coding.score_coding(truth, output, completed, error)
+        else:
+            output, error = self._sandbox_eval(
+                coding2.EVAL_RUNNER, ev / "submission", coding2.checks_json(truth), "eval"
+            )
+            snaps: dict[int, str | None] = {}
+            for stage in sorted(truth.snapshot_checks):
+                src = ev / "snapshots" / f"stage-{stage}"
+                if src.is_dir():
+                    snaps[stage], _ = self._sandbox_eval(
+                        coding2.EVAL_RUNNER,
+                        src,
+                        coding2.snapshot_checks_json(truth, stage),
+                        f"snapshot_{stage}",
+                    )
+            score = coding2.score_coding(truth, output, completed, error, snaps)
         self.trace.event(
             "coding_evaluation",
             outcome=score.outcome,
@@ -1169,9 +1206,7 @@ class _Run:
             {
                 **score.to_dict(),
                 "components": score.components,
-                "scorer_version": CODING_SCORER_VERSION
-                if self.task.kind == "coding"
-                else SCORER_VERSION,
+                "scorer_version": scorer_version_for(self.task),
             },
         )
         elapsed = time.monotonic() - self.t_start

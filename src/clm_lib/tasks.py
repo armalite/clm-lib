@@ -81,6 +81,16 @@ INSTANCES: dict[str, InstanceSpec] = {
     "coding-eval-2": InstanceSpec("coding-eval-2", 4202, "coding_invoice", "coding-eval"),
     "coding-eval-3": InstanceSpec("coding-eval-3", 4203, "coding_invoice", "coding-eval"),
     "coding-eval-4": InstanceSpec("coding-eval-4", 4204, "coding_invoice", "coding-eval"),
+    # Experiment 005: interacting, partially changing rules (coding2.py, invoice-gen/2).
+    # coding2-* is the 6-stage base workload, coding2h-* the predefined 8-stage harder variant.
+    **{
+        f"{prefix}-{split}-{i}": InstanceSpec(
+            f"{prefix}-{split}-{i}", seed0 + i, "coding_invoice2", f"{prefix}-{split}"
+        )
+        for prefix, base in (("coding2", 5000), ("coding2h", 6000))
+        for split, n, seed0 in (("dev", 2, base + 100), ("eval", 6, base + 200))
+        for i in range(1, n + 1)
+    },
 }
 HELDOUT = ("heldout-1", "heldout-2", "heldout-3")
 STAGED_EVAL = ("staged-eval-1", "staged-eval-2", "staged-eval-3")
@@ -124,6 +134,8 @@ class TaskInstance:
     kind: str = "incident"  # "incident" | "coding"
     # Files copied into the agent workspace at the start (coding tasks: the project skeleton).
     workspace_seed: dict[str, str] = field(default_factory=dict)
+    # Scorer version for this task; empty means the task kind's default (see scorer_version_for).
+    scorer_version: str = ""
 
     @property
     def staged(self) -> bool:
@@ -868,8 +880,23 @@ def generate(name: str) -> TaskInstance:
         from .coding import generate_coding
 
         return generate_coding(spec)
+    if spec.scenario == "coding_invoice2":
+        from .coding2 import generate_coding2
+
+        return generate_coding2(spec)
     files, truth = _GENERATORS[spec.scenario](spec)
     return TaskInstance(spec=spec, prompt=task_prompt(files), files=files, truth=truth)
+
+
+def scorer_version_for(task: TaskInstance) -> str:
+    """The scorer that evaluates ``task`` (coding tasks use their own evaluators)."""
+    if task.scorer_version:
+        return task.scorer_version
+    if task.kind == "coding":
+        from .coding import CODING_SCORER_VERSION
+
+        return CODING_SCORER_VERSION
+    return SCORER_VERSION
 
 
 # ------------------------------------------------------------------- scoring

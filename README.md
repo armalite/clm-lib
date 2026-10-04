@@ -75,6 +75,11 @@ The answer has four fields: `root_cause`, `required_value`, `remedy` and `eviden
   - Each check targets one rule and is tagged *retained* (an unchanged earlier rule; failures are regressions), *replaced* (a superseded rule; reproducing the old result counts as a stale rule) or *final_stage*.
   - **Strict success** means every check passes and the agent submitted.
 
+**Coding tasks with interacting, partially changing rules** (`coding2-*` with 6 stages, `coding2h-*` with 8; `src/clm_lib/coding2.py`, generator `invoice-gen/2`, scorer `invoice-checks/2`):
+- **Rules:** they interact (bulk lines and tier eligibility, discount-dependent and taxable shipping, coupon order, refunds), and a CHANGED rule may replace only part of an earlier rule.
+- **Hidden checks:** they are tagged *retained*, *replaced* (with stale-rule detection), *kept_part*, *interaction* or *final_stage*, and may be flagged *boundary*. Return types are checked exactly.
+- **Snapshots:** the workspace is snapshotted host-side at each `advance`, so a failed retained rule is called a regression only if it had passed its checks at an earlier stage.
+
 ## Quickstart (offline, no API calls)
 
 Prerequisites: Python 3.11+ with [uv](https://docs.astral.sh/uv/), and a running Docker daemon.
@@ -136,7 +141,7 @@ Live commands are paid. Each call goes through a persistent ledger (`runs/ledger
 | `clm-lib smoke` | One minimal live call with structured-output and accounting checks |
 | `clm-lib guided --task dev` | Prompted helper demonstration (not comparative) |
 | `clm-lib run --mode summary\|clm\|guided --task NAME` | One live run (used for calibration) |
-| `clm-lib compare --reps 2 [--tasks a,b,c]` | Frozen comparison: tasks × 2 modes × reps, mode order alternating per pair |
+| `clm-lib compare --reps 2 [--tasks a,b,c] [--order pair\|balanced]` | Frozen comparison: tasks × 2 modes × reps. The mode order alternates per pair, or with `balanced`, across instances and across repetitions of each instance |
 | `clm-lib report --out runs/report.md` | Markdown report from recorded evidence |
 | `clm-lib export experiments/<id> --dest ../clm-lib-test-results` | Copy an experiment's evidence to the results repo |
 | `clm-lib budget` | Show the ledger |
@@ -186,6 +191,8 @@ src/clm_lib/
   tasks.py      single-stage incident fixtures + scorer
   staged.py     staged incident fixtures
   coding.py     coding task (changing requirements), reference model, sandboxed evaluator
+  coding2.py    coding task with interacting, partially changing rules (invoice-gen/2) + evaluator
+  invoice_ref2.py  standalone reference rules for invoice-gen/2
   prompts.py    frozen prompt text and request rendering
   report.py     markdown report from evidence
   export.py     results-repository export

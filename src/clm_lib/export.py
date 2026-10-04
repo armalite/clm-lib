@@ -203,6 +203,16 @@ def _metrics_row(run_id: str, role: str, src: Path, charged: float) -> dict[str,
             import_error=rs["import_error"],
             evaluation_error=rs.get("evaluation_error"),
         )
+        if "retained_rule_failures" in rs:  # invoice-checks/2
+            row.update(
+                retained_rule_failures=rs["retained_rule_failures"],
+                retained_failed_modules=json.dumps(rs["retained_failed_modules"]),
+                regressions=json.dumps(rs["regressions"]),
+                stale_modules=json.dumps(rs["stale_modules"]),
+                boundary_passed=rs["boundary"]["passed"],
+                boundary_total=rs["boundary"]["total"],
+                type_errors=rs["type_errors"],
+            )
         for cat, v in sorted(rs["by_category"].items()):
             row[f"{cat}_passed"], row[f"{cat}_total"], row[f"{cat}_stale"] = (
                 v["passed"],
@@ -240,6 +250,15 @@ def _metrics_row(run_id: str, role: str, src: Path, charged: float) -> dict[str,
     for k, v in (m.get("management") or {}).items():
         row[f"mgmt_{k}"] = json.dumps(v) if isinstance(v, (dict, list)) else v
     return row
+
+
+def current_scorer(rows: list[dict[str, Any]]) -> str | list[str]:
+    """The scorer(s) behind the exported rows' current scores: one version, or a sorted list
+    when the selection mixes task kinds."""
+    found = sorted({r["scorer_current"] for r in rows if r.get("scorer_current")})
+    if not found:
+        return SCORER_VERSION
+    return found[0] if len(found) == 1 else found
 
 
 def export_experiment(
@@ -387,7 +406,7 @@ def export_experiment(
         "format": EXPORT_FORMAT,
         "experiment": exp_id,
         "title": spec["title"],
-        "exported_with": {"clm_lib_version": __version__, "current_scorer": SCORER_VERSION},
+        "exported_with": {"clm_lib_version": __version__, "current_scorer": current_scorer(rows)},
         "provenance": spec.get("provenance", {}),
         "settings": spec.get("settings", {}),
         "runs": runs_meta,
