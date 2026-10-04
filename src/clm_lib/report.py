@@ -18,17 +18,37 @@ def _events(run_dir: Path) -> list[dict[str, Any]]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
 
 
-def _context_ids(payload: dict[str, Any]) -> list[str]:
+def context_entries(payload: dict[str, Any]) -> list[dict[str, str]]:
+    """Decode the <working_context> entries exactly as they were sent."""
     user = payload["messages"][0]["content"]
     block = user.split("<working_context>\n", 1)[1].split("\n</working_context>", 1)[0]
-    return [json.loads(line)["id"] for line in block.splitlines() if line.strip()]
+    return [json.loads(line) for line in block.splitlines() if line.strip()]
+
+
+def _revision(run_dir: Path, number: int | None) -> list[dict[str, str]]:
+    if number is None:
+        return []
+    path = run_dir / "context" / f"rev-{number:04d}.json"
+    return _load(path)["entries"] if path.exists() else []
+
+
+def _distinctive_lines(body: str, min_len: int = 40) -> list[str]:
+    seen: list[str] = []
+    for line in body.splitlines():
+        line = line.strip()
+        if len(line) >= min_len and line not in seen:
+            seen.append(line)
+    return seen[:200]
 
 
 def edit_evidence(run_dir: Path) -> list[dict[str, Any]]:
-    """For each accepted content-changing edit, check the next action request.
+    """Check each accepted content-changing edit against the very next action request.
 
-    Verifies, from saved payloads, that ids removed by the edit are absent from the
-    very next action request while the event log still holds their original text.
+    Structural check: removed ids are absent and added ids present in the next request.
+    Content check: the next request's working context starts with exactly the accepted
+    revision's entries (id, role, body), rewritten entries carry the new body, and
+    distinctive lines of removed entries are searched for anywhere in the next request's
+    entries (they may legitimately reappear if the step's code printed them again).
     """
     events = _events(run_dir)
     out = []
@@ -43,8 +63,12 @@ def edit_evidence(run_dir: Path) -> list[dict[str, Any]]:
             ),
             None,
         )
+        before = _revision(run_dir, ev.get("before_revision"))
+        after = _revision(run_dir, ev.get("after_revision"))
         rec: dict[str, Any] = {
             "step": ev["step"],
+            "before_revision": ev.get("before_revision"),
+            "after_revision": ev.get("after_revision"),
             "removed": ev.get("removed", []),
             "added": ev.get("added", []),
             "rewritten": ev.get("rewritten", []),
@@ -52,12 +76,37 @@ def edit_evidence(run_dir: Path) -> list[dict[str, Any]]:
         }
         if nxt is None:
             rec["next_request"] = "none (run ended)"
+            rec["content_verdict"] = "not_applicable"
+            out.append(rec)
+            continue
+        sent = context_entries(_load(run_dir / nxt["file"])["payload"])
+        ids = [e["id"] for e in sent]
+        rec["next_request"] = nxt["file"]
+        rec["structural_removed_absent"] = all(r not in ids for r in rec["removed"])
+        rec["structural_added_present"] = all(a in ids for a in rec["added"])
+        prefix_ok = bool(after) and sent[: len(after)] == after
+        rec["content_prefix_equals_accepted_revision"] = prefix_ok
+        rec["appended_after_edit"] = ids[len(after) :] if prefix_ok else None
+        old_bodies = {e["id"]: e["body"] for e in before}
+        new_bodies = {e["id"]: e["body"] for e in sent}
+        rec["rewritten_verified"] = all(
+            new_bodies.get(r) not in (None, old_bodies.get(r)) for r in rec["rewritten"]
+        )
+        reappear: dict[str, Any] = {}
+        for rid in rec["removed"]:
+            lines = _distinctive_lines(old_bodies.get(rid, ""))
+            hits = sorted({e["id"] for e in sent for ln in lines if ln in e["body"]})
+            found = sum(1 for ln in lines if any(ln in e["body"] for e in sent))
+            if lines:
+                reappear[rid] = {"distinctive_lines": len(lines), "found": found, "in": hits}
+        rec["removed_content_reappearance"] = reappear
+        any_back = any(v["found"] for v in reappear.values())
+        if not (prefix_ok and rec["rewritten_verified"] and rec["structural_removed_absent"]):
+            rec["content_verdict"] = "mismatch"
+        elif any_back:
+            rec["content_verdict"] = "replaced; some removed text reappears in later entries"
         else:
-            payload = _load(run_dir / nxt["file"])["payload"]
-            ids = _context_ids(payload)
-            rec["next_request"] = nxt["file"]
-            rec["removed_absent_from_next_request"] = all(r not in ids for r in rec["removed"])
-            rec["added_present_in_next_request"] = all(a in ids for a in rec["added"])
+            rec["content_verdict"] = "replaced; removed text absent from next request"
         out.append(rec)
     return out
 
@@ -114,7 +163,10 @@ def build_report(runs_dir: Path, ledger_path: Path) -> str:
         h = m["helpers"]
         lines.append(
             f"- {m['run_id']} ({m['mode']}): {len(ev)} accepted content-changing edits; "
-            f"helpers created {h['created']}, invocations {len(h['invocations'])}, revisions {len(h['revised'])}"
+            f"helpers created {h.get('created')}; candidate invocation steps "
+            f"{h.get('candidate_invocation_steps')}; verified executions "
+            f"{h.get('verified_execution_steps')}; verified with accepted edit "
+            f"{h.get('verified_execution_with_accepted_edit_steps')}"
         )
         for rec in ev:
             lines.append(f"  - step {rec['step']}: {json.dumps(rec)}")

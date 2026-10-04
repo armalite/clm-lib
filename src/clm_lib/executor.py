@@ -6,7 +6,10 @@ host-subprocess fallback: if Docker is unavailable, execution is refused.
 
 from __future__ import annotations
 
+import json
 import os
+import re
+import secrets
 import shutil
 import subprocess
 import threading
@@ -18,6 +21,56 @@ from typing import IO, Protocol
 
 SANDBOX_FIXTURES = "/task/fixtures"
 SANDBOX_WORKSPACE = "/task/workspace"
+RUNTIME_MARKER = "@@CLM-RUNTIME"
+
+# Runs inside the container as `python -E -s -c BOOTSTRAP <nonce>`; model code arrives
+# on stdin. A Python audit hook records which workspace files the code imported,
+# compiled, opened or spawned, and an atexit hook reports them on stderr behind a
+# per-execution nonce. The host strips that line before the model sees stderr.
+# This is tamper-evident instrumentation for helper-use evidence, not a security
+# control: code that calls os._exit or is killed produces no record.
+BOOTSTRAP = r"""
+import sys, os, json, atexit
+_n = sys.argv[1]; sys.argv = ['-']
+_ws = '/task/workspace/'
+_rec = {'opened': [], 'compiled': [], 'spawned': []}
+def _p(x):
+    try:
+        x = os.fsdecode(x)
+        return None if x.startswith('<') else os.path.abspath(x)
+    except Exception:
+        return None
+def _hook(ev, args):
+    if ev == 'open' and args:
+        p = _p(args[0])
+        if p and p.startswith(_ws) and len(_rec['opened']) < 200:
+            _rec['opened'].append([p, str(args[1]) if len(args) > 1 else ''])
+    elif ev == 'compile' and len(args) > 1 and isinstance(args[1], str):
+        p = _p(args[1])
+        if p and p.startswith(_ws) and p not in _rec['compiled']:
+            _rec['compiled'].append(p)
+    elif ev in ('subprocess.Popen', 'os.system', 'os.exec', 'os.posix_spawn'):
+        if len(_rec['spawned']) < 50:
+            _rec['spawned'].append(repr(args)[:300])
+def _emit():
+    mods = []
+    for m in list(sys.modules.values()):
+        f = getattr(m, '__file__', None)
+        if isinstance(f, str):
+            f = os.path.abspath(f)
+            if f.startswith(_ws):
+                mods.append(f)
+    _rec['imported'] = sorted(set(mods))
+    try:
+        sys.__stderr__.write('\n@@CLM-RUNTIME ' + _n + ' ' + json.dumps(_rec) + '\n')
+        sys.__stderr__.flush()
+    except Exception:
+        pass
+_src = sys.stdin.read()
+atexit.register(_emit)
+sys.addaudithook(_hook)
+exec(compile(_src, '<model-code>', 'exec'), {'__name__': '__main__', '__builtins__': __builtins__})
+"""
 
 
 class ExecutorUnavailable(RuntimeError):
@@ -34,6 +87,9 @@ class ExecResult:
     stderr_bytes: int
     duration_s: float
     error: str | None = None
+    # In-container audit record (imported/compiled/opened/spawned workspace files), or
+    # None if the process ended without emitting it.
+    runtime_trace: dict[str, object] | None = None
 
     @property
     def truncated(self) -> bool:
@@ -50,7 +106,9 @@ class Executor(Protocol):
     def describe(self) -> dict[str, object]: ...
 
 
-def _bounded_reader(stream: IO[bytes], cap: int, sink: list[bytes], total: list[int]) -> None:
+def _bounded_reader(
+    stream: IO[bytes], cap: int, sink: list[bytes], total: list[int], tail: bytearray | None = None
+) -> None:
     kept = 0
     while True:
         chunk = stream.read(65536)
@@ -61,6 +119,28 @@ def _bounded_reader(stream: IO[bytes], cap: int, sink: list[bytes], total: list[
             part = chunk[: cap - kept]
             sink.append(part)
             kept += len(part)
+        if tail is not None:
+            tail.extend(chunk)
+            del tail[:-16384]
+
+
+def _extract_runtime(
+    head: str, tail: bytes, total: int, nonce: str
+) -> tuple[str, int, dict[str, object] | None]:
+    """Remove the nonce-tagged runtime line from stderr; return (stderr, bytes, record)."""
+    pat = re.compile(r"\n?" + re.escape(f"{RUNTIME_MARKER} {nonce} ") + r"(\{.*\})\n?")
+    record = None
+    text = tail.decode("utf-8", errors="replace")
+    matches = list(pat.finditer(text))
+    if matches:
+        m = matches[-1]
+        try:
+            record = json.loads(m.group(1))
+        except json.JSONDecodeError:
+            record = None
+        total -= len(m.group(0).encode("utf-8"))
+    head = pat.sub("", head)
+    return head, max(total, 0), record
 
 
 def _decode(parts: list[bytes]) -> str:
@@ -94,6 +174,8 @@ class DockerExecutor:
             "root_fs": "read-only; /tmp tmpfs",
             "mounts": {SANDBOX_FIXTURES: "ro", SANDBOX_WORKSPACE: "rw"},
             "env": "HOME=/tmp only (host environment not forwarded)",
+            "instrumentation": "in-container audit hook records workspace imports/compiles/"
+            "opens/spawns (tamper-evident, not a security control)",
         }
 
     def _docker_env(self) -> dict[str, str]:
@@ -134,7 +216,7 @@ class DockerExecutor:
             return False, f"sandbox image {self.image} not present; run: docker pull {self.image}"
         return True, f"docker {info.stdout.strip()}, image {self.image} {img.stdout.strip()[:19]}"
 
-    def command(self, name: str, workspace: Path, fixtures: Path) -> list[str]:
+    def command(self, name: str, workspace: Path, fixtures: Path, nonce: str) -> list[str]:
         ws = workspace.resolve()
         fx = fixtures.resolve()
         return [
@@ -180,11 +262,15 @@ class DockerExecutor:
             "timeout",
             "--kill-after=2",
             str(int(self.timeout_s)),
-            # -E/-s: ignore PYTHON* env and user site; cwd stays importable for helpers.
+            # -E/-s: ignore PYTHON* env and user site; -B: no .pyc files in the workspace.
+            # cwd ('' on sys.path with -c) stays importable for helpers.
             "python",
             "-E",
             "-s",
-            "-",
+            "-B",
+            "-c",
+            BOOTSTRAP,
+            nonce,
         ]
 
     def run(self, code: str, workspace: Path, fixtures: Path) -> ExecResult:
@@ -192,7 +278,8 @@ class DockerExecutor:
         if not ok:
             raise ExecutorUnavailable(why)
         name = f"clm-exec-{uuid.uuid4().hex[:12]}"
-        cmd = self.command(name, workspace, fixtures)
+        nonce = secrets.token_hex(8)
+        cmd = self.command(name, workspace, fixtures, nonce)
         start = time.monotonic()
         proc = subprocess.Popen(
             cmd,
@@ -206,6 +293,7 @@ class DockerExecutor:
         err_parts: list[bytes] = []
         out_total = [0]
         err_total = [0]
+        err_tail = bytearray()
         readers = [
             threading.Thread(
                 target=_bounded_reader,
@@ -214,7 +302,7 @@ class DockerExecutor:
             ),
             threading.Thread(
                 target=_bounded_reader,
-                args=(proc.stderr, self.output_cap_bytes, err_parts, err_total),
+                args=(proc.stderr, self.output_cap_bytes, err_parts, err_total, err_tail),
                 daemon=True,
             ),
         ]
@@ -252,15 +340,19 @@ class DockerExecutor:
             error = "process killed (SIGKILL; memory or pid limit, or timeout escalation)"
         elif proc.returncode == 125:
             error = "docker failed to start the sandbox container"
+        stderr, stderr_bytes, record = _extract_runtime(
+            _decode(err_parts), bytes(err_tail), err_total[0], nonce
+        )
         return ExecResult(
             exit_code=proc.returncode,
             stdout=_decode(out_parts),
-            stderr=_decode(err_parts),
+            stderr=stderr,
             timed_out=timed_out,
             stdout_bytes=out_total[0],
-            stderr_bytes=err_total[0],
+            stderr_bytes=stderr_bytes,
             duration_s=round(duration, 3),
             error=error,
+            runtime_trace=record,
         )
 
     _checked: tuple[bool, str] | None = None

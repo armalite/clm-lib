@@ -71,7 +71,7 @@ Token counts are estimated as chars ÷ chars-per-token. The ratio starts at 3.0 
 
 ## Execution isolation
 
-`DockerExecutor.run` starts a fresh `docker run --rm -i` per execution and pipes the code to `timeout --kill-after=2 30 python -E -s -`. The container settings are:
+`DockerExecutor.run` starts a fresh `docker run --rm -i` per execution and runs `timeout --kill-after=2 30 python -E -s -B -c BOOTSTRAP <nonce>`. The model code is piped to it on stdin. The container settings are:
 - `--network none`, uid:gid of the invoking user (non-root), `--cap-drop ALL`, `no-new-privileges`;
 - `--memory 512m` (no swap), `--cpus 1`, `--pids-limit 128`;
 - `--read-only` with a 64 MB `/tmp` tmpfs and `HOME=/tmp`;
@@ -83,17 +83,44 @@ Image: `python:3.12-slim`, digest `sha256:dddfd7e07f9d15aeeca61529320492139d21ca
 
 Boundary checks: `test_sandbox_cannot_see_secret_env_or_evaluator_paths` and `clm-lib doctor --sandbox`. These check the configured boundary; they are not a proof of container security.
 
+**Execution instrumentation (helper evidence).** `BOOTSTRAP` reads the code from stdin and installs a Python audit hook. It then `exec`s the code as `__main__` (filename `<model-code>`). The hook records which `/task/workspace` files were opened, compiled or imported, plus any subprocess spawns. An `atexit` handler writes the record to stderr behind a per-execution random nonce, and the host strips that line before building the observation; byte counts are adjusted. This is tamper-evident, not tamper-proof: the nonce is visible in the container's `/proc`, and `os._exit` or a kill produces no record (`runtime_trace` is `None`). The Docker flags and mounts are unchanged.
+
+Helper evidence has three tiers, recorded per step in `summary.json` under `helpers.uses`:
+- **candidate**: the code text names a `.py` file that existed before the step (inferred, weak);
+- **verified execution**: the audit record shows the file was imported or compiled during an execution that exited 0;
+- **verified with accepted edit**: additionally, that step's `context.json` edit was accepted with changed content.
+
+"Reuse" is claimed only for the last tier in two or more steps (`reused_with_accepted_edit_in_2plus_steps`). Test: `test_helper_use_is_verified_not_just_inferred`.
+
 ## Accounting
 
 - `Ledger` (`runs/ledger.json`) persists across invocations. Its ceiling is fixed at creation and can only be lowered. `--max-usd` caps one command's spend.
-- Before every attempt, including actions, repairs, summaries, API retries and smoke calls, the runtime reserves a worst-case cost: request JSON chars ÷ 2 as input tokens, at the higher of the input and cache-write prices, plus `max_tokens` at the output price. If the reservation doesn't fit, nothing is sent and the run ends as `budget_exhausted`.
+- Before every attempt, including actions, repairs, summaries, API retries and smoke calls, the runtime reserves a cost bound. Input tokens are bounded by `input_token_bound(payload)`: the UTF-8 bytes of the system text, message content and output-config JSON, plus 2,048 tokens for framing and any hidden structured-output scaffolding. They are priced at the higher of the input and cache-write rates. `max_tokens` is priced at the output rate.
+  - The input bound is an **assumption-based bound, not a provider guarantee**: it assumes the tokenizer emits at most one token per UTF-8 byte.
+  - It is **checked on every live response**. If reported input tokens exceed the bound, or output exceeds `max_tokens`, the run stops as `accounting_bound_violated` (invalid for comparison).
+  - `smoke` additionally compares the bound with the free `count_tokens` endpoint.
+  - If the reservation doesn't fit, nothing is sent and the run ends as `budget_exhausted`.
+- **Pending reservations are persisted before dispatch** (`pending` in the ledger file).
+  - If the process is interrupted in-process (for example Ctrl-C), the attempt is settled as `interrupted:*` at the full reservation.
+  - If the process is killed, the next `Ledger.open` converts leftover pending entries to `unresolved_after_restart` at the full reservation.
+  - Opening is refused (`LedgerBusy`) while another live pid holds pending reservations.
+  - Tests: `tests/test_budget.py`, including a subprocess killed after reserving.
 - Settlement:
   - provider-reported usage × dated price;
-  - `0` for errors returned before generation (4xx, 429, 5xx);
-  - the **full reservation** for unknown outcomes (timeouts, connection drops), flagged `reservation_assumed`.
+  - `0` only for failures that are provably unbilled: 4xx, 429, and credential-chain failures before sending;
+  - the **full reservation** for potentially billed failures: 5xx, timeouts, connection drops, unexpected errors and interruptions. These are flagged `reservation_assumed` and reported separately as unresolved assumed charges.
   - A refusal is settled from its returned usage.
 - SDK-internal retries are disabled (`max_retries=0`), so every attempt is visible. Runtime retries (2, with backoff) count toward the 20-call cap.
 - Usage recorded: uncached input, cache-read, cache-creation, output and `thinking_tokens` (reported by the SDK as part of output; not added again). Locally estimated input tokens are recorded separately and labelled.
+
+## Edit evidence (report)
+
+`report.edit_evidence` checks every accepted content-changing edit against the very next action request's saved payload.
+- **Structural check:** removed IDs are absent and added IDs present.
+- **Content check:** the request's working context begins with exactly the accepted revision's entries (id, role and body), followed by the runtime-appended entries for that step.
+  - Rewritten entries carry the new body.
+  - Distinctive lines (≥ 40 chars) of removed entries are searched for in every entry of the next request. Removed text can legitimately reappear, for example if the same step printed it again. The verdict says so instead of passing on IDs alone.
+- Test: `test_edit_evidence_checks_content_and_reappearance`.
 
 ## Task family and scoring
 

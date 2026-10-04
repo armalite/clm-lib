@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from .baseline import SummaryPolicy
-from .budget import BudgetExhausted, Ledger, ModelPrice, reservation_input_tokens
+from .budget import BudgetExhausted, Ledger, ModelPrice, input_token_bound
 from .config import Config
 from .context import (
     CONTEXT_FILENAME,
@@ -46,7 +46,11 @@ from .tasks import GENERATOR_VERSION, Score, TaskInstance, no_answer_score, scor
 from .tracing import RunTrace, now_iso, sha256_text, snapshot_files
 
 MODES = ("summary", "clm", "guided")
-INVALID_FOR_COMPARISON = {"infrastructure_error", "executor_unavailable"}
+INVALID_FOR_COMPARISON = {
+    "infrastructure_error",
+    "executor_unavailable",
+    "accounting_bound_violated",
+}
 
 
 class _Stop(Exception):
@@ -218,7 +222,7 @@ class _Run:
         self.peak_req_est = 0
         self.peak_req_reported = 0
         self.peak_ctx_chars = 0
-        self.helpers: dict[str, Any] = {"created": {}, "revised": [], "invocations": []}
+        self.helpers: dict[str, Any] = {"created": {}, "revised": [], "uses": []}
         self.answer: dict[str, Any] | None = None
         self.started = now_iso()
         self.t_start = time.monotonic()
@@ -284,14 +288,10 @@ class _Run:
                     "max_calls", f"call cap {self.lim.max_calls} reached before {kind} call"
                 )
             payload = self.r.provider.payload(req)
-            chars = len(json.dumps(payload, ensure_ascii=False))
-            reserve = (
-                self.r.price.max_cost(reservation_input_tokens(chars), req.max_tokens)
-                if self.r.price
-                else 0.0
-            )
+            bound = input_token_bound(payload)
+            reserve = self.r.price.max_cost(bound, req.max_tokens) if self.r.price else 0.0
             try:
-                res = self.r.ledger.reserve(reserve, self.run_id, kind)
+                res = self.r.ledger.reserve(reserve, self.run_id, kind, bound)
             except BudgetExhausted as exc:
                 self.trace.event("budget_stop", kind=kind, reserve_usd=reserve, reason=str(exc))
                 raise _Stop("budget_exhausted", str(exc)) from exc
@@ -303,6 +303,7 @@ class _Run:
                     "step": self.step,
                     "attempt": attempt,
                     "est_input_tokens": est,
+                    "input_token_bound": bound,
                     "reserved_usd": reserve,
                     "context_revision": self.store.current.number,
                     "context_sha256": self.store.current.sha256,
@@ -328,43 +329,39 @@ class _Run:
             self.peak_req_est = max(self.peak_req_est, est)
             try:
                 resp = self.r.provider.complete(req)
-            except ProviderError as exc:
-                self.c.provider_errors += 1
-                billed_resp: ModelResponse | None = getattr(exc, "response", None)
-                if billed_resp is not None and self.r.price:
-                    actual: float | None = self.r.price.cost(billed_resp.usage)
-                elif exc.billing == "none":
-                    actual = 0.0
-                else:
-                    actual = None
+            except BaseException as exc:
+                if isinstance(exc, ProviderError):
+                    self._provider_error(exc, res, kind)
+                    if exc.kind == "refusal":
+                        raise _Stop("refused", "model refused the request") from exc
+                    if exc.retryable and attempt < retries:
+                        self.c.api_retries += 1
+                        self.r.sleep(min(30.0, 2.0 * 4**attempt))
+                        continue
+                    raise _Stop("infrastructure_error", str(exc)[:300]) from exc
+                # Interrupted or unexpected failure after dispatch: spend is unknown,
+                # so the full reservation is charged.
                 entry = self.r.ledger.settle(
-                    res,
-                    actual_usd=actual,
-                    status=f"error:{exc.kind}",
-                    usage=billed_resp.usage if billed_resp else None,
+                    res, actual_usd=None, status=f"interrupted:{type(exc).__name__}"
                 )
                 self.u.cost_usd += entry["charged_usd"]
-                if actual is None:
-                    self.u.assumed_cost_usd += entry["charged_usd"]
+                self.u.assumed_cost_usd += entry["charged_usd"]
                 self.trace.event(
-                    "provider_error",
+                    "provider_interrupted",
                     kind=kind,
-                    error_kind=exc.kind,
-                    message=str(exc)[:500],
-                    retryable=exc.retryable,
+                    error=type(exc).__name__,
                     charged_usd=entry["charged_usd"],
                     cost_basis=entry["cost_basis"],
                 )
-                if exc.kind == "refusal":
-                    raise _Stop("refused", "model refused the request") from exc
-                if exc.retryable and attempt < retries:
-                    self.c.api_retries += 1
-                    self.r.sleep(min(30.0, 2.0 * 4**attempt))
-                    continue
-                raise _Stop("infrastructure_error", str(exc)[:300]) from exc
+                raise
             cost = self.r.price.cost(resp.usage) if self.r.price else 0.0
             entry = self.r.ledger.settle(res, actual_usd=cost, status="ok", usage=resp.usage)
             self._add_usage(resp, cost, req)
+            reported = (
+                resp.usage.input_tokens
+                + resp.usage.cache_read_input_tokens
+                + resp.usage.cache_creation_input_tokens
+            )
             self.trace.event(
                 "response",
                 kind=kind,
@@ -377,9 +374,49 @@ class _Run:
                 usage_source=resp.usage_source,
                 cost_usd=round(cost, 6),
                 ledger_charged_usd=entry["charged_usd"],
+                input_token_bound=bound,
+                bound_held=reported <= bound and resp.usage.output_tokens <= req.max_tokens,
             )
+            if resp.usage_source == "provider" and (
+                reported > bound or resp.usage.output_tokens > req.max_tokens
+            ):
+                raise _Stop(
+                    "accounting_bound_violated",
+                    f"reported input {reported} (bound {bound}) / output "
+                    f"{resp.usage.output_tokens} (max {req.max_tokens}); reservations unsafe",
+                )
             return resp
         raise AssertionError("unreachable")
+
+    def _provider_error(self, exc: ProviderError, res: Any, kind: str) -> None:
+        """Settle a failed attempt: billed usage if returned, $0 only if provably unbilled."""
+        self.c.provider_errors += 1
+        billed_resp: ModelResponse | None = getattr(exc, "response", None)
+        if billed_resp is not None and self.r.price:
+            actual: float | None = self.r.price.cost(billed_resp.usage)
+        elif exc.billing == "none":
+            actual = 0.0
+        else:
+            actual = None  # potentially billed: charge the full reservation
+        entry = self.r.ledger.settle(
+            res,
+            actual_usd=actual,
+            status=f"error:{exc.kind}",
+            usage=billed_resp.usage if billed_resp else None,
+        )
+        self.u.cost_usd += entry["charged_usd"]
+        if actual is None:
+            self.u.assumed_cost_usd += entry["charged_usd"]
+        self.trace.event(
+            "provider_error",
+            kind=kind,
+            error_kind=exc.kind,
+            message=str(exc)[:500],
+            retryable=exc.retryable,
+            billing=exc.billing,
+            charged_usd=entry["charged_usd"],
+            cost_basis=entry["cost_basis"],
+        )
 
     def _add_usage(self, resp: ModelResponse, cost: float, req: ModelRequest) -> None:
         u = resp.usage
@@ -524,7 +561,12 @@ class _Run:
         return user, est, pressure, recovery
 
     # ---------------------------------------------------------- execution
-    def _track_helpers(self, before: dict[str, str], after: dict[str, str], code: str) -> list[str]:
+    def _track_files(self, before: dict[str, str], after: dict[str, str], code: str) -> list[str]:
+        """Snapshot changed workspace files; return *candidate* helper invocations.
+
+        Candidates are inferred from the code text (file name or import statement).
+        They are not evidence that a helper ran; see ``_record_helper_use``.
+        """
         skip = {CONTEXT_FILENAME, f".{CONTEXT_FILENAME}.host-tmp"}
         changed = sorted(
             p
@@ -536,9 +578,10 @@ class _Run:
             self.trace.write(f"files/step-{self.step:03d}/after/{p}", after[p])
             if p in before:
                 self.trace.write(f"files/step-{self.step:03d}/before/{p}", before[p])
-        py_before = [p for p in before if p.endswith(".py") and p not in skip]
-        invoked = []
-        for p in py_before:
+        candidates = []
+        for p in sorted(before):  # only helpers that existed before this step
+            if not p.endswith(".py") or p in skip:
+                continue
             mod = Path(p).with_suffix("").as_posix().replace("/", ".")
             stem = Path(p).stem
             if (
@@ -547,9 +590,7 @@ class _Run:
                 or re.search(rf"\bimport\s+{re.escape(stem)}\b", code)
                 or re.search(rf"\bfrom\s+\S*{re.escape(stem)}\s+import\b", code)
             ):
-                invoked.append(p)
-        if invoked:
-            self.helpers["invocations"].append({"step": self.step, "files": invoked})
+                candidates.append(p)
         for p in changed:
             if not p.endswith(".py"):
                 continue
@@ -563,9 +604,72 @@ class _Run:
                 step=self.step,
                 changed=changed,
                 removed=removed,
-                helper_invocations=invoked,
+                candidate_helper_invocations=candidates,
             )
-        return changed
+        return candidates
+
+    def _record_helper_use(
+        self,
+        res: ExecResult,
+        candidates: list[str],
+        py_files: set[str],
+        outcome: EditOutcome | None,
+    ) -> None:
+        """Combine candidate inference with the in-container execution record."""
+        rt = res.runtime_trace
+        ws = "/task/workspace/"
+        executed: list[str] = []
+        spawned: list[str] = []
+        if rt:
+            loaded = {*rt.get("imported", []), *rt.get("compiled", [])}  # type: ignore[misc]
+            executed = sorted(p for p in py_files if ws + p in loaded)
+            spawned = sorted(
+                p
+                for p in py_files
+                if any(p in str(x) for x in rt.get("spawned", []))  # type: ignore[attr-defined]
+            )
+        if not (candidates or executed or spawned):
+            return
+        use = {
+            "step": self.step,
+            "candidate": candidates,
+            "executed": executed,
+            "spawned_mention": spawned,
+            "exit_ok": res.exit_code == 0 and not res.timed_out,
+            "runtime_record": rt is not None,
+            "context_edit": outcome.status if outcome else "n/a",
+        }
+        self.helpers["uses"].append(use)
+        self.trace.event("helper_use", **use)
+
+    def helper_summary(self) -> dict[str, Any]:
+        uses = self.helpers["uses"]
+        verified: dict[str, list[int]] = {}
+        with_effect: dict[str, list[int]] = {}
+        for u in uses:
+            if not u["exit_ok"]:
+                continue
+            for p in u["executed"]:
+                verified.setdefault(p, []).append(u["step"])
+                if u["context_edit"] == "accepted":
+                    with_effect.setdefault(p, []).append(u["step"])
+        return {
+            "created": self.helpers["created"],
+            "revised": self.helpers["revised"],
+            "candidate_invocation_steps": sorted({u["step"] for u in uses if u["candidate"]}),
+            "verified_execution_steps": verified,
+            "verified_execution_with_accepted_edit_steps": with_effect,
+            "executed_in_2plus_steps": any(len(v) >= 2 for v in verified.values()),
+            "reused_with_accepted_edit_in_2plus_steps": any(
+                len(v) >= 2 for v in with_effect.values()
+            ),
+            "uses": uses,
+            "evidence_note": (
+                "candidate = inferred from code text; verified = in-container audit record shows "
+                "the file was imported/compiled during an execution that exited 0; "
+                "'with accepted edit' = that step's context.json edit was accepted (changed)."
+            ),
+        }
 
     def execute_step(self, action: dict[str, Any]) -> None:
         code: str = action["code"]
@@ -596,12 +700,16 @@ class _Run:
             stdout_bytes=res.stdout_bytes,
             stderr_bytes=res.stderr_bytes,
             error=res.error,
+            runtime_trace=res.runtime_trace,
         )
-        self._track_helpers(before, after, code)
+        candidates = self._track_files(before, after, code)
         receipt: str | None = None
+        outcome: EditOutcome | None = None
         if self.clm:
             outcome = self.store.read_back(self.ws, mirrored, self.step)
             receipt = self._record_edit(outcome)
+        py_files = {p for p in (*before, *after) if p.endswith(".py")}
+        self._record_helper_use(res, candidates, py_files, outcome)
         act = f"[step {self.step}] execute\nthought: {thought}\ncode:\n{code}"
         obs = _fmt_observation(res, self.lim.output_cap_chars)
         new = [
@@ -826,7 +934,7 @@ class _Run:
             "peak_request_input_tokens_reported": self.peak_req_reported,
             "peak_working_context_chars": self.peak_ctx_chars,
             "context_revisions": len(self.store.revisions) - 1,
-            "helpers": self.helpers,
+            "helpers": self.helper_summary(),
             "score": {**score.to_dict(), "components": score.components},
         }
         self.trace.write_json("summary.json", metrics)

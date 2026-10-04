@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__
-from .budget import BudgetExhausted, Ledger, ModelPrice, load_prices, reservation_input_tokens
+from .budget import BudgetExhausted, Ledger, ModelPrice, input_token_bound, load_prices
 from .config import Config, load_config
 from .executor import DockerExecutor
 from .provider import (
@@ -21,7 +21,7 @@ from .provider import (
     ProviderError,
     ScriptedProvider,
 )
-from .runner import MODES, Runner
+from .runner import MODES, Runner, parse_action
 from .tasks import HELDOUT, INSTANCES, generate
 from .tracing import RunTrace
 
@@ -253,35 +253,84 @@ def cmd_smoke(args: argparse.Namespace) -> int:
         json_schema=ACTION_SCHEMA,
     )
     payload = prov.payload(req)
-    reserve = price.max_cost(reservation_input_tokens(len(json.dumps(payload))), req.max_tokens)
+    bound = input_token_bound(payload)
+    reserve = price.max_cost(bound, req.max_tokens)
     try:
-        res = ledger.reserve(reserve, run_id, "smoke")
+        res = ledger.reserve(reserve, run_id, "smoke", bound)
     except BudgetExhausted as exc:
         raise SystemExit(str(exc)) from exc
-    trace.save_request(payload, {"kind": "smoke", "reserved_usd": reserve})
+    trace.save_request(
+        payload, {"kind": "smoke", "reserved_usd": reserve, "input_token_bound": bound}
+    )
     try:
         resp = prov.complete(req)
     except ProviderError as exc:
-        entry = ledger.settle(
-            res, actual_usd=0.0 if exc.billing == "none" else None, status=f"error:{exc.kind}"
-        )
-        trace.event("provider_error", message=str(exc)[:300], charged_usd=entry["charged_usd"])
+        billed = getattr(exc, "response", None)
+        actual = price.cost(billed.usage) if billed else (0.0 if exc.billing == "none" else None)
+        entry = ledger.settle(res, actual_usd=actual, status=f"error:{exc.kind}")
+        trace.event("provider_error", message=str(exc)[:300], charged_usd=entry["charged_usd"],
+                    cost_basis=entry["cost_basis"])  # fmt: skip
         trace.close()
-        print(f"smoke call FAILED: {exc}")
+        print(
+            f"smoke call FAILED: {exc} (charged ${entry['charged_usd']:.6f}, {entry['cost_basis']})"
+        )
         if exc.kind == "auth":
-            print(
-                "  smallest fix: set ANTHROPIC_API_KEY, or run `ant auth login` to refresh the SDK profile"
-            )
+            print("  smallest fix: export a valid ANTHROPIC_API_KEY in the shell running clm-lib")
         return 2
+    except BaseException:
+        ledger.settle(res, actual_usd=None, status="interrupted")
+        trace.close()
+        raise
     cost = price.cost(resp.usage)
-    ledger.settle(res, actual_usd=cost, status="ok", usage=resp.usage)
+    entry = ledger.settle(res, actual_usd=cost, status="ok", usage=resp.usage)
+    reported = (
+        resp.usage.input_tokens
+        + resp.usage.cache_read_input_tokens
+        + resp.usage.cache_creation_input_tokens
+    )
+    action, err = parse_action(resp.text, 1000)
+    expected = bool(
+        action
+        and action["action"] == "final"
+        and action["answer"].get("required_value") == "ok"
+        and action["answer"].get("evidence_refs") == []
+    )
+    counted = _count_tokens(prov, payload)
+    checks = {
+        "model_matches": resp.model.startswith(cfg.provider.model),
+        "valid_action": action is not None,
+        "expected_answer": expected,
+        "stop_reason_end_turn": resp.stop_reason == "end_turn",
+        "input_within_bound": reported <= bound,
+        "output_within_max_tokens": resp.usage.output_tokens <= req.max_tokens,
+        "ledger_settled_from_usage": entry["cost_basis"] == "provider_usage",
+    }
     trace.event("response", text=resp.text, usage=resp.usage.to_dict(), stop_reason=resp.stop_reason,
-                model=resp.model, request_id=resp.request_id, cost_usd=cost)  # fmt: skip
+                model=resp.model, request_id=resp.request_id, cost_usd=cost, parse_error=err,
+                input_token_bound=bound, count_tokens=counted, checks=checks)  # fmt: skip
     trace.close()
-    print(f"smoke OK: model={resp.model} stop={resp.stop_reason} usage={resp.usage.to_dict()}")
+    ok = all(checks.values())
+    print(f"smoke {'OK' if ok else 'FAILED CHECKS'}: model={resp.model} stop={resp.stop_reason} "
+          f"usage={resp.usage.to_dict()}")  # fmt: skip
     print(f"  text: {resp.text[:200]}")
-    print(f"  cost ${cost:.6f} (reserved ${reserve:.4f}); trace {trace.dir}")
-    return 0
+    print(f"  checks: {checks}")
+    print(f"  input tokens reported {reported}; count_tokens {counted}; reservation bound {bound}")
+    print(
+        f"  cost ${cost:.6f} (reserved ${reserve:.4f}); ledger spent ${ledger.spent_usd:.6f}; trace {trace.dir}"
+    )
+    return 0 if ok else 3
+
+
+def _count_tokens(prov: AnthropicProvider, payload: dict[str, Any]) -> int | str:
+    """Free provider token count for the same system/messages, as a bound cross-check."""
+    try:
+        client = prov._get_client()
+        r = client.messages.count_tokens(
+            model=payload["model"], system=payload["system"], messages=payload["messages"]
+        )
+        return int(r.input_tokens)
+    except Exception as exc:
+        return f"unavailable ({type(exc).__name__})"
 
 
 def _live_runner(cfg: Config, max_usd: float | None) -> Runner:
@@ -304,9 +353,10 @@ def cmd_guided(args: argparse.Namespace) -> int:
     res = runner.run(generate(args.task), "guided", label="guided helper demo (prompted)")
     _print_result(res)
     h = res.metrics["helpers"]
-    print(
-        f"  helpers created: {h['created']} | invocations: {h['invocations']} | revisions: {h['revised']}"
-    )
+    print(f"  helpers created: {h['created']} | revisions: {h['revised']}")
+    print(f"  candidate invocation steps (inferred from code): {h['candidate_invocation_steps']}")
+    print(f"  verified executions (audit record, exit 0): {h['verified_execution_steps']}")
+    print(f"  ...with accepted context edit: {h['verified_execution_with_accepted_edit_steps']}")
     return 0
 
 

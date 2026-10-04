@@ -77,7 +77,9 @@ class ProviderError(Exception):
 
     ``kind`` is one of: auth, permission, bad_request, not_found, rate_limit,
     server, timeout, connection, refusal, other. ``billing`` says whether tokens
-    may have been billed: "none" (rejected before generation), "unknown".
+    may have been billed: "none" (rejected before generation: 4xx, 429, credential
+    failure), "unknown" (5xx, timeout, connection loss, unexpected errors; charged at
+    the full reservation), or "billed" (usage returned, e.g. refusal).
     """
 
     def __init__(self, kind: str, message: str, *, retryable: bool, billing: str) -> None:
@@ -181,17 +183,26 @@ class AnthropicProvider:
                 "connection", "connection error", retryable=True, billing="unknown"
             ) from exc
         except anthropic.APIStatusError as exc:
-            retry = exc.status_code >= 500
+            # A 5xx after dispatch may still have consumed tokens: treat as potentially billed.
+            server = exc.status_code >= 500
             raise ProviderError(
-                "server" if retry else "other", _safe(exc), retryable=retry, billing="none"
+                "server" if server else "other",
+                _safe(exc),
+                retryable=server,
+                billing="unknown" if server else "none",
             ) from exc
         except Exception as exc:  # credential-chain failures (e.g. expired profile) and similar
             text = f"{type(exc).__name__}: {exc}"
             auth = any(
                 k in text.lower() for k in ("credential", "oauth", "token", "identity", "auth")
             )
+            # Credential-chain failures happen before any request is sent; anything else
+            # unexpected might have happened after dispatch, so its cost is unknown.
             raise ProviderError(
-                "auth" if auth else "other", text[:300], retryable=False, billing="none"
+                "auth" if auth else "other",
+                text[:300],
+                retryable=False,
+                billing="none" if auth else "unknown",
             ) from exc
         u = msg.usage
         details = getattr(u, "output_tokens_details", None)

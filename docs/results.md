@@ -1,13 +1,13 @@
 # Results
 
-Status as of 2026-10-04 (build session). Only measured outcomes are reported here.
+Status as of 2026-10-04, after the review-fix session. Only measured outcomes are reported here.
 
 ## Completion levels
 
 | Level | Reached? | Evidence |
 | --- | --- | --- |
-| Mechanism implemented | **Yes** (offline) | 42 passing tests, including real-sandbox read-back tests (below). |
-| Live mechanism verified | **No** | Blocked: no working provider credential (see Blockers). |
+| Mechanism implemented | **Yes** (offline) | 51 passing tests, including real-sandbox read-back tests (below). |
+| Live mechanism verified | **No** | Blocked: no API key visible to the agent process (see Blockers). |
 | Helper demonstration | **No** | Not attempted live, for the same reason. The offline tests cover helper tracking only with a scripted double. |
 | Pilot evaluated | **No** | 0 of 12 comparative cells run; all 12 missing. |
 | Benefit observed | **No** | No comparative data. |
@@ -57,6 +57,21 @@ Offline demo (`clm-lib demo-offline`, scripted model, run `20261004T030919-clm-d
 - request 2: marker in working context = True
 - request 3: marker in working context = False (removed by sandboxed code, then accepted)
 
+## Review-fix session (base commit 39c02a8)
+
+Phase 1 (offline fixes for the review of 39c02a8) is complete:
+
+| Review item | Fix | Test |
+| --- | --- | --- |
+| Pending reservations existed only in memory | Persisted to the ledger before dispatch. In-process interruption is settled at the full reservation. Leftovers from a killed process are charged on the next open (`unresolved_after_restart`). A concurrent live pid blocks opening. | `test_pending_reservation_is_persisted_before_dispatch`, `test_killed_process_reservation_is_charged_on_restart` (real killed subprocess), `test_live_pending_from_another_process_blocks_open`, `test_interrupt_during_provider_call_charges_reservation` |
+| The chars/2 heuristic was not a bound | UTF-8 byte bound + 2,048 overhead tokens, labelled as an assumption. Each live response is checked against it, and a violation stops the run as `accounting_bound_violated`. `smoke` cross-checks it with `count_tokens`. 5xx, unexpected errors and interruptions are no longer charged $0. | `test_bound_covers_payload_bytes`, `test_run_stops_when_reported_usage_exceeds_bound`, `test_billing_classification` |
+| Edit evidence checked only IDs | Content check: the exact accepted entries are a prefix of the next request; rewritten bodies are verified; removed text is searched for in the next request. Structural and content verdicts are separate. | `test_edit_evidence_checks_content_and_reappearance` |
+| Helper "invocations" were inferred from code text | An in-container audit hook records the workspace files actually imported or compiled. There are three evidence tiers (candidate / verified execution / verified with accepted edit), and reuse is claimed only on the last. | `test_helper_use_is_verified_not_just_inferred` |
+
+Verification: `ruff check`, `ruff format --check` and `mypy src` are clean; `pytest`: **51 passed** in about 30 s. `doctor --sandbox` is unchanged: `dummy_secret_visible= False uid= 1000 network=blocked`.
+
+Phases 2–4 (smoke, guided dev run, frozen comparison) were **not run**. `ANTHROPIC_API_KEY` is not present in the agent process's environment (`doctor`: `credential env ANTHROPIC_API_KEY: unset`). The process inherited its environment before the key was added. No secrets were searched for, and the old OAuth profile was not used. Live spend: $0.00.
+
 ## Blockers
 
 1. **Provider credentials.** Discovery reported presence only, never values:
@@ -64,7 +79,7 @@ Offline demo (`clm-lib demo-offline`, scripted model, run `20261004T030919-clm-d
    - An `ant` CLI OAuth profile exists for the user's individual organisation, with inference scope. Its access token expired on 2026-09-03, and the SDK's refresh attempt failed with `invalid_grant: Refresh token expired`.
    - An `OPENAI_API_KEY` is exported in the shell profile, but the OpenAI API rejects it (401 `invalid_api_key`), so no OpenAI-compatible adapter was added.
    - `ANTHROPIC_BASE_URL` points at the default `https://api.anthropic.com` and carries no credential.
-2. **Smallest missing setting:** one valid Anthropic credential. Either run `ant auth login` (the SDK picks the profile up automatically), or export `ANTHROPIC_API_KEY` in the shell that runs clm-lib.
+2. **Smallest missing setting:** `ANTHROPIC_API_KEY` must be present in the environment of the process that runs clm-lib. For an agent session, restart the app or session after exporting it. Otherwise, run the commands below from a terminal where it is set.
 
 Remaining live sequence, once a credential exists:
 
