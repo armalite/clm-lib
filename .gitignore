@@ -221,3 +221,6 @@ __marimo__/
 
 # clm-lib run artefacts
 runs/
+
+# Local session handoff (not published)
+/docs/HANDOFF.md
