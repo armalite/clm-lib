@@ -114,15 +114,31 @@ def sums_text(files: dict[str, bytes]) -> str:
 
 
 def write_tree(dest: Path, files: dict[str, bytes]) -> str:
-    """Write files plus SHA256SUMS; 'written' / 'unchanged'; conflict if different."""
+    """Write files plus SHA256SUMS; 'written' / 'unchanged'; conflict if different.
+
+    "unchanged" requires both the recorded SHA256SUMS and the actual files on disk to match
+    the expected evidence; a missing, modified or extra file is a conflict.
+    """
     text = sums_text(files)
     marker = dest / "SHA256SUMS"
     if dest.exists():
-        if marker.exists() and marker.read_text() == text:
-            return "unchanged"
-        raise ExportConflict(
-            f"{dest} exists with different content; refusing to overwrite evidence"
-        )
+        if not (marker.exists() and marker.read_text() == text):
+            raise ExportConflict(
+                f"{dest} exists with different content; refusing to overwrite evidence"
+            )
+        on_disk = {str(p.relative_to(dest)) for p in dest.rglob("*") if p.is_file() and p != marker}
+        for rel, data in files.items():
+            path = dest / rel
+            if not path.is_file():
+                raise ExportConflict(f"recorded evidence file {path} is missing")
+            if path.read_bytes() != data:
+                raise ExportConflict(
+                    f"evidence file {path} no longer matches its recorded checksum"
+                )
+        extra = sorted(on_disk - set(files))
+        if extra:
+            raise ExportConflict(f"{dest} contains unrecorded files: {extra[:5]}")
+        return "unchanged"
     for rel, data in files.items():
         p = dest / rel
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -220,6 +236,8 @@ def export_experiment(
         "documents": {},
         "warnings": [],
     }
+    # Fail before writing anything if previously exported evidence is missing or altered.
+    verify_recorded_evidence(out)
 
     ledger = _load(ledger_path)
     ledger_text = json.dumps(ledger, indent=1, ensure_ascii=False) + "\n"
@@ -406,14 +424,22 @@ def _read_sums(path: Path) -> dict[str, str]:
     return out
 
 
+def verify_recorded_evidence(out: Path) -> None:
+    """Every artifact recorded in the experiment SHA256SUMS must still exist and match."""
+    for rel, digest in _read_sums(out / "SHA256SUMS").items():
+        if not rel.startswith("artifacts/"):
+            continue  # generated files may legitimately be regenerated
+        path = out / rel
+        if not path.is_file():
+            raise ExportConflict(f"recorded evidence file {rel} is missing")
+        if _sha(path.read_bytes()) != digest:
+            raise ExportConflict(f"evidence file {rel} no longer matches its recorded checksum")
+
+
 def write_evidence_sums(out: Path) -> None:
     """Re-verify recorded artifact checksums, then rewrite the experiment SHA256SUMS."""
-    previous = _read_sums(out / "SHA256SUMS")
-    files = evidence_files(out)
-    for rel, digest in previous.items():
-        if rel.startswith("artifacts/") and rel in files and _sha(files[rel]) != digest:
-            raise ExportConflict(f"evidence file {rel} no longer matches its recorded checksum")
-    (out / "SHA256SUMS").write_text(SUMS_HEADER + sums_text(files))
+    verify_recorded_evidence(out)
+    (out / "SHA256SUMS").write_text(SUMS_HEADER + sums_text(evidence_files(out)))
 
 
 def _starter(doc: str, spec: dict[str, Any]) -> str:

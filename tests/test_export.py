@@ -116,7 +116,8 @@ def test_conflicting_evidence_is_rejected(exported: dict[str, Any]) -> None:
     # 1. A different run tree under the same id (tree checksum differs) is refused.
     original = (run_out / "SHA256SUMS").read_text()
     (run_out / "SHA256SUMS").write_text("tampered\n")
-    with pytest.raises(ExportConflict, match="refusing to overwrite evidence"):
+    # Caught by the pre-flight check of recorded evidence (or by the tree comparison).
+    with pytest.raises(ExportConflict, match=r"no longer matches|refusing to overwrite evidence"):
         again(exported)
     (run_out / "SHA256SUMS").write_text(original)
     # 2. A silently edited artifact (tree checksum left as is) is caught by the
@@ -151,3 +152,47 @@ def test_export_redacts_local_uid(tmp_path: Path) -> None:
     files = collect(run, skip_top=frozenset({"fixtures"}))
     assert set(files) == {"run.json"}
     assert "1000:1000" not in files["run.json"].decode()
+
+
+def test_deleted_artifact_with_intact_checksums_is_rejected(exported: dict[str, Any]) -> None:
+    out = exported["out"]
+    run_out = out / "artifacts" / "runs" / "evaluation" / exported["res"].run_id
+    victim = run_out / "events.jsonl"
+    assert victim.is_file()
+    victim.chmod(0o644)
+    victim.unlink()  # both the run's and the experiment's SHA256SUMS still list it
+    protected = [
+        out / "SHA256SUMS",
+        run_out / "SHA256SUMS",
+        out / "manifest.json",
+        out / "report.md",
+        out / "metrics.json",
+        out / "metrics.csv",
+    ]
+    before = {p: p.read_bytes() for p in protected}
+    with pytest.raises(ExportConflict, match="is missing"):
+        again(exported)
+    # Previous checksum records and generated outputs are left exactly as they were.
+    assert {p: p.read_bytes() for p in protected} == before
+    assert not victim.exists()  # not silently restored either
+
+
+def test_write_tree_checks_files_on_disk_not_just_the_checksum_list(tmp_path: Path) -> None:
+    from clm_lib.export import write_tree
+
+    files = {"a.txt": b"alpha", "sub/b.txt": b"beta"}
+    dest = tmp_path / "tree"
+    assert write_tree(dest, files) == "written"
+    assert write_tree(dest, files) == "unchanged"
+    with pytest.raises(ExportConflict, match="refusing to overwrite evidence"):
+        write_tree(dest, {**files, "a.txt": b"different"})
+    (dest / "sub" / "b.txt").unlink()
+    with pytest.raises(ExportConflict, match="is missing"):
+        write_tree(dest, files)
+    (dest / "sub" / "b.txt").write_bytes(b"BETA")
+    with pytest.raises(ExportConflict, match="no longer matches"):
+        write_tree(dest, files)
+    (dest / "sub" / "b.txt").write_bytes(b"beta")
+    (dest / "extra.txt").write_bytes(b"x")
+    with pytest.raises(ExportConflict, match="unrecorded files"):
+        write_tree(dest, files)
