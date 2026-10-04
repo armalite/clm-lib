@@ -615,28 +615,54 @@ class _Run:
         py_files: set[str],
         outcome: EditOutcome | None,
     ) -> None:
-        """Combine candidate inference with the in-container execution record."""
-        rt = res.runtime_trace
+        """Combine candidate inference with the in-container execution record.
+
+        Evidence tiers per workspace .py file:
+        - candidate: named in the code text (inferred only);
+        - loaded: imported or compiled (recorded, *not* counted as execution);
+        - functions_executed: functions defined in the file began executing (PY_START);
+        - wrote_context: code from the file was on the call stack when context.json was
+          opened for writing or replaced (attribution of the write, not of its content).
+        """
+        rt: dict[str, Any] = dict(res.runtime_trace or {})
         ws = "/task/workspace/"
-        executed: list[str] = []
-        spawned: list[str] = []
-        if rt:
-            loaded = {*rt.get("imported", []), *rt.get("compiled", [])}  # type: ignore[misc]
-            executed = sorted(p for p in py_files if ws + p in loaded)
-            spawned = sorted(
-                p
-                for p in py_files
-                if any(p in str(x) for x in rt.get("spawned", []))  # type: ignore[attr-defined]
+        calls: dict[str, int] = rt.get("calls", {}) or {}
+        loaded = set(rt.get("imported", []) or []) | set(rt.get("compiled", []) or [])
+        writes: list[dict[str, Any]] = rt.get("context_writes", []) or []
+        per_file: dict[str, Any] = {}
+        for p in sorted(py_files):
+            full = ws + p
+            funcs = {
+                k.split("::", 1)[1]: v
+                for k, v in calls.items()
+                if k.split("::", 1)[0] == full and not k.endswith("::<module>")
+            }
+            module_body = f"{full}::<module>" in calls
+            wrote = sorted(
+                {
+                    fr.split("::", 1)[1]
+                    for w in writes
+                    for fr in w.get("ws_frames", [])
+                    if fr.split("::", 1)[0] == full
+                }
             )
-        if not (candidates or executed or spawned):
+            if p in candidates or full in loaded or funcs or module_body or wrote:
+                per_file[p] = {
+                    "candidate": p in candidates,
+                    "loaded": full in loaded,
+                    "module_body_executed": module_body,
+                    "functions_executed": funcs,
+                    "wrote_context_from": wrote,
+                }
+        if not per_file:
             return
         use = {
             "step": self.step,
-            "candidate": candidates,
-            "executed": executed,
-            "spawned_mention": spawned,
+            "files": per_file,
             "exit_ok": res.exit_code == 0 and not res.timed_out,
-            "runtime_record": rt is not None,
+            "runtime_record": res.runtime_trace is not None,
+            "monitoring": bool(rt.get("monitoring")),
+            "context_writes_unattributed": sum(1 for w in writes if not w.get("ws_frames")),
             "context_edit": outcome.status if outcome else "n/a",
         }
         self.helpers["uses"].append(use)
@@ -644,30 +670,36 @@ class _Run:
 
     def helper_summary(self) -> dict[str, Any]:
         uses = self.helpers["uses"]
-        verified: dict[str, list[int]] = {}
-        with_effect: dict[str, list[int]] = {}
+        executed: dict[str, list[int]] = {}
+        attributed: dict[str, list[int]] = {}
         for u in uses:
             if not u["exit_ok"]:
                 continue
-            for p in u["executed"]:
-                verified.setdefault(p, []).append(u["step"])
-                if u["context_edit"] == "accepted":
-                    with_effect.setdefault(p, []).append(u["step"])
+            for p, f in u["files"].items():
+                if f["functions_executed"]:
+                    executed.setdefault(p, []).append(u["step"])
+                if f["wrote_context_from"] and u["context_edit"] == "accepted":
+                    attributed.setdefault(p, []).append(u["step"])
         return {
             "created": self.helpers["created"],
             "revised": self.helpers["revised"],
-            "candidate_invocation_steps": sorted({u["step"] for u in uses if u["candidate"]}),
-            "verified_execution_steps": verified,
-            "verified_execution_with_accepted_edit_steps": with_effect,
-            "executed_in_2plus_steps": any(len(v) >= 2 for v in verified.values()),
-            "reused_with_accepted_edit_in_2plus_steps": any(
-                len(v) >= 2 for v in with_effect.values()
+            "candidate_invocation_steps": sorted(
+                {u["step"] for u in uses if any(f["candidate"] for f in u["files"].values())}
+            ),
+            "function_execution_steps": executed,
+            "helper_written_accepted_edit_steps": attributed,
+            "functions_executed_in_2plus_steps": any(len(v) >= 2 for v in executed.values()),
+            "helper_written_accepted_edits_in_2plus_steps": any(
+                len(v) >= 2 for v in attributed.values()
             ),
             "uses": uses,
             "evidence_note": (
-                "candidate = inferred from code text; verified = in-container audit record shows "
-                "the file was imported/compiled during an execution that exited 0; "
-                "'with accepted edit' = that step's context.json edit was accepted (changed)."
+                "candidate = named in code text (inferred); loaded = imported/compiled (not "
+                "execution); function_execution = a function defined in the file began "
+                "executing in a step that exited 0 (sys.monitoring PY_START); "
+                "helper_written_accepted_edit = helper code was on the call stack when "
+                "context.json was written and that step's edit was accepted. This attributes "
+                "the write to the helper; it does not prove the helper alone chose the content."
             ),
         }
 

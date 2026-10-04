@@ -23,28 +23,51 @@ SANDBOX_FIXTURES = "/task/fixtures"
 SANDBOX_WORKSPACE = "/task/workspace"
 RUNTIME_MARKER = "@@CLM-RUNTIME"
 
-# Runs inside the container as `python -E -s -c BOOTSTRAP <nonce>`; model code arrives
-# on stdin. A Python audit hook records which workspace files the code imported,
-# compiled, opened or spawned, and an atexit hook reports them on stderr behind a
-# per-execution nonce. The host strips that line before the model sees stderr.
-# This is tamper-evident instrumentation for helper-use evidence, not a security
-# control: code that calls os._exit or is killed produces no record.
+# Runs inside the container as `python -E -s -B -c BOOTSTRAP <nonce>`; model code
+# arrives on stdin. Instrumentation (tamper-evident evidence, not a security control):
+# - an audit hook records workspace files opened/compiled and subprocess spawns, and,
+#   when context.json is opened for writing or replaced, which workspace (helper) code
+#   frames were on the call stack at that moment;
+# - sys.monitoring (Python 3.12) counts PY_START events for code objects defined in
+#   workspace files, i.e. helper functions/module bodies that actually began executing.
+# An atexit hook reports the record on stderr behind a per-execution nonce; the host
+# strips that line. Code that calls os._exit or is killed produces no record, and
+# low-level os.open writes are not attributed.
 BOOTSTRAP = r"""
 import sys, os, json, atexit
 _n = sys.argv[1]; sys.argv = ['-']
 _ws = '/task/workspace/'
-_rec = {'opened': [], 'compiled': [], 'spawned': []}
+_ctx = _ws + 'context.json'
+_rec = {'opened': [], 'compiled': [], 'spawned': [], 'calls': {}, 'context_writes': []}
+def _is_ws(f):
+    return isinstance(f, str) and (f.startswith(_ws) or not (f.startswith('/') or f.startswith('<')))
 def _p(x):
     try:
         x = os.fsdecode(x)
         return None if x.startswith('<') else os.path.abspath(x)
     except Exception:
         return None
+def _ws_frames():
+    out = []
+    f = sys._getframe(2)
+    while f is not None:
+        fn = f.f_code.co_filename
+        if _is_ws(fn):
+            out.append(os.path.abspath(fn) + '::' + f.f_code.co_qualname)
+        f = f.f_back
+    return out
 def _hook(ev, args):
     if ev == 'open' and args:
         p = _p(args[0])
-        if p and p.startswith(_ws) and len(_rec['opened']) < 200:
-            _rec['opened'].append([p, str(args[1]) if len(args) > 1 else ''])
+        if p and p.startswith(_ws):
+            mode = str(args[1]) if len(args) > 1 else ''
+            if len(_rec['opened']) < 200:
+                _rec['opened'].append([p, mode])
+            if p == _ctx and any(c in mode for c in 'wax+') and len(_rec['context_writes']) < 50:
+                _rec['context_writes'].append({'via': 'open:' + mode, 'ws_frames': _ws_frames()})
+    elif ev == 'os.rename' and len(args) > 1:
+        if _p(args[1]) == _ctx and len(_rec['context_writes']) < 50:
+            _rec['context_writes'].append({'via': 'rename', 'ws_frames': _ws_frames()})
     elif ev == 'compile' and len(args) > 1 and isinstance(args[1], str):
         p = _p(args[1])
         if p and p.startswith(_ws) and p not in _rec['compiled']:
@@ -52,7 +75,25 @@ def _hook(ev, args):
     elif ev in ('subprocess.Popen', 'os.system', 'os.exec', 'os.posix_spawn'):
         if len(_rec['spawned']) < 50:
             _rec['spawned'].append(repr(args)[:300])
+_calls = {}
+_mon = getattr(sys, 'monitoring', None)
+if _mon is not None:
+    try:
+        _mon.use_tool_id(5, 'clm-evidence')
+        def _start(code, offset):
+            f = code.co_filename
+            if _is_ws(f):
+                k = (f, code.co_qualname)
+                _calls[k] = _calls.get(k, 0) + 1
+                return None
+            return _mon.DISABLE
+        _mon.register_callback(5, _mon.events.PY_START, _start)
+        _mon.set_events(5, _mon.events.PY_START)
+    except Exception:
+        _mon = None
 def _emit():
+    if _mon is not None:
+        _mon.set_events(5, 0)
     mods = []
     for m in list(sys.modules.values()):
         f = getattr(m, '__file__', None)
@@ -61,6 +102,8 @@ def _emit():
             if f.startswith(_ws):
                 mods.append(f)
     _rec['imported'] = sorted(set(mods))
+    _rec['calls'] = {os.path.abspath(f) + '::' + q: c for (f, q), c in _calls.items()}
+    _rec['monitoring'] = _mon is not None
     try:
         sys.__stderr__.write('\n@@CLM-RUNTIME ' + _n + ' ' + json.dumps(_rec) + '\n')
         sys.__stderr__.flush()

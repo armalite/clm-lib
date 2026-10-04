@@ -204,17 +204,32 @@ def offline_demo_script() -> list[Any]:
     never in the code bodies that are themselves kept in the transcript.
     """
     return [
-        {"action": "execute", "thought": "look around",
-         "code": "import os\nprint('BULKY-' + 'OBSERVATION-MARKER')\nprint('x' * 3000)\nprint(sorted(os.listdir('/task/fixtures')))"},
-        {"action": "execute", "thought": "drop the bulky observation, keep a note",
-         "code": ("import json\nd = json.load(open('context.json'))\n"
-                  "m = 'BULKY-' + 'OBSERVATION-MARKER'\n"
-                  "d['entries'] = [e for e in d['entries'] if m not in e['body']]\n"
-                  "d['entries'].append({'id': 'n1', 'role': 'note', 'body': 'fixtures listed; bulky output dropped'})\n"
-                  "json.dump(d, open('context.json', 'w'))\nprint('edited')")},
-        {"action": "final", "answer": {"root_cause": "DB_POOL_EXHAUSTED: scripted", "required_value": "0",
-                                       "remedy": "RAISE_DB_POOL_LIMIT: scripted", "evidence_refs": []}},
-    ]  # fmt: skip
+        {
+            "action": "execute",
+            "thought": "look around",
+            "code": "import os\nprint('BULKY-' + 'OBSERVATION-MARKER')\nprint('x' * 3000)\nprint(sorted(os.listdir('/task/fixtures')))",
+        },
+        {
+            "action": "execute",
+            "thought": "drop the bulky observation, keep a note",
+            "code": (
+                "import json\nd = json.load(open('context.json'))\n"
+                "m = 'BULKY-' + 'OBSERVATION-MARKER'\n"
+                "d['entries'] = [e for e in d['entries'] if m not in e['body']]\n"
+                "d['entries'].append({'id': 'n1', 'role': 'note', 'body': 'fixtures listed; bulky output dropped'})\n"
+                "json.dump(d, open('context.json', 'w'))\nprint('edited')"
+            ),
+        },
+        {
+            "action": "final",
+            "answer": {
+                "root_cause": "DB_POOL_EXHAUSTED: scripted",
+                "required_value": "0",
+                "remedy": "RAISE_DB_POOL_LIMIT: scripted",
+                "evidence_refs": [],
+            },
+        },
+    ]
 
 
 def cmd_demo_offline(args: argparse.Namespace) -> int:
@@ -268,8 +283,12 @@ def cmd_smoke(args: argparse.Namespace) -> int:
         billed = getattr(exc, "response", None)
         actual = price.cost(billed.usage) if billed else (0.0 if exc.billing == "none" else None)
         entry = ledger.settle(res, actual_usd=actual, status=f"error:{exc.kind}")
-        trace.event("provider_error", message=str(exc)[:300], charged_usd=entry["charged_usd"],
-                    cost_basis=entry["cost_basis"])  # fmt: skip
+        trace.event(
+            "provider_error",
+            message=str(exc)[:300],
+            charged_usd=entry["charged_usd"],
+            cost_basis=entry["cost_basis"],
+        )
         trace.close()
         print(
             f"smoke call FAILED: {exc} (charged ${entry['charged_usd']:.6f}, {entry['cost_basis']})"
@@ -305,13 +324,25 @@ def cmd_smoke(args: argparse.Namespace) -> int:
         "output_within_max_tokens": resp.usage.output_tokens <= req.max_tokens,
         "ledger_settled_from_usage": entry["cost_basis"] == "provider_usage",
     }
-    trace.event("response", text=resp.text, usage=resp.usage.to_dict(), stop_reason=resp.stop_reason,
-                model=resp.model, request_id=resp.request_id, cost_usd=cost, parse_error=err,
-                input_token_bound=bound, count_tokens=counted, checks=checks)  # fmt: skip
+    trace.event(
+        "response",
+        text=resp.text,
+        usage=resp.usage.to_dict(),
+        stop_reason=resp.stop_reason,
+        model=resp.model,
+        request_id=resp.request_id,
+        cost_usd=cost,
+        parse_error=err,
+        input_token_bound=bound,
+        count_tokens=counted,
+        checks=checks,
+    )
     trace.close()
     ok = all(checks.values())
-    print(f"smoke {'OK' if ok else 'FAILED CHECKS'}: model={resp.model} stop={resp.stop_reason} "
-          f"usage={resp.usage.to_dict()}")  # fmt: skip
+    print(
+        f"smoke {'OK' if ok else 'FAILED CHECKS'}: model={resp.model} stop={resp.stop_reason} "
+        f"usage={resp.usage.to_dict()}"
+    )
     print(f"  text: {resp.text[:200]}")
     print(f"  checks: {checks}")
     print(f"  input tokens reported {reported}; count_tokens {counted}; reservation bound {bound}")
@@ -354,23 +385,63 @@ def cmd_guided(args: argparse.Namespace) -> int:
     _print_result(res)
     h = res.metrics["helpers"]
     print(f"  helpers created: {h['created']} | revisions: {h['revised']}")
-    print(f"  candidate invocation steps (inferred from code): {h['candidate_invocation_steps']}")
-    print(f"  verified executions (audit record, exit 0): {h['verified_execution_steps']}")
-    print(f"  ...with accepted context edit: {h['verified_execution_with_accepted_edit_steps']}")
+    print(
+        f"  candidate invocation steps (inferred from code text): {h['candidate_invocation_steps']}"
+    )
+    print(f"  helper function executions (observed, exit 0): {h['function_execution_steps']}")
+    print(f"  accepted edits written from helper code: {h['helper_written_accepted_edit_steps']}")
     return 0
 
 
-def cmd_compare(args: argparse.Namespace) -> int:
-    cfg = _config(args)
-    runner = _live_runner(cfg, args.max_usd)
-    tasks = args.tasks.split(",") if args.tasks else list(HELDOUT)
+# Run statuses after which no further comparison calls may be dispatched.
+COMPARE_HALT = {
+    "accounting_bound_violated": "accounting assumption failed (reported tokens exceeded the reservation bound)",
+    "budget_exhausted": "budget exhausted during a run",
+}
+
+
+def code_state() -> dict[str, Any]:
+    """Git HEAD plus a hash of uncommitted changes, to freeze the evaluated code."""
+    import hashlib
+    import subprocess
+
+    def git(*a: str) -> str:
+        try:
+            return subprocess.run(
+                ["git", *a], cwd=REPO_ROOT, capture_output=True, text=True, timeout=20
+            ).stdout
+        except (OSError, subprocess.TimeoutExpired):
+            return ""
+
+    diff = git("diff", "HEAD", "--", "src", "configs", "pyproject.toml")
+    untracked = git("ls-files", "--others", "--exclude-standard", "--", "src", "configs")
+    return {
+        "git_head": git("rev-parse", "HEAD").strip(),
+        "uncommitted_diff_sha256": hashlib.sha256(diff.encode()).hexdigest() if diff else None,
+        "untracked_src_files": untracked.split(),
+    }
+
+
+def run_matrix(
+    runner: Runner, cfg: Config, tasks: list[str], reps: int, out: Path, stamp: str
+) -> tuple[list[dict[str, Any]], int]:
+    """Sequential comparison matrix; returns (cells, exit code). Never parallel."""
+    from .prompts import PROMPT_VERSION
+    from .tasks import GENERATOR_VERSION
+
+    frozen = {
+        "model": runner.provider.model,
+        "provider": runner.provider.describe(),
+        "prompt_version": PROMPT_VERSION,
+        "generator_version": GENERATOR_VERSION,
+        "config": cfg.to_dict(),
+        "code_state": code_state(),
+    }
     cells: list[dict[str, Any]] = []
-    stamp = f"{datetime.now(UTC):%Y%m%dT%H%M%S}"
-    out = _runs_dir(cfg) / "comparisons" / f"{stamp}.json"
-    out.parent.mkdir(parents=True, exist_ok=True)
     pair = 0
     stopped = ""
-    for rep in range(1, args.reps + 1):
+    exit_code = 0
+    for rep in range(1, reps + 1):
         for task in tasks:
             order = ["summary", "clm"] if pair % 2 == 0 else ["clm", "summary"]
             for mode in order:
@@ -382,8 +453,10 @@ def cmd_compare(args: argparse.Namespace) -> int:
                     "order": order,
                 }
                 if not stopped and runner.ledger.remaining_usd < cfg.budget.min_run_reserve_usd:
-                    stopped = (f"remaining ${runner.ledger.remaining_usd:.4f} below per-run reserve "
-                               f"${cfg.budget.min_run_reserve_usd:.2f}")  # fmt: skip
+                    stopped = (
+                        f"remaining ${runner.ledger.remaining_usd:.4f} below per-run reserve "
+                        f"${cfg.budget.min_run_reserve_usd:.2f}"
+                    )
                 if stopped:
                     cell.update(status="missing", reason=stopped)
                 else:
@@ -392,18 +465,48 @@ def cmd_compare(args: argparse.Namespace) -> int:
                     )
                     _print_result(res)
                     m = res.metrics
-                    cell.update(run_id=res.run_id, status=res.status, outcome=m["score"]["outcome"],
-                                strict=m["score"]["strict_success"], cost_usd=m["cost"]["incurred_usd"],
-                                valid=m["valid_for_comparison"])  # fmt: skip
-                    if res.status == "budget_exhausted":
-                        stopped = "budget exhausted during a run"
+                    cell.update(
+                        run_id=res.run_id,
+                        status=res.status,
+                        outcome=m["score"]["outcome"],
+                        strict=m["score"]["strict_success"],
+                        cost_usd=m["cost"]["incurred_usd"],
+                        valid=m["valid_for_comparison"],
+                    )
+                    if res.status in COMPARE_HALT:
+                        stopped = f"{COMPARE_HALT[res.status]} in run {res.run_id}"
+                        if res.status == "accounting_bound_violated":
+                            exit_code = 4
                 cells.append(cell)
-                out.write_text(json.dumps({"comparison": stamp, "frozen_prompt_version": runner_prompt_version(),
-                                           "cells": cells}, indent=1))  # fmt: skip
+                out.write_text(
+                    json.dumps(
+                        {
+                            "comparison": stamp,
+                            "frozen": frozen,
+                            "frozen_prompt_version": PROMPT_VERSION,
+                            "halted": stopped or None,
+                            "cells": cells,
+                        },
+                        indent=1,
+                    )
+                )
             pair += 1
+    return cells, exit_code
+
+
+def cmd_compare(args: argparse.Namespace) -> int:
+    cfg = _config(args)
+    runner = _live_runner(cfg, args.max_usd)
+    tasks = args.tasks.split(",") if args.tasks else list(HELDOUT)
+    stamp = f"{datetime.now(UTC):%Y%m%dT%H%M%S}"
+    out = _runs_dir(cfg) / "comparisons" / f"{stamp}.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    cells, code = run_matrix(runner, cfg, tasks, args.reps, out, stamp)
     done = sum(1 for c in cells if c["status"] != "missing")
     print(f"comparison {stamp}: {done}/{len(cells)} cells run; record {out}")
-    return 0
+    if code:
+        print("HALTED: accounting bound violated; no further calls were dispatched")
+    return code
 
 
 def runner_prompt_version() -> str:

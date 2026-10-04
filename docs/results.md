@@ -6,7 +6,7 @@ Status as of 2026-10-04, after the review-fix session. Only measured outcomes ar
 
 | Level | Reached? | Evidence |
 | --- | --- | --- |
-| Mechanism implemented | **Yes** (offline) | 51 passing tests, including real-sandbox read-back tests (below). |
+| Mechanism implemented | **Yes** (offline) | 56 passing tests, including real-sandbox read-back tests (below). |
 | Live mechanism verified | **No** | Blocked: no API key visible to the agent process (see Blockers). |
 | Helper demonstration | **No** | Not attempted live, for the same reason. The offline tests cover helper tracking only with a scripted double. |
 | Pilot evaluated | **No** | 0 of 12 comparative cells run; all 12 missing. |
@@ -71,6 +71,19 @@ Phase 1 (offline fixes for the review of 39c02a8) is complete:
 Verification: `ruff check`, `ruff format --check` and `mypy src` are clean; `pytest`: **51 passed** in about 30 s. `doctor --sandbox` is unchanged: `dummy_secret_visible= False uid= 1000 network=blocked`.
 
 Phases 2–4 (smoke, guided dev run, frozen comparison) were **not run**. `ANTHROPIC_API_KEY` is not present in the agent process's environment (`doctor`: `credential env ANTHROPIC_API_KEY: unset`). The process inherited its environment before the key was added. No secrets were searched for, and the old OAuth profile was not used. Live spend: $0.00.
+
+## Second review-fix session (base commit 5f58d76)
+
+| Review item | Fix | Test |
+| --- | --- | --- |
+| `compare` continued after `accounting_bound_violated` | `run_matrix` halts. No further dispatch; the remaining cells are `missing` with the reason; exit code 4. The comparison record now includes a `frozen` block (model, provider settings, prompt and generator versions, config, git HEAD and uncommitted-diff hash). | `test_compare_halts_on_accounting_bound_violation` |
+| An empty accepted revision failed the prefix check, and the removed-text check overclaimed | Empty revisions pass; missing artifacts are `unverifiable`. The removed-text check covers every non-framing line of 8 or more characters, splits hits into strong (≥ 40) and weak, reports `coverage`, and never states that all removed text is absent. | `test_valid_empty_accepted_revision_passes_prefix_check`, `test_short_removed_text_reappearing_is_reported`, `test_missing_revision_artifact_is_unverifiable` |
+| Compiling or importing counted as helper execution | `sys.monitoring` PY_START counts give the helper functions actually executed. Audit-hook stack capture attributes `context.json` writes to helper code. The metrics were renamed to `function_execution_steps` and `helper_written_accepted_edit_steps`, and the docs say that write attribution does not prove the helper chose the content. | `test_helper_use_is_verified_not_just_inferred`, `test_compile_or_import_alone_is_not_helper_execution` |
+| PID check | Documented as a guard, not a concurrency lock; live commands must run sequentially. | (docs) |
+
+Verification: `ruff check`, `ruff format --check` and `mypy src` are clean; **56 passed**. `doctor --sandbox` is unchanged.
+
+Live phases: **still not run**. `ANTHROPIC_API_KEY` is still unset in the agent process (`doctor`). Live spend $0.00; cumulative $0.00 of $10.00.
 
 ## Blockers
 

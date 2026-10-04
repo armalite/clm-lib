@@ -90,7 +90,12 @@ def input_token_bound(payload: dict[str, Any]) -> int:
 
 
 class LedgerBusy(RuntimeError):
-    """Another live process holds pending reservations in the same ledger."""
+    """Another live process holds pending reservations in the same ledger.
+
+    This PID check is a guard against an obvious mistake, not a concurrency lock: two
+    processes opening the ledger before either reserves are not detected, and writes
+    are last-writer-wins. Live commands must be run one at a time.
+    """
 
 
 @dataclass

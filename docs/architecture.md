@@ -83,14 +83,26 @@ Image: `python:3.12-slim`, digest `sha256:dddfd7e07f9d15aeeca61529320492139d21ca
 
 Boundary checks: `test_sandbox_cannot_see_secret_env_or_evaluator_paths` and `clm-lib doctor --sandbox`. These check the configured boundary; they are not a proof of container security.
 
-**Execution instrumentation (helper evidence).** `BOOTSTRAP` reads the code from stdin and installs a Python audit hook. It then `exec`s the code as `__main__` (filename `<model-code>`). The hook records which `/task/workspace` files were opened, compiled or imported, plus any subprocess spawns. An `atexit` handler writes the record to stderr behind a per-execution random nonce, and the host strips that line before building the observation; byte counts are adjusted. This is tamper-evident, not tamper-proof: the nonce is visible in the container's `/proc`, and `os._exit` or a kill produces no record (`runtime_trace` is `None`). The Docker flags and mounts are unchanged.
+**Execution instrumentation (helper evidence).** `BOOTSTRAP` reads the code from stdin, installs a Python audit hook and a `sys.monitoring` (Python 3.12) `PY_START` callback, then `exec`s the code as `__main__` (filename `<model-code>`). The record covers:
+- workspace files opened, compiled or imported, and subprocess spawns;
+- how many times each code object defined in a workspace file began executing (function or module body);
+- for every open-for-write or replace of `context.json`, which workspace code frames were on the call stack.
 
-Helper evidence has three tiers, recorded per step in `summary.json` under `helpers.uses`:
-- **candidate**: the code text names a `.py` file that existed before the step (inferred, weak);
-- **verified execution**: the audit record shows the file was imported or compiled during an execution that exited 0;
-- **verified with accepted edit**: additionally, that step's `context.json` edit was accepted with changed content.
+An `atexit` handler writes the record to stderr behind a per-execution random nonce. The host strips that line before building the observation and adjusts byte counts. This is tamper-evident, not tamper-proof: the nonce is visible in the container's `/proc`, `os._exit` or a kill produces no record (`runtime_trace` is `None`), and writes made via low-level `os.open` are not attributed. The Docker flags and mounts are unchanged.
 
-"Reuse" is claimed only for the last tier in two or more steps (`reused_with_accepted_edit_in_2plus_steps`). Test: `test_helper_use_is_verified_not_just_inferred`.
+Helper evidence, per step in `summary.json` under `helpers.uses[].files`:
+- `candidate`: the code text names a `.py` file that existed before the step. Inferred, weak.
+- `loaded`: the file was imported or compiled. Recorded, but **not** counted as execution.
+- `module_body_executed`: the module's top-level code ran (for example on import). Not counted as helper-function execution.
+- `functions_executed`: functions defined in the file began executing, with counts.
+- `wrote_context_from`: helper functions that were on the call stack when `context.json` was written.
+
+Summary metrics:
+- `function_execution_steps`: helper functions ran in a step that exited 0.
+- `helper_written_accepted_edit_steps`: additionally, the context write came from helper code and that step's edit was accepted. This attributes **the write** to the helper; it does not prove the helper alone decided the content (the caller's arguments can shape it). It is recorded as such.
+- "Reuse" is claimed only when `helper_written_accepted_edits_in_2plus_steps` is true.
+
+Tests: `test_helper_use_is_verified_not_just_inferred`, `test_compile_or_import_alone_is_not_helper_execution`.
 
 ## Accounting
 
@@ -103,7 +115,8 @@ Helper evidence has three tiers, recorded per step in `summary.json` under `help
 - **Pending reservations are persisted before dispatch** (`pending` in the ledger file).
   - If the process is interrupted in-process (for example Ctrl-C), the attempt is settled as `interrupted:*` at the full reservation.
   - If the process is killed, the next `Ledger.open` converts leftover pending entries to `unresolved_after_restart` at the full reservation.
-  - Opening is refused (`LedgerBusy`) while another live pid holds pending reservations.
+  - Opening is refused (`LedgerBusy`) while another live pid holds pending reservations. This is a guard, **not a concurrency lock**: live commands must be run sequentially.
+  - `compare` halts on `accounting_bound_violated` or `budget_exhausted`. No further calls are dispatched, the remaining cells are recorded as `missing` with the reason, and on a bound violation the command exits with code 4 (`test_compare_halts_on_accounting_bound_violation`).
   - Tests: `tests/test_budget.py`, including a subprocess killed after reserving.
 - Settlement:
   - provider-reported usage × dated price;
@@ -115,12 +128,18 @@ Helper evidence has three tiers, recorded per step in `summary.json` under `help
 
 ## Edit evidence (report)
 
-`report.edit_evidence` checks every accepted content-changing edit against the very next action request's saved payload.
-- **Structural check:** removed IDs are absent and added IDs present.
-- **Content check:** the request's working context begins with exactly the accepted revision's entries (id, role and body), followed by the runtime-appended entries for that step.
-  - Rewritten entries carry the new body.
-  - Distinctive lines (≥ 40 chars) of removed entries are searched for in every entry of the next request. Removed text can legitimately reappear, for example if the same step printed it again. The verdict says so instead of passing on IDs alone.
-- Test: `test_edit_evidence_checks_content_and_reappearance`.
+`report.edit_evidence` checks every accepted content-changing edit against the very next action request's saved payload. It applies three separate checks:
+- **Structural:** removed IDs are absent and added IDs present.
+- **Content (exact):** the request's working context begins with exactly the accepted revision's entries (id, role and body), followed by the runtime-appended entries for that step.
+  - A valid empty revision is a trivially matching prefix.
+  - A missing revision artifact is reported as `unverifiable`.
+  - Rewritten entries must carry their new body.
+- **Removed text (partial, heuristic):** every non-framing line of at least 8 characters from each removed entry is searched for in every entry of the next request.
+  - Hits on lines of 40 or more characters are "strong"; shorter hits are "weak", possibly coincidental.
+  - Runtime framing lines (exit status, stream headers, `thought:`, `code:`) and lines under 8 characters are not checked. The report gives the checked share of removed characters (`coverage`) and never claims that all removed text is absent.
+  - If the pre-edit revision artifact is missing, the check is reported as unavailable.
+
+Tests: `test_edit_evidence_checks_content_and_reappearance`, `test_short_removed_text_reappearing_is_reported`, `test_valid_empty_accepted_revision_passes_prefix_check` and `test_missing_revision_artifact_is_unverifiable`.
 
 ## Task family and scoring
 

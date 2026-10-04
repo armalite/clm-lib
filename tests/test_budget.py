@@ -169,3 +169,23 @@ def test_billing_classification() -> None:
         with pytest.raises(ProviderError) as info:
             _raising_provider(exc).complete(ModelRequest("s", "u", 10, "action"))
         assert info.value.billing == billing, (type(exc).__name__, info.value)
+
+
+def test_compare_halts_on_accounting_bound_violation(cfg: Any, tmp_path: Path) -> None:
+    from clm_lib.cli import run_matrix
+    from clm_lib.runner import Runner
+
+    prov = OverReportingProvider([FINAL] * 20)
+    led = Ledger.open(tmp_path / "l.json", 100.0)
+    runner = Runner(
+        cfg, prov, FakeExecutor(), led, TEST_PRICE, live=False, runs_dir=tmp_path / "runs"
+    )
+    out = tmp_path / "cmp.json"
+    cells, code = run_matrix(runner, cfg, ["heldout-1", "heldout-2"], 2, out, "t")
+    assert code == 4
+    assert len(prov.requests) == 1  # nothing dispatched after the violation
+    assert cells[0]["status"] == "accounting_bound_violated"
+    assert len(cells) == 8 and all(c["status"] == "missing" for c in cells[1:])
+    assert all("accounting assumption failed" in c["reason"] for c in cells[1:])
+    rec = json.loads(out.read_text())
+    assert rec["halted"] and rec["frozen"]["prompt_version"] and "code_state" in rec["frozen"]

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -25,30 +26,63 @@ def context_entries(payload: dict[str, Any]) -> list[dict[str, str]]:
     return [json.loads(line) for line in block.splitlines() if line.strip()]
 
 
-def _revision(run_dir: Path, number: int | None) -> list[dict[str, str]]:
+def _revision(run_dir: Path, number: int | None) -> list[dict[str, str]] | None:
+    """Entries of a saved revision; [] for revision 0 or an empty revision; None if missing."""
+    if number == 0:
+        return []  # the initial empty revision is never written to disk
     if number is None:
-        return []
+        return None
     path = run_dir / "context" / f"rev-{number:04d}.json"
-    return _load(path)["entries"] if path.exists() else []
+    if not path.exists():
+        return None
+    entries: list[dict[str, str]] = _load(path)["entries"]
+    return entries
 
 
-def _distinctive_lines(body: str, min_len: int = 40) -> list[str]:
-    seen: list[str] = []
-    for line in body.splitlines():
-        line = line.strip()
-        if len(line) >= min_len and line not in seen:
-            seen.append(line)
-    return seen[:200]
+# Runtime-generated observation framing; too generic to count as removed content.
+_BOILERPLATE = re.compile(
+    r"^(exit_code=\S+ duration=|--- (stdout|stderr) ---$|\[(stdout|stderr) truncated"
+    r"|\[step \d+\] execute$|thought:|code:$)"
+)
+STRONG_MIN = 40  # lines this long are distinctive
+WEAK_MIN = 8  # shorter lines down to this length are checked but may match by coincidence
+
+
+def removed_text_check(body: str, sent: list[dict[str, str]]) -> dict[str, Any]:
+    """Search the next request's entries for text from a removed entry.
+
+    Every non-boilerplate line of at least WEAK_MIN characters is checked. Coverage is
+    the share of the removed body's characters that were checked; unchecked text
+    (short lines, boilerplate) is reported, never assumed absent.
+    """
+    lines = [ln.strip() for ln in body.splitlines()]
+    checked = [
+        ln for ln in dict.fromkeys(lines) if len(ln) >= WEAK_MIN and not _BOILERPLATE.match(ln)
+    ]
+    checked_chars = sum(len(ln) * lines.count(ln) for ln in checked)
+    strong = [ln for ln in checked if len(ln) >= STRONG_MIN and any(ln in e["body"] for e in sent)]
+    weak = [ln for ln in checked if len(ln) < STRONG_MIN and any(ln in e["body"] for e in sent)]
+    where = sorted({e["id"] for e in sent for ln in strong + weak if ln in e["body"]})
+    return {
+        "body_chars": len(body),
+        "checked_chars": checked_chars,
+        "coverage": round(checked_chars / len(body), 3) if body else 1.0,
+        "lines_checked": len(checked),
+        "whole_body_reappears": bool(body) and any(body in e["body"] for e in sent),
+        "strong_hits": len(strong),
+        "weak_hits": len(weak),
+        "in": where,
+    }
 
 
 def edit_evidence(run_dir: Path) -> list[dict[str, Any]]:
     """Check each accepted content-changing edit against the very next action request.
 
-    Structural check: removed ids are absent and added ids present in the next request.
+    Structural check: removed ids absent and added ids present in the next request.
     Content check: the next request's working context starts with exactly the accepted
-    revision's entries (id, role, body), rewritten entries carry the new body, and
-    distinctive lines of removed entries are searched for anywhere in the next request's
-    entries (they may legitimately reappear if the step's code printed them again).
+    revision's entries (an empty revision is a valid, trivially matching prefix), and
+    rewritten entries carry their new body. Removed-text check: see removed_text_check;
+    its coverage is reported because it cannot prove that all removed text is absent.
     """
     events = _events(run_dir)
     out = []
@@ -84,29 +118,55 @@ def edit_evidence(run_dir: Path) -> list[dict[str, Any]]:
         rec["next_request"] = nxt["file"]
         rec["structural_removed_absent"] = all(r not in ids for r in rec["removed"])
         rec["structural_added_present"] = all(a in ids for a in rec["added"])
-        prefix_ok = bool(after) and sent[: len(after)] == after
+        if after is None:
+            rec["content_prefix_equals_accepted_revision"] = None
+            rec["content_verdict"] = "unverifiable: accepted revision artifact missing"
+            out.append(rec)
+            continue
+        prefix_ok = sent[: len(after)] == after
+        rec["accepted_revision_entries"] = len(after)
         rec["content_prefix_equals_accepted_revision"] = prefix_ok
         rec["appended_after_edit"] = ids[len(after) :] if prefix_ok else None
-        old_bodies = {e["id"]: e["body"] for e in before}
         new_bodies = {e["id"]: e["body"] for e in sent}
-        rec["rewritten_verified"] = all(
-            new_bodies.get(r) not in (None, old_bodies.get(r)) for r in rec["rewritten"]
-        )
-        reappear: dict[str, Any] = {}
-        for rid in rec["removed"]:
-            lines = _distinctive_lines(old_bodies.get(rid, ""))
-            hits = sorted({e["id"] for e in sent for ln in lines if ln in e["body"]})
-            found = sum(1 for ln in lines if any(ln in e["body"] for e in sent))
-            if lines:
-                reappear[rid] = {"distinctive_lines": len(lines), "found": found, "in": hits}
-        rec["removed_content_reappearance"] = reappear
-        any_back = any(v["found"] for v in reappear.values())
-        if not (prefix_ok and rec["rewritten_verified"] and rec["structural_removed_absent"]):
-            rec["content_verdict"] = "mismatch"
-        elif any_back:
-            rec["content_verdict"] = "replaced; some removed text reappears in later entries"
+        if before is None:
+            rec["rewritten_verified"] = None
+            rec["removed_text"] = "unavailable: pre-edit revision artifact missing"
         else:
-            rec["content_verdict"] = "replaced; removed text absent from next request"
+            old_bodies = {e["id"]: e["body"] for e in before}
+            rec["rewritten_verified"] = all(
+                new_bodies.get(r) not in (None, old_bodies.get(r)) for r in rec["rewritten"]
+            )
+            rec["removed_text"] = {
+                rid: removed_text_check(old_bodies.get(rid, ""), sent) for rid in rec["removed"]
+            }
+        if not (
+            prefix_ok
+            and rec["structural_removed_absent"]
+            and rec["rewritten_verified"] is not False
+        ):
+            rec["content_verdict"] = "mismatch"
+        elif not isinstance(rec["removed_text"], dict):
+            rec["content_verdict"] = "replaced; removed-text check unavailable"
+        else:
+            checks = list(rec["removed_text"].values())
+            strong = sum(c["strong_hits"] for c in checks)
+            weak = sum(c["weak_hits"] for c in checks)
+            cov = (
+                sum(c["checked_chars"] for c in checks)
+                / max(1, sum(c["body_chars"] for c in checks))
+                if checks
+                else 1.0
+            )
+            if strong:
+                rec["content_verdict"] = "replaced; removed text reappears in the next request"
+            elif weak:
+                rec["content_verdict"] = (
+                    "replaced; short removed lines reappear (possibly coincidental)"
+                )
+            else:
+                rec["content_verdict"] = (
+                    f"replaced; no checked removed text found (checked {cov:.0%} of removed chars)"
+                )
         out.append(rec)
     return out
 
@@ -164,9 +224,9 @@ def build_report(runs_dir: Path, ledger_path: Path) -> str:
         lines.append(
             f"- {m['run_id']} ({m['mode']}): {len(ev)} accepted content-changing edits; "
             f"helpers created {h.get('created')}; candidate invocation steps "
-            f"{h.get('candidate_invocation_steps')}; verified executions "
-            f"{h.get('verified_execution_steps')}; verified with accepted edit "
-            f"{h.get('verified_execution_with_accepted_edit_steps')}"
+            f"{h.get('candidate_invocation_steps')}; helper function executions "
+            f"{h.get('function_execution_steps')}; accepted edits written from helper code "
+            f"{h.get('helper_written_accepted_edit_steps')}"
         )
         for rec in ev:
             lines.append(f"  - step {rec['step']}: {json.dumps(rec)}")
