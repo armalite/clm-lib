@@ -6,14 +6,37 @@ Status: experimental (v0.1). Requirements: [SPEC.md](SPEC.md). Design and depart
 
 ## How it works
 
-1. **The working context is a file.** Each step, the runtime writes the model's current working transcript to `context.json` in a sandboxed workspace. Each entry has an id, a role and text.
-2. **The model can edit it with its own code.** The model replies with one JSON action. An `execute` action carries arbitrary Python, written by the model, which runs in a Docker sandbox. That code may investigate files, rewrite `context.json` however it likes (delete, shorten, merge, reorder, add notes), and create optional reusable helper modules. Helpers are allowed, not required.
-3. **Accepted edits define the next request.** After each execution the runtime validates the file: valid JSON, allowed roles, unique ids, size limits, no symlinks. If it is valid, its entries become the editable part of the next request. If not, the previous version is kept and the model gets a short receipt.
-4. **Without an edit, context accumulates normally.** Each step's action and output are appended.
-5. **The system instructions and the task are protected.** The runtime renders them outside the file on every request, so edits cannot change them.
-6. **Complete history is kept separately.** The trace keeps every request exactly as sent, every response, every accepted revision with diffs, the model's code (saved before it ran), and helper files before and after each step. Edits change what the model sees next, never the record.
+```mermaid
+flowchart TD
+    REQ["Build a fresh model request:<br/>protected instructions + task<br/>+ runtime status + accepted working context"] --> ACT{"Model returns<br/>one JSON action"}
+    ACT -->|execute| RUN["Sandbox runs the model's Python.<br/>It may read files, write helpers<br/>and edit context.json"]
+    RUN --> VAL{"Runtime validates<br/>context.json"}
+    VAL -->|valid change| ACC["Accept as the new revision"]
+    VAL -->|invalid| KEEP["Keep the previous valid context"]
+    VAL -->|not edited| APP
+    ACC --> APP["Append this step's action and output,<br/>plus a receipt if the file was changed or rejected"]
+    KEEP --> APP
+    ACT -->|advance: staged tasks only| STG["Release the next evidence stage<br/>and append its update message"]
+    ACT -->|final| FIN{"All evidence<br/>stages released?"}
+    FIN -->|yes| END["Score the answer; the run ends"]
+    FIN -->|no| NOTE["Append a not-accepted notice"]
+    APP --> REQ
+    STG --> REQ
+    NOTE --> REQ
+```
 
-The comparison baseline, the **summary** arm, uses the same model, tools and limits but cannot edit its context. When a request reaches 70% of the budget, older entries are replaced by a model-written summary and the newest 4 entries are kept.
+- **Who does what.** The model decides what to keep, remove or rewrite, and writes the code that does it. The runtime provides the file, the sandboxed execution, the validation, and builds the next request from whatever was accepted. The task and instructions sit outside the file and can't be edited.
+- **When edits take effect.** An edit made during step N first appears in the request for step N+1. That step's own action and output are appended after the edit.
+- **Editing is optional.** Without an edit, the working context simply accumulates, step by step. Invalid edits are rejected and the previous valid state is kept.
+- **Helpers are optional too.** The model may write reusable helper modules and call them in later steps, but editing `context.json` directly is just as much CLM.
+- **The record is separate.** A complete trace (every request as sent, responses, accepted revisions with diffs, the model's code, and helper files before and after each step) is kept outside the editable context. Edits change what the model sees next, never the record.
+- **No training.** This runs an existing model (`claude-opus-5-5`) through a runtime. It does not train or fine-tune a new model.
+- **Staged tasks.** In experiment 002, evidence arrives in three stages. The `advance` action releases the next stage into the read-only task files. A `final` answer is accepted only once all stages are out. Single-stage tasks don't have `advance`.
+
+Modes:
+- **`summary` (baseline):** the same model, tools and limits, but no editable file. When a request reaches 70% of the budget, a separate model call summarises the older entries, which are replaced by the summary; the newest 4 entries are kept as they are.
+- **`clm` (evaluation):** the editable `context.json` described above, with ordinary capability instructions and pressure reminders. Editing is never required.
+- **`guided` (demonstration only):** `clm` plus an explicit request to build a helper, use it in at least two steps and revise it if useful. This shows capability when prompted; it is not part of any comparison.
 
 ## Three kinds of evidence
 
@@ -102,15 +125,31 @@ Live commands are paid. Each call goes through a persistent ledger (`runs/ledger
 | `clm-lib export experiments/<id> --dest ../clm-lib-test-results` | Copy an experiment's evidence to the results repo |
 | `clm-lib budget` | Show the ledger |
 
-## Results so far
+## Experimental results
 
-Details in [docs/results.md](docs/results.md); exported evidence in [clm-lib-test-results](https://github.com/armalite/clm-lib-test-results).
+Source of truth: [clm-lib-test-results](https://github.com/armalite/clm-lib-test-results). Summary in [docs/results.md](docs/results.md).
 
-- **001: short incident pilot.** Live, 12 comparison runs plus a guided demo. The guided run showed real context replacement and prompted helper use. In the comparison the model solved every task in 3–4 calls: 0 CLM edits and 0 summaries, so context management was **not exercised**. Both arms were 6/6 strictly correct after a disclosed scorer correction; CLM cost about 23% more per run.
-- **002: staged incident under context pressure.** Evidence released in 3 stages. Both arms managed context in every run: CLM made 2–6 unprompted edits per run, and the baseline made 2–5 summaries.
-  - CLM was 6/6 strictly correct versus the baseline's 4/6. The two baseline failures were an explicit overflow caused by its verbatim tail, and an over-long evidence range.
-  - CLM cost about 38% less per run and was cheaper in every matched pair. The saving is explained by the baseline's repeated summary calls.
-  - This is an exploratory pilot, n = 6 per arm: no significance claims, and one task family.
+**Experiment 002: staged incident under context pressure** ([evidence and write-up](https://github.com/armalite/clm-lib-test-results/tree/main/experiments/002-staged-incident-context-pressure)). Frozen comparison: 3 synthetic evaluation instances × 2 repetitions per arm, `claude-opus-5-5` at effort `low`, an 8K-token request budget.
+
+| | Summary baseline | CLM |
+| --- | --- | --- |
+| Strict task success | 4/6 | 6/6 |
+| Completed with an answer | 5/6 | 6/6 |
+| Mean cost per run | $0.372 | $0.231 |
+| Mean elapsed time | 99 s | 56 s |
+| Mean model calls | 12.0 (8.2 action + 3.8 summary) | 10.2 (all action) |
+| Mean cumulative input tokens | 56,000 | 44,060 |
+| Mean cumulative output tokens | 7,377 | 2,741 |
+
+- **CLM edited while the work continued, without being asked to.** Every CLM run made 2–6 accepted edits (20 in total, none rejected). The first edits came at steps 2–4, still in stage 1, and first appeared in the requests for steps 3–5. Every baseline run summarised: 23 summary calls produced 20 accepted summaries. The other 3 were too large to fit, all in the run that overflowed.
+- **The efficiency gain came from avoiding separate summary calls.** Summary calls were 46% of the baseline's cost. CLM actually made more action calls and executions than the baseline.
+- **Both baseline failures are mechanical.** One run ended in an explicit context overflow: its kept-verbatim recent tail held a large observation. The other cited an evidence range broader than the task's 20-line limit.
+- **Better reasoning or retention has not been demonstrated.** Every completed answer, in both arms, had the correct diagnosis, remedy and current value, and cited the early stage-1 fact.
+- **This is an exploratory comparison:** three synthetic instances, twice each per arm, with one model and one baseline policy. It makes no significance claims, and a stronger baseline is untested.
+
+**Experiment 001: short single-stage incidents** ([evidence and write-up](https://github.com/armalite/clm-lib-test-results/tree/main/experiments/001-short-incident-pilot)).
+- The model solved each task in 3–4 calls, so neither arm ever managed context (0 edits, 0 summaries). The comparison doesn't speak to CLM's effectiveness.
+- A separate, explicitly prompted guided run showed real context replacement and helper use.
 
 ## Sandbox prerequisites
 
