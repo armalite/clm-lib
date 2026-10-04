@@ -1,10 +1,14 @@
 # clm-lib: Technical Specification
 
-Version: 1.2 | 4 October 2026
+Version: 1.3 | 4 October 2026
 
 Repository: `clm-lib` | Python package: `clm_lib` | CLI: `clm-lib`
 
-This file defines the implementation requirements and acceptance criteria. User-facing setup and usage live in `README.md`; measured outcomes live in `docs/results.md`; implementation design lives in `docs/architecture.md`.
+This file defines the implementation requirements and acceptance criteria. User-facing setup and usage live in `README.md`; measured outcomes live in `docs/results.md` and the results repository (§13); implementation design lives in `docs/architecture.md`.
+
+Version history:
+- 1.2: the original specification. Its evaluation protocol (§8.2) was executed as experiment 001.
+- 1.3: adds experiment 002, a staged incident task under sustained context pressure (§12), and the results export (§13). Requirements in §1–§11 are unchanged except where §12 extends them.
 
 ## 1. Purpose and intended outcome
 
@@ -186,7 +190,7 @@ Focused offline tests use a scripted provider, which must be unable to silently 
 
 Lint and type checks run alongside these tests.
 
-### 8.2 Live validation sequence
+### 8.2 Live validation sequence (executed as experiment 001)
 
 With valid access and isolation:
 
@@ -196,6 +200,10 @@ With valid access and isolation:
 - stop at the budget ceiling if the full matrix cannot fit, and report completed cells, missing cells and paired results without treating incomplete cells as failures or evidence of a win.
 
 Both arms use the same model version and sampling settings; seeds are used only if supported and identical randomness is not claimed. Held-out failures must not be repeatedly tuned against and still called held-out results. If tuning after evaluation is essential, that set is relabelled development and the earlier outcomes are preserved.
+
+### 8.3 Later experiments
+
+Each later experiment follows §12's protocol rules: calibrate on fresh development instances, freeze, then evaluate on instances that did not inform tuning.
 
 ## 9. Deliverables and acceptance
 
@@ -240,3 +248,65 @@ Use the paper for research claims and current official implementation documentat
 - Separate skill-evolution workflow (background reading only): https://github.com/facebookresearch/context-language-models/blob/18dc11115f50f261233c5bba7937834491e307e8/clm/clm_icl/README.md
 
 This is an engineering experiment inspired by CLM. Its action protocol, synthetic tasks and runtime are not an exact reproduction of the authors' benchmark setup, and nothing here implies the paper guarantees savings with a particular model or workload.
+
+## 12. Experiment 002: staged incident under sustained context pressure
+
+Motivation: in experiment 001 the agent solved short tasks in 3–4 calls, so neither arm managed context. Experiment 002 is the smallest extension of the harness that makes useful information have to survive sustained pressure while investigation continues.
+
+### 12.1 Task
+
+- Evidence is released in stages. Only stage 1 is mounted at the start. The agent requests the next stage with a staged-only `advance` action; the next stage's files are then written into the read-only fixture mount, and an update message is appended to the working context.
+- Future stages and evaluator truth exist only in host memory until released (or, for truth, until scoring).
+- Released files never change. Earlier evidence stays readable and re-readable throughout, and both arms have the same access.
+- A `final` answer before all stages are released is not accepted. The runtime records a neutral observation stating how many stages are released; it reveals nothing about the answer.
+- The task family must contain:
+  - exact facts from early evidence that stay relevant later;
+  - authoritative updates that supersede earlier values and an earlier hypothesis;
+  - further investigation after pressure begins;
+  - a final diagnosis, remedy and supporting evidence.
+- Scoring extends §6 with:
+  - an `origin` evidence group, citing the early record that introduced the problem;
+  - a `stale_hypothesis` outcome, when the cause is a superseded hypothesis.
+  Stale-value detection covers both the superseded build default and the repository config value.
+
+### 12.2 Arms and fairness
+
+- Same as §5: same model and settings, task, evidence schedule, tools, scratch files and limits.
+- The CLM arm gets ordinary capability instructions and pressure reminders only. Edits and helpers are never required in evaluation runs.
+- The baseline uses the existing summary policy unchanged.
+- Neither arm is made to read wastefully.
+
+### 12.3 Protocol
+
+1. Calibrate on fresh development instances, distinct from evaluation instances.
+2. Check that pressure occurs while meaningful investigation remains, and that summary eligibility (including the retained-tail rule) and management activity actually happen.
+3. Adjust the workload or the shared budget only if needed, recording every calibration attempt. Selection is based on exercising context management, never on which arm does better.
+4. Freeze the task generator, evaluation instances, prompts, model and settings, scorer and code state. The comparison record stores the git HEAD and the full uncommitted source as a patch.
+5. Run 3 evaluation instances × 2 modes × 2 repetitions, alternating mode order across matched pairs. Preserve every outcome; do not tune against evaluation failures or rerun for better results.
+6. If calibration cannot establish a useful workload, stop and report the specific problem instead of spending budget on an uninformative comparison.
+
+### 12.4 Measurements
+
+In addition to §7:
+- strict success, with diagnosis, remedy, current value, stale-value and stale-hypothesis errors, and each evidence group reported separately;
+- the step and stage of first pressure and of first management (edit or summary);
+- the number of action steps, executions and stage advances that follow first management;
+- premature final attempts.
+
+Reports show paired results and per-arm aggregates for all assigned runs, with reasons for any missing or invalid ones. They include concrete traces of what was retained or removed, what the next request contained, and how the final answer used it. Trace-supported explanations are distinguished from causal claims.
+
+## 13. Results export
+
+Completed experiment evidence is copied (never moved) to a separate results repository, one directory per experiment. Each directory contains:
+- `README.md`: question, setup, outcome and limitations;
+- `protocol.md`: planned procedure versus later changes;
+- `manifest.json`: run IDs and roles, settings, source commit and uncommitted-source patches, prompt, generator and scorer versions, fixture and ledger checksums, redactions;
+- `report.md`, plus per-run `metrics.json` and `metrics.csv`;
+- `artifacts/`, with runs separated by role (`evaluation`, `guided`, `calibration`, `smoke`, `access-failure`).
+
+Further requirements:
+- **Checksums:** every exported run directory carries `SHA256SUMS`. Re-exporting identical evidence is a no-op, and different evidence under an existing run ID is refused.
+- **Fixtures:** exported once per task and verified against each run's on-disk copy. For staged runs, only the stages that run released are compared.
+- **Ledger:** snapshots are historical copies; the active ledger stays in this repository.
+- **Exclusions:** credentials and request headers are never present or exported. Local account identifiers are redacted and the redaction documented.
+- **Corrections:** post-hoc scorer corrections keep both the original and the corrected results.

@@ -35,6 +35,17 @@ ACTION_SCHEMA: dict[str, Any] = {
 }
 
 
+# Staged tasks add an "advance" action (release the next evidence stage); other tasks keep
+# ACTION_SCHEMA unchanged so earlier experiments' requests stay reproducible.
+STAGED_ACTION_SCHEMA: dict[str, Any] = {
+    **ACTION_SCHEMA,
+    "properties": {
+        **ACTION_SCHEMA["properties"],
+        "action": {"type": "string", "enum": ["execute", "final", "advance"]},
+    },
+}
+
+
 @dataclass
 class ModelRequest:
     system: str

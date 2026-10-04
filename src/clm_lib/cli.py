@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -400,6 +401,25 @@ COMPARE_HALT = {
 }
 
 
+def source_patch() -> str:
+    """Uncommitted tracked changes plus untracked files under src/configs/tests, as one patch."""
+    import subprocess
+
+    def git(*a: str) -> str:
+        try:
+            return subprocess.run(
+                ["git", *a], cwd=REPO_ROOT, capture_output=True, text=True, timeout=30
+            ).stdout
+        except (OSError, subprocess.TimeoutExpired):
+            return ""
+
+    paths = ["src", "configs", "tests", "pyproject.toml"]
+    out = git("diff", "HEAD", "--", *paths)
+    for f in git("ls-files", "--others", "--exclude-standard", "--", *paths).split():
+        out += git("diff", "--no-index", "--", "/dev/null", f)
+    return out
+
+
 def code_state() -> dict[str, Any]:
     """Git HEAD plus a hash of uncommitted changes, to freeze the evaluated code."""
     import hashlib
@@ -429,7 +449,12 @@ def run_matrix(
     from .prompts import PROMPT_VERSION
     from .tasks import GENERATOR_VERSION
 
+    patch = source_patch()
+    if patch:
+        out.with_suffix(".patch").write_text(patch)
     frozen = {
+        "source_patch": out.with_suffix(".patch").name if patch else None,
+        "source_patch_sha256": hashlib.sha256(patch.encode()).hexdigest() if patch else None,
         "model": runner.provider.model,
         "provider": runner.provider.describe(),
         "prompt_version": PROMPT_VERSION,
@@ -528,6 +553,21 @@ def cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_export(args: argparse.Namespace) -> int:
+    from .export import ExportConflict, export_experiment
+
+    cfg = _config(args)
+    try:
+        log = export_experiment(
+            Path(args.experiment), _runs_dir(cfg), _resolve(cfg.budget.ledger), Path(args.dest)
+        )
+    except ExportConflict as exc:
+        print(f"export refused: {exc}")
+        return 5
+    print(json.dumps(log, indent=1))
+    return 0
+
+
 def cmd_budget(args: argparse.Namespace) -> int:
     cfg = _config(args)
     print(json.dumps(_ledger(cfg, None).summary(), indent=1))
@@ -583,6 +623,13 @@ def build_parser() -> argparse.ArgumentParser:
     rp = sub.add_parser("report", help="markdown report from recorded runs and the ledger")
     rp.add_argument("--out", default="")
     rp.set_defaults(func=cmd_report)
+
+    ex = sub.add_parser("export", help="copy an experiment's evidence into a results repository")
+    ex.add_argument(
+        "experiment", help="experiment directory, e.g. experiments/001-short-incident-pilot"
+    )
+    ex.add_argument("--dest", required=True, help="results repository root")
+    ex.set_defaults(func=cmd_export)
 
     b = sub.add_parser("budget", help="show the persistent spend ledger")
     b.set_defaults(func=cmd_budget)

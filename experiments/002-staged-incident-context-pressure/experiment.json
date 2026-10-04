@@ -1,0 +1,102 @@
+{
+ "id": "002-staged-incident-context-pressure",
+ "title": "Staged incident with evidence over time: does CLM context editing change outcomes or cost versus summarisation under sustained pressure?",
+ "status": "complete; both arms managed context in every run; CLM 6/6 strict vs summary 4/6, CLM cheaper in all 6 pairs (exploratory, n=6 per arm)",
+ "provenance": {
+  "source_repo": "https://github.com/armalite/clm-lib",
+  "comparison_commit": "1230323abd6331be6b7191ad0d74c97e1a19dc02",
+  "comparison_tree_state": "HEAD plus uncommitted changes; the full uncommitted source (tracked diff + untracked staged.py/export.py) was saved by `compare` as artifacts/comparisons/20261004T080858/20261004T080858.patch, sha256 recorded in the comparison record's frozen block",
+  "calibration_tree_state": "calibration runs ran on the same HEAD with the experiment-002 code uncommitted, before two provenance-only changes (patch saving in compare; task_prompt_sha256 in run.json). Their exact source state was not recorded by the tool.",
+  "system_prompt_version": "2026-10-04.1",
+  "generator_version": "staged-incident-gen/1",
+  "scorer": "score/2 (recorded at run time; no post-hoc scorer change for this experiment)",
+  "price_source": "https://platform.claude.com/docs/en/about-claude/pricing (retrieved 2026-10-04)"
+ },
+ "settings": {
+  "model": "claude-opus-5-5",
+  "effort": "low",
+  "structured_output": true,
+  "config": "configs/default.toml (identical to experiment 001)",
+  "max_calls": 20,
+  "max_output_tokens": 2048,
+  "exec_timeout_s": 30,
+  "output_cap_chars": 6000,
+  "context_budget_tokens": 8000,
+  "pressure_ratio": 0.7,
+  "recovery_reserve_tokens": 1000,
+  "summary_tail_entries": 4,
+  "evaluation_tasks": [
+   "staged-eval-1",
+   "staged-eval-2",
+   "staged-eval-3"
+  ],
+  "repetitions": 2,
+  "mode_order": "alternating per matched pair (pair 0: summary first)",
+  "stages": 3
+ },
+ "runs": [
+  {
+   "run_id": "20261004T080421-summary-staged-dev-1-3ddb",
+   "role": "calibration",
+   "note": "calibration 1: summary arm on staged-dev-1; pressure from stage 2, 4 summaries"
+  },
+  {
+   "run_id": "20261004T080624-clm-staged-dev-2-c8e9",
+   "role": "calibration",
+   "note": "calibration 2: clm arm on staged-dev-2; 2 unprompted edits at stage 2"
+  },
+  {
+   "run_id": "20261004T080858-summary-staged-eval-1-b6df",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T081056-clm-staged-eval-1-ed3b",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T081159-clm-staged-eval-2-7d9a",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T081249-summary-staged-eval-2-4cdf",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T081451-summary-staged-eval-3-2e45",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T081556-clm-staged-eval-3-ed5a",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T081645-clm-staged-eval-1-c471",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T081740-summary-staged-eval-1-3056",
+   "role": "evaluation",
+   "note": "summary arm context_overflow: 4-entry verbatim tail held a 6,105-char observation; summary + bounded retry could not fit the hard limit"
+  },
+  {
+   "run_id": "20261004T081918-summary-staged-eval-2-49ce",
+   "role": "evaluation",
+   "note": "symptom reference was a 24-line range (published limit 20); the range does contain symptom lines; not corrected post hoc"
+  },
+  {
+   "run_id": "20261004T082052-clm-staged-eval-2-92e6",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T082144-clm-staged-eval-3-605b",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T082253-summary-staged-eval-3-6f45",
+   "role": "evaluation"
+  }
+ ],
+ "comparisons": [
+  "20261004T080858"
+ ]
+}

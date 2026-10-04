@@ -162,11 +162,28 @@ No line exceeds about 220 chars, so every required observation fits the output c
 
 Scoring is deterministic:
 - Cause and remedy are taken from the first code mentioned.
-- The value is whitespace, quote and case normalised against the accepted variants. Matching a stale variant gives `stale_value`.
+- The value is whitespace, quote and case normalised against the accepted variants. Matching a stale variant gives `stale_value`. From score/2 on, a `<identifier>=<value>` answer is also matched on its value part.
 - Evidence references must parse as `path:line` or `path:a-b` (at most 20 lines), exist, and cover both the cause group and the value group.
 - Strict success requires all four components. Outcomes are `correct`, `stale_value`, `unsupported`, `incorrect` and `no_answer`.
 
 Ground truth exists only in memory until the run ends, then goes to `evaluator/`, which is never mounted.
+
+## Staged tasks (experiment 002)
+
+- **Generator:** `staged.py` (`staged-incident-gen/1`) builds three stage file sets under `stage-1/`, `stage-2/` and `stage-3/`, plus one update message per stage.
+- **Release:** `TaskInstance.stages` holds the stage files in host memory. The runner writes stage 1 at start. Each `advance` action writes the next stage into the read-only fixture mount and appends a pair of entries: `sN.act` "advance" and `sN.obs` with the update message and the new-file listing.
+  - Released files never change. Earlier stages stay readable, and both arms re-read through the same sandbox.
+  - Future stages are not on disk until released. Evaluator truth is written only after the run.
+  - Test: `test_future_stages_and_truth_are_not_visible_early`.
+- **Schema:** the `advance` action exists only in `STAGED_ACTION_SCHEMA`, used for staged tasks. Single-stage tasks keep the original schema and reject `advance`, so experiment 001's requests stay reproducible. Staged instructions are in the task text, not the system prompt.
+- **Premature final:** a `final` before the last stage produces a neutral observation ("k of 3 stages released"), with no answer feedback. It counts toward the call cap.
+- **Management timeline:** `summary.json → management` records:
+  - per-step stage, estimated and reported request size, and pressure before management;
+  - the first pressure step and stage;
+  - the steps at which accepted edits took effect (the next request), plus summary, spill and recovery steps;
+  - the first management step and stage;
+  - the action steps, executions and advances that followed it.
+- **Scoring additions:** an `origin` evidence group (the stage-1 release-note line), `stale_causes` (the superseded timeout hypothesis gives outcome `stale_hypothesis`), and two stale values (the build default and the repo config default).
 
 ## Design choices
 
@@ -181,5 +198,6 @@ Ground truth exists only in memory until the run ends, then goes to `evaluator/`
 
 1. **Runtime spill** (§3, step 6) is an extra runtime-initiated content move. It is used only when a request would exceed the hard limit, and identically in both arms. The original text stays in the event log and in a workspace file the model can read.
 2. **Code-prefixed answers.** The answer fields keep the spec's names, but `root_cause` and `remedy` must start with a code from a published list. This makes scoring deterministic without a judge model.
-3. **No live validation** was performed in the build session: provider credentials were unavailable (see results.md). The live and helper completion levels are therefore not claimed.
-4. **Model choice.** `claude-opus-5-5` follows current Anthropic guidance. It's configurable, and nothing was run on it.
+3. **Live validation** ran after the build session, once a credential file was provided (results.md). Added beyond the planned sequence: one **dev-only calibration run** in summary mode, to check SPEC §6's pressure condition before freezing. It showed pressure, so no adjustment was made.
+4. **Model choice.** `claude-opus-5-5` (effort `low`) follows current Anthropic guidance. It's configurable, and it was used for every live run.
+5. **Post-hoc scorer correction (score/2).** After the comparison, `required_value` also accepts `<identifier>=<value>`, the form used in the authoritative change records. score/1 results are preserved in each run, and `report` shows both. This was prompted by one held-out answer and is disclosed in results.md.

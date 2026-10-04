@@ -17,6 +17,11 @@ from pathlib import Path
 from typing import Any
 
 GENERATOR_VERSION = "incident-gen/1"
+# score/1: exact normalised match of required_value.
+# score/2 (post-hoc correction, 2026-10-04): also accepts "<setting>=<value>", the form in
+# which values appear in the authoritative change records. Applied uniformly to all runs;
+# score/1 results are kept in each run's evaluator/score.json.
+SCORER_VERSION = "score/2"
 
 CAUSE_CODES: dict[str, str] = {
     "DB_POOL_EXHAUSTED": "database connection pool too small for load",
@@ -54,8 +59,17 @@ INSTANCES: dict[str, InstanceSpec] = {
     "heldout-1": InstanceSpec("heldout-1", 201, "tls_cert", "heldout"),
     "heldout-2": InstanceSpec("heldout-2", 202, "client_timeout", "heldout"),
     "heldout-3": InstanceSpec("heldout-3", 203, "feature_flag", "heldout"),
+    # Experiment 002: staged evidence (see staged.py). Dev instances are for calibration only;
+    # eval instances are not run until the comparison is frozen.
+    "staged-dev-1": InstanceSpec("staged-dev-1", 3101, "staged_pool", "staged-dev"),
+    "staged-dev-2": InstanceSpec("staged-dev-2", 3102, "staged_pool", "staged-dev"),
+    "staged-dev-3": InstanceSpec("staged-dev-3", 3103, "staged_pool", "staged-dev"),
+    "staged-eval-1": InstanceSpec("staged-eval-1", 3201, "staged_pool", "staged-eval"),
+    "staged-eval-2": InstanceSpec("staged-eval-2", 3202, "staged_pool", "staged-eval"),
+    "staged-eval-3": InstanceSpec("staged-eval-3", 3203, "staged_pool", "staged-eval"),
 }
 HELDOUT = ("heldout-1", "heldout-2", "heldout-3")
+STAGED_EVAL = ("staged-eval-1", "staged-eval-2", "staged-eval-3")
 
 
 @dataclass
@@ -67,6 +81,8 @@ class Truth:
     # group name -> list of [file, line]
     evidence_groups: dict[str, list[tuple[str, int]]]
     notes: str = ""
+    # Cause codes of superseded hypotheses (e.g. an earlier, mitigated cause).
+    stale_causes: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -74,6 +90,7 @@ class Truth:
             "remedies": self.remedies,
             "value_variants": self.value_variants,
             "stale_variants": self.stale_variants,
+            "stale_causes": self.stale_causes,
             "evidence_groups": {k: [list(x) for x in v] for k, v in self.evidence_groups.items()},
             "notes": self.notes,
         }
@@ -85,19 +102,49 @@ class TaskInstance:
     prompt: str
     files: dict[str, str]
     truth: Truth = field(repr=False)
+    # Staged tasks: stages[k] holds the files released at stage k+1 (union == files) and
+    # stage_updates[k] the update message shown when that stage is released.
+    stages: list[dict[str, str]] = field(default_factory=list)
+    stage_updates: list[str] = field(default_factory=list)
+    generator_version: str = GENERATOR_VERSION
 
     @property
-    def fixture_sha256(self) -> str:
+    def staged(self) -> bool:
+        return bool(self.stages)
+
+    @property
+    def n_stages(self) -> int:
+        return len(self.stages) or 1
+
+    def files_upto(self, stage: int | None = None) -> dict[str, str]:
+        if not self.staged or stage is None:
+            return self.files
+        out: dict[str, str] = {}
+        for files in self.stages[:stage]:
+            out.update(files)
+        return out
+
+    @staticmethod
+    def _sha(files: dict[str, str]) -> str:
         h = hashlib.sha256()
-        for path in sorted(self.files):
+        for path in sorted(files):
             h.update(path.encode())
             h.update(b"\0")
-            h.update(self.files[path].encode())
+            h.update(files[path].encode())
             h.update(b"\0")
         return h.hexdigest()
 
-    def write_fixtures(self, root: Path) -> None:
-        for rel, text in self.files.items():
+    @property
+    def fixture_sha256(self) -> str:
+        return self._sha(self.files)
+
+    def sha_upto(self, stage: int | None) -> str:
+        return self._sha(self.files_upto(stage))
+
+    def write_fixtures(self, root: Path, stage: int | None = None) -> None:
+        """Write all files, or for staged tasks only stage ``stage`` (1-based) itself."""
+        files = self.files if not self.staged or stage is None else self.stages[stage - 1]
+        for rel, text in files.items():
             p = root / rel
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(text, encoding="utf-8")
@@ -796,6 +843,10 @@ Remedy codes:
 
 def generate(name: str) -> TaskInstance:
     spec = INSTANCES[name]
+    if spec.scenario.startswith("staged"):
+        from .staged import generate_staged
+
+        return generate_staged(spec)
     files, truth = _GENERATORS[spec.scenario](spec)
     return TaskInstance(spec=spec, prompt=task_prompt(files), files=files, truth=truth)
 
@@ -864,7 +915,15 @@ def no_answer_score(truth: Truth) -> Score:
     )
 
 
-def score_answer(answer: dict[str, Any] | None, truth: Truth, files: dict[str, str]) -> Score:
+SETTING_RE = re.compile(r"^[a-z_][\w.\-]*\s*=\s*(\S.*)$")
+
+
+def score_answer(
+    answer: dict[str, Any] | None,
+    truth: Truth,
+    files: dict[str, str],
+    version: str = SCORER_VERSION,
+) -> Score:
     if not answer:
         return no_answer_score(truth)
     root = str(answer.get("root_cause", ""))
@@ -872,11 +931,16 @@ def score_answer(answer: dict[str, Any] | None, truth: Truth, files: dict[str, s
     value = _norm(str(answer.get("required_value", "")))
     cause_code = _first_code(root, CAUSE_CODES)
     remedy_code = _first_code(remedy, REMEDY_CODES)
+    candidates = {value}
+    if version != "score/1":
+        m = SETTING_RE.match(value)
+        if m:
+            candidates.add(_norm(m.group(1)))
     if not value:
         value_status = "missing"
-    elif value in {_norm(v) for v in truth.value_variants}:
+    elif candidates & {_norm(v) for v in truth.value_variants}:
         value_status = "exact"
-    elif value in {_norm(v) for v in truth.stale_variants}:
+    elif candidates & {_norm(v) for v in truth.stale_variants}:
         value_status = "stale"
     else:
         value_status = "wrong"
@@ -914,6 +978,8 @@ def score_answer(answer: dict[str, Any] | None, truth: Truth, files: dict[str, s
         outcome = "correct"
     elif value_status == "stale":
         outcome = "stale_value"
+    elif cause_code in truth.stale_causes:
+        outcome = "stale_hypothesis"
     elif cause_ok and remedy_ok and value_status == "exact":
         outcome = "unsupported"
     else:

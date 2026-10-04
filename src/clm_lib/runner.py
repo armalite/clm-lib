@@ -41,8 +41,21 @@ from .context import (
 )
 from .executor import ExecResult, Executor, ExecutorUnavailable
 from .prompts import PROMPT_VERSION, render_user, system_prompt
-from .provider import ACTION_SCHEMA, ModelRequest, ModelResponse, Provider, ProviderError
-from .tasks import GENERATOR_VERSION, Score, TaskInstance, no_answer_score, score_answer
+from .provider import (
+    ACTION_SCHEMA,
+    STAGED_ACTION_SCHEMA,
+    ModelRequest,
+    ModelResponse,
+    Provider,
+    ProviderError,
+)
+from .tasks import (
+    SCORER_VERSION,
+    Score,
+    TaskInstance,
+    no_answer_score,
+    score_answer,
+)
 from .tracing import RunTrace, now_iso, sha256_text, snapshot_files
 
 MODES = ("summary", "clm", "guided")
@@ -91,6 +104,7 @@ class _Counters:
     edits_rejected: int = 0
     pressure_steps: int = 0
     recovery_requests: int = 0
+    premature_finals: int = 0
 
 
 @dataclass
@@ -107,7 +121,9 @@ class _Usage:
     assumed_cost_usd: float = 0.0
 
 
-def parse_action(text: str, max_code_chars: int) -> tuple[dict[str, Any] | None, str]:
+def parse_action(
+    text: str, max_code_chars: int, allow_advance: bool = False
+) -> tuple[dict[str, Any] | None, str]:
     """Return (action, error). Only a whole-response JSON object is accepted."""
     raw = text.strip()
     fence = re.fullmatch(r"```(?:json)?\s*\n(.*)\n```", raw, flags=re.S)
@@ -120,6 +136,8 @@ def parse_action(text: str, max_code_chars: int) -> tuple[dict[str, Any] | None,
     if not isinstance(obj, dict):
         return None, "response JSON must be an object"
     kind = obj.get("action")
+    if kind == "advance" and allow_advance:
+        return obj, ""
     if kind == "execute":
         code = obj.get("code")
         if not isinstance(code, str) or not code.strip():
@@ -219,6 +237,12 @@ class _Run:
         self.step = 0
         self.summary_index = 0
         self.recovery_active = False
+        self.stage = 1
+        self.pressure_seen = False
+        self.timeline: list[dict[str, Any]] = []
+        self.last_reported_input = 0
+        # step at which each management event first affected a request
+        self.mgmt: dict[str, list[int]] = {"edit": [], "summary": [], "spill": [], "recovery": []}
         self.peak_req_est = 0
         self.peak_req_reported = 0
         self.peak_ctx_chars = 0
@@ -429,6 +453,7 @@ class _Run:
             self.u.thinking_reported = True
         self.u.cost_usd += cost
         reported = u.input_tokens + u.cache_read_input_tokens + u.cache_creation_input_tokens
+        self.last_reported_input = reported
         self.peak_req_reported = max(self.peak_req_reported, reported)
         if resp.usage_source == "provider" and reported > 0 and req.purpose == "action":
             observed = (len(req.system) + len(req.user)) / reported
@@ -460,6 +485,7 @@ class _Run:
                 self.summary_index += 1
                 self.store.commit(candidate, "summary", self.step)
                 self.c.summaries_applied += 1
+                self.mgmt["summary"].append(self.step)
                 self.trace.event(
                     "summary_applied",
                     step=self.step,
@@ -503,6 +529,7 @@ class _Run:
         )
         self.store.commit(entries, "spill", self.step)
         self.c.spills += 1
+        self.mgmt["spill"].append(self.step)
         self.trace.event(
             "spill", step=self.step, entry=last.id, chars=len(last.body), file=f"spill/{name}"
         )
@@ -532,6 +559,7 @@ class _Run:
         hard = b - self.lim.recovery_reserve_tokens
         user, est = self.assemble()
         pressure = est >= self.lim.pressure_ratio * b
+        self.pressure_seen = pressure  # before any management relieves it
         if pressure:
             self.c.pressure_steps += 1
             self.trace.event("pressure", step=self.step, est_request_tokens=est)
@@ -554,6 +582,7 @@ class _Run:
                     )
                 recovery = True
                 self.c.recovery_requests += 1
+                self.mgmt["recovery"].append(self.step)
         self.recovery_active = recovery
         user, est = self.assemble(pressure=pressure, recovery=recovery)
         if est > (b if recovery else hard):
@@ -787,6 +816,7 @@ class _Run:
             )
         assert out.before and out.after
         self.c.edits_accepted_changed += 1
+        self.mgmt["edit"].append(self.step + 1)  # first affects the next request
         b_ids = [e.id for e in out.before.entries]
         a_ids = [e.id for e in out.after.entries]
         removed = [i for i in b_ids if i not in a_ids]
@@ -822,14 +852,25 @@ class _Run:
 
     # --------------------------------------------------------------- loop
     def loop(self) -> tuple[str, str]:
+        schema = STAGED_ACTION_SCHEMA if self.task.staged else ACTION_SCHEMA
+        staged = self.task.staged
         while True:
             self.step += 1
-            user, _est, pressure, recovery = self.prepare_request()
-            req = ModelRequest(
-                self.system, user, self.lim.max_output_tokens, "action", ACTION_SCHEMA
+            user, est, pressure, recovery = self.prepare_request()
+            self.timeline.append(
+                {
+                    "step": self.step,
+                    "stage": self.stage,
+                    "est_request_tokens": est,
+                    "pressure_before_management": self.pressure_seen,
+                    "pressure": pressure,
+                    "recovery": recovery,
+                }
             )
+            req = ModelRequest(self.system, user, self.lim.max_output_tokens, "action", schema)
             resp = self.call(req, "action", {"pressure": pressure, "recovery": recovery})
-            action, err = parse_action(resp.text, self.lim.max_code_chars)
+            self.timeline[-1]["reported_input_tokens"] = self.last_reported_input
+            action, err = parse_action(resp.text, self.lim.max_code_chars, staged)
             if action is None:
                 self.trace.event(
                     "invalid_action", step=self.step, error=err, stop_reason=resp.stop_reason
@@ -840,21 +881,85 @@ class _Run:
                     "Reply again with exactly one JSON object; keep code short.\n</runtime_status>\n"
                 )
                 repair = ModelRequest(
-                    self.system, user + note, self.lim.max_output_tokens, "repair", ACTION_SCHEMA
+                    self.system, user + note, self.lim.max_output_tokens, "repair", schema
                 )
                 resp = self.call(repair, "repair", {"error": err})
-                action, err = parse_action(resp.text, self.lim.max_code_chars)
+                action, err = parse_action(resp.text, self.lim.max_code_chars, staged)
                 if action is None:
                     self.trace.event("invalid_action", step=self.step, error=err, after_repair=True)
                     return "failed_protocol", f"invalid response after repair: {err}"
+            self.timeline[-1]["action"] = action["action"]
+            if action["action"] == "advance":
+                self.advance_step(action)
+                continue
             if action["action"] == "final":
+                if staged and self.stage < self.task.n_stages:
+                    self.premature_final_step(action)
+                    continue
                 self.answer = action["answer"]
                 self.trace.event("final_answer", step=self.step, answer=self.answer)
                 return "completed", "final answer"
             self.execute_step(action)
 
+    def advance_step(self, action: dict[str, Any]) -> None:
+        """Release the next evidence stage (staged tasks only)."""
+        thought = str(action.get("thought", ""))[:1000]
+        if self.stage < self.task.n_stages:
+            self.stage += 1
+            self.task.write_fixtures(self.fx, self.stage)
+            released = self.task.stages[self.stage - 1]
+            listing = "\n".join(
+                f"  {p} ({t.count(chr(10))} lines)" for p, t in sorted(released.items())
+            )
+            obs = (
+                f"Stage {self.stage} of {self.task.n_stages} released.\n"
+                f"{self.task.stage_updates[self.stage - 1].strip()}\n\nNew files:\n{listing}"
+            )
+            self.trace.event(
+                "stage_released", step=self.step, stage=self.stage, files=sorted(released)
+            )
+        else:
+            obs = f"No further evidence: all {self.task.n_stages} stages are already released."
+            self.trace.event("advance_noop", step=self.step)
+        self.store.append(
+            [
+                Entry(
+                    f"s{self.step}.act",
+                    "assistant",
+                    f"[step {self.step}] advance\nthought: {thought}",
+                ),
+                Entry(f"s{self.step}.obs", "observation", obs),
+            ],
+            "runtime",
+            self.step,
+        )
+        self._save_revision()
+
+    def premature_final_step(self, action: dict[str, Any]) -> None:
+        self.c.premature_finals += 1
+        self.trace.event(
+            "premature_final", step=self.step, stage=self.stage, answer=action.get("answer")
+        )
+        obs = (
+            f"Final answer not accepted: {self.stage} of {self.task.n_stages} evidence stages "
+            "released. Use advance to release the remaining stages."
+        )
+        self.store.append(
+            [
+                Entry(
+                    f"s{self.step}.act",
+                    "assistant",
+                    f"[step {self.step}] final (not accepted)\n{json.dumps(action.get('answer'))[:2000]}",
+                ),
+                Entry(f"s{self.step}.obs", "observation", obs),
+            ],
+            "runtime",
+            self.step,
+        )
+        self._save_revision()
+
     def execute(self) -> RunResult:
-        self.task.write_fixtures(self.fx)
+        self.task.write_fixtures(self.fx, 1 if self.task.staged else None)
         (self.ws / "helpers").mkdir()
         run_meta = {
             "run_id": self.run_id,
@@ -866,9 +971,11 @@ class _Run:
             "scenario_hidden_from_model": True,
             "fixture_seed": self.task.spec.seed,
             "fixture_sha256": self.task.fixture_sha256,
-            "generator_version": GENERATOR_VERSION,
+            "generator_version": self.task.generator_version,
+            "stages": self.task.n_stages,
             "prompt_version": PROMPT_VERSION,
             "system_prompt_sha256": sha256_text(self.system),
+            "task_prompt_sha256": sha256_text(self.task.prompt),
             "provider": self.r.provider.describe(),
             "price": self.r.price.__dict__ if self.r.price else None,
             "executor": self.r.executor.describe(),
@@ -909,6 +1016,36 @@ class _Run:
             raise KeyboardInterrupt
         return result
 
+    def management_summary(self) -> dict[str, Any]:
+        """When context management first affected a request, and how much work followed."""
+        tl = self.timeline
+        pressure = [t for t in tl if t["pressure_before_management"]]
+        managed = sorted(s for k in ("edit", "summary") for s in self.mgmt[k])
+        first = managed[0] if managed else None
+        after = [t for t in tl if first is not None and t["step"] >= first]
+        stage_of = {t["step"]: t["stage"] for t in tl}
+        return {
+            "stages_total": self.task.n_stages,
+            "stages_released": self.stage,
+            "first_pressure_step": pressure[0]["step"] if pressure else None,
+            "first_pressure_stage": pressure[0]["stage"] if pressure else None,
+            "edit_effective_steps": self.mgmt["edit"],
+            "summary_steps": self.mgmt["summary"],
+            "spill_steps": self.mgmt["spill"],
+            "recovery_steps": self.mgmt["recovery"],
+            "first_management_step": first,
+            "first_management_stage": stage_of.get(first) if first is not None else None,
+            "action_steps_after_first_management": len(after),
+            "executions_after_first_management": sum(
+                1 for t in after if t.get("action") == "execute"
+            ),
+            "advances_after_first_management": sum(
+                1 for t in after if t.get("action") == "advance"
+            ),
+            "premature_finals": self.c.premature_finals,
+            "timeline": tl,
+        }
+
     def finish(self, status: str, reason: str, human: str) -> RunResult:
         # Ground truth is written only now, outside the sandbox mounts.
         truth = self.task.truth
@@ -919,7 +1056,8 @@ class _Run:
         )
         self.trace.write_json("evaluator/truth.json", truth.to_dict())
         self.trace.write_json(
-            "evaluator/score.json", {**score.to_dict(), "components": score.components}
+            "evaluator/score.json",
+            {**score.to_dict(), "components": score.components, "scorer_version": SCORER_VERSION},
         )
         elapsed = time.monotonic() - self.t_start
         u = self.u
@@ -967,6 +1105,7 @@ class _Run:
             "peak_working_context_chars": self.peak_ctx_chars,
             "context_revisions": len(self.store.revisions) - 1,
             "helpers": self.helper_summary(),
+            "management": self.management_summary(),
             "score": {**score.to_dict(), "components": score.components},
         }
         self.trace.write_json("summary.json", metrics)
