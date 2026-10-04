@@ -60,6 +60,17 @@ CONTEXT MANAGEMENT (automatic):
   them back in later steps; they are not shown to you unless you print them.
 """
 
+SUMMARY_INSTRUCTIONS_TOKEN_TAIL = """
+CONTEXT MANAGEMENT (automatic):
+- When the request grows past {pressure_pct}% of the budget, the runtime asks a summariser to
+  replace older working-context entries with a summary. The most recent entries are kept
+  verbatim up to about {tail_tokens} tokens (the newest entry is kept even if larger, when it
+  fits); older entries, and recent entries too large for that allowance, are summarised.
+  Summaries are sized to leave room for further work.
+- You may write ordinary files in /task/workspace (for example notes or helper scripts) and read
+  them back in later steps; they are not shown to you unless you print them.
+"""
+
 GUIDED_INSTRUCTIONS = """
 DEMONSTRATION REQUEST (this run only): as part of solving the task, create your own reusable
 context-management helper module under /task/workspace/helpers/ (design it yourself), invoke it
@@ -76,6 +87,19 @@ entries. It must preserve, exactly and verbatim where relevant:
 Drop repetition and raw log dumps. Use compact bullet points. Plain text only."""
 
 
+SUMMARY_SYSTEM_TOKEN_TAIL = """You compress an agent's working transcript. The agent is
+investigating a production incident from local files, and will keep working after your summary
+replaces the entries below. The transcript may include an earlier summary: carry its facts
+forward. Preserve, exactly and verbatim where relevant:
+- every concrete value, identifier, timestamp, setting name and file:line reference found so far;
+- for each setting or claim, which value is CURRENT and which values were superseded, and by which
+  record (APPLIED records override release notes, config files and notes; later APPLIED wins);
+- hypotheses confirmed, hypotheses ruled out, approaches that failed;
+- unresolved questions and the agent's next planned steps, including evidence stages still to read.
+Drop repetition and raw log dumps. Use compact bullet points. Plain text only. Stay within the
+requested length; it is set so the agent has room to continue."""
+
+
 def system_prompt(
     mode: str,
     *,
@@ -85,12 +109,19 @@ def system_prompt(
     tail: int,
     max_entries: int,
     max_body: int,
+    summary_policy: str = "fixed-tail/1",
+    tail_tokens: int = 0,
 ) -> str:
     text = PROTOCOL.format(exec_timeout=exec_timeout, output_cap=output_cap)
     if mode in ("clm", "guided"):
         text += CLM_INSTRUCTIONS.format(max_entries=max_entries, max_body=max_body)
     else:
-        text += SUMMARY_INSTRUCTIONS.format(pressure_pct=pressure_pct, tail=tail)
+        if summary_policy == "token-tail/1":
+            text += SUMMARY_INSTRUCTIONS_TOKEN_TAIL.format(
+                pressure_pct=pressure_pct, tail_tokens=tail_tokens
+            )
+        else:
+            text += SUMMARY_INSTRUCTIONS.format(pressure_pct=pressure_pct, tail=tail)
     if mode == "guided":
         text += GUIDED_INSTRUCTIONS
     return text

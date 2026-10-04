@@ -1,6 +1,6 @@
 # clm-lib: Technical Specification
 
-Version: 1.4 | 4 October 2026
+Version: 1.5 | 4 October 2026
 
 Repository: `clm-lib` | Python package: `clm_lib` | CLI: `clm-lib`
 
@@ -10,6 +10,7 @@ Version history:
 - 1.2: the original specification. Its evaluation protocol (§8.2) was executed as experiment 001.
 - 1.3: adds experiment 002, a staged incident task under sustained context pressure (§12), and the results export (§13). Requirements in §1–§11 are unchanged except where §12 extends them.
 - 1.4: experiment write-ups move to the results repository, and the exporter preserves human-maintained documents (§13). The blog notes and detailed results move there too (§9).
+- 1.5: adds a selectable, versioned summary-baseline policy (§14) for experiment 003. The original policy stays the default.
 
 ## 1. Purpose and intended outcome
 
@@ -311,3 +312,16 @@ Completed experiment evidence is copied (never moved) to a separate results repo
 - **Ledger:** snapshots are historical copies; the active ledger stays in clm-lib.
 - **Exclusions:** credentials and request headers are never present or exported. Local account identifiers are redacted and the redaction documented.
 - **Corrections:** post-hoc scorer corrections keep both the original and the corrected results.
+
+## 14. Selectable summary-baseline policies
+
+The summary baseline's policy is selected by `[baseline] policy`, and recorded in each run's `run.json` and `summary.json` (`summary_policy`) and in the comparison's frozen block.
+
+- **`fixed-tail/1`** (the default; experiments 001 and 002): at the pressure point, summarise everything except the newest `tail_entries` entries, which are kept verbatim whatever their size. Accept a summary if the request fits the hard limit, with one retry at half the length, and otherwise end with an explicit overflow. Its prompts are unchanged, so earlier configurations keep their meaning.
+- **`token-tail/1`** (experiment 003):
+  - **Tail:** at the pressure point, keep the longest run of newest entries that fits `tail_ratio` of the budget. The single newest entry is kept even above that allowance if it fits `newest_ratio`; otherwise it is summarised as well.
+  - **Summary size:** request a summary sized so the request lands near `target_ratio` of the budget, clamped to `summary_min_chars`–`summary_max_chars`.
+  - **Acceptance:** the first attempt is accepted only if it relieves pressure. The retry (at half the length) is accepted if it fits the hard limit. Otherwise the run ends with an explicit overflow.
+  - **Summariser:** the same model, with explicit instructions to preserve current versus superseded values, exact values, references and unresolved work.
+- **Accounting:** every summary attempt is a normal accounted provider call.
+- **Scope:** policies change only the summary arm. The CLM arm and the action protocol are unaffected.

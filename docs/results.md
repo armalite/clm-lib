@@ -8,12 +8,13 @@
 | --- | --- | --- |
 | 001: short incident pilot | Tasks finished in 3–4 calls before either context-management method activated (0 edits, 0 summaries). A separate prompted run demonstrated real context replacement and helper use. | [001](https://github.com/armalite/clm-lib-test-results/tree/main/experiments/001-short-incident-pilot) |
 | 002: staged incident under context pressure | Both methods active in every run. CLM 6/6 strict successes vs the baseline's 4/6, about 38% lower mean cost, mostly from avoiding summary calls. This is a small synthetic pilot against one baseline. | [002](https://github.com/armalite/clm-lib-test-results/tree/main/experiments/002-staged-incident-context-pressure) |
+| 003: robust summary comparison | Against `token-tail/1`, a baseline that handles large recent entries and leaves room, both approaches got 6/6 strict successes. CLM was still about 25% cheaper and 28% faster, matching the baseline's spending on summary calls. | [003](https://github.com/armalite/clm-lib-test-results/tree/main/experiments/003-robust-summary-comparison) |
 
 The previous, longer version of this file is archived verbatim in the results repository as [`notes/clm-lib-results-log-2026-10-04.md`](https://github.com/armalite/clm-lib-test-results/blob/main/notes/clm-lib-results-log-2026-10-04.md). The draft blog notes moved there too, to [`notes/blog-notes.md`](https://github.com/armalite/clm-lib-test-results/blob/main/notes/blog-notes.md).
 
 ## Spend
 
-The active ledger is `runs/ledger.json` in this repository (gitignored). Totals so far: **USD 5.251** of the USD 10 ceiling, all from provider-reported usage, with no unresolved assumed charges. The ledger was never reset or raised. Historical snapshots are exported to the results repository's `ledger-snapshots/`.
+The active ledger is `runs/ledger.json` in this repository (gitignored). Totals so far: **USD 8.917** of the USD 10 ceiling (experiments 001–002 USD 5.251; experiment 003 USD 3.666), all from provider-reported usage, with no unresolved assumed charges. **USD 1.083 remains**, which is not enough for another 12-run comparison at current per-run costs. The ledger was never reset or raised. Historical snapshots are exported to the results repository's `ledger-snapshots/`.
 
 ## Live accounting checks
 
@@ -84,6 +85,10 @@ Phases 2–4 (smoke, guided dev run, frozen comparison) were **not run**. `ANTHR
 Verification: `ruff check`, `ruff format --check` and `mypy src` are clean; **56 passed**. `doctor --sandbox` is unchanged.
 
 Live phases: **still not run**. `ANTHROPIC_API_KEY` is still unset in the agent process (`doctor`). Live spend $0.00; cumulative $0.00 of $10.00.
+
+## Summary-baseline policies (2026-10-04)
+
+`token-tail/1` was added alongside the unchanged default `fixed-tail/1` (SPEC §14). Tests: `tests/test_summary_policy.py`. In one of them, a scripted large-recent-observation case overflows under `fixed-tail/1` and completes under `token-tail/1`. The default policy's prompts are byte-identical to those recorded in experiment 002.
 
 ## Exporter ownership change (2026-10-04)
 

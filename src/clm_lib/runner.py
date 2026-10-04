@@ -40,7 +40,7 @@ from .context import (
     unified_diff,
 )
 from .executor import ExecResult, Executor, ExecutorUnavailable
-from .prompts import PROMPT_VERSION, render_user, system_prompt
+from .prompts import PROMPT_VERSION, render_entries, render_user, system_prompt
 from .provider import (
     ACTION_SCHEMA,
     STAGED_ACTION_SCHEMA,
@@ -226,10 +226,17 @@ class _Run:
         self.fx.mkdir()
         self.climits = ContextLimits()
         self.store = ContextStore(self.climits)
+        bl = self.cfg.baseline
+        budget = self.lim.context_budget_tokens
         self.policy = SummaryPolicy(
-            self.cfg.baseline.tail_entries,
-            self.cfg.baseline.summary_max_chars,
-            self.cfg.baseline.summary_retries,
+            bl.tail_entries,
+            bl.summary_max_chars,
+            bl.summary_retries,
+            policy=bl.policy,
+            tail_tokens=int(bl.tail_ratio * budget),
+            newest_tokens=int(bl.newest_ratio * budget),
+            target_tokens=int(bl.target_ratio * budget),
+            min_chars=bl.summary_min_chars,
         )
         self.c = _Counters()
         self.u = _Usage()
@@ -258,6 +265,8 @@ class _Run:
             tail=self.cfg.baseline.tail_entries,
             max_entries=self.climits.max_entries,
             max_body=self.climits.max_body_chars,
+            summary_policy=self.policy.policy,
+            tail_tokens=self.policy.tail_tokens,
         )
 
     # --------------------------------------------------------------- helpers
@@ -460,19 +469,32 @@ class _Run:
             self.cpt = round(0.5 * self.cpt + 0.5 * observed, 4)
 
     # ----------------------------------------------------- context pressure
+    def entry_tokens(self, entry: Entry) -> int:
+        return int(len(render_entries([entry])) / self.cpt) + 1
+
     def maybe_summarise(self, forced: bool) -> bool:
-        if not self.policy.eligible(self.store.entries):
+        if not self.policy.eligible(self.store.entries, self.entry_tokens):
             return False
-        older, tail = self.policy.split(self.store.entries)
+        older, tail = self.policy.split(self.store.entries, self.entry_tokens)
         hard = self.lim.context_budget_tokens - self.lim.recovery_reserve_tokens
+        pressure_tokens = self.lim.pressure_ratio * self.lim.context_budget_tokens
+        # Room for the summary body: target request size minus everything else it will carry.
+        _, base = self.assemble(entries=(Entry("sum0", "summary", ""), *tail))
+        room = self.policy.target_tokens - base
         for attempt in range(self.policy.retries + 1):
-            req = self.policy.request(self.task.prompt, older, attempt, self.lim.max_output_tokens)
+            limit = self.policy.char_limit(attempt, room, self.cpt)
+            req = self.policy.request(
+                self.task.prompt, older, attempt, self.lim.max_output_tokens, limit
+            )
             resp = self.call(
                 req,
                 "summary",
                 {
+                    "summary_policy": self.policy.policy,
                     "older_entries": [e.id for e in older],
+                    "kept_tail": [e.id for e in tail],
                     "summary_attempt": attempt,
+                    "requested_max_chars": limit,
                     "forced": forced,
                 },
             )
@@ -481,7 +503,7 @@ class _Run:
                 continue
             candidate = tuple(SummaryPolicy.apply(text, tail, self.summary_index + 1))
             _, est = self.assemble(entries=candidate)
-            if est <= hard:
+            if est <= self.policy.accept_tokens(attempt, pressure_tokens, hard):
                 self.summary_index += 1
                 self.store.commit(candidate, "summary", self.step)
                 self.c.summaries_applied += 1
@@ -489,6 +511,9 @@ class _Run:
                 self.trace.event(
                     "summary_applied",
                     step=self.step,
+                    policy=self.policy.policy,
+                    attempt=attempt,
+                    requested_max_chars=limit,
                     replaced=[e.id for e in older],
                     kept_tail=[e.id for e in tail],
                     summary_chars=len(text),
@@ -501,12 +526,16 @@ class _Run:
             self.trace.event(
                 "summary_too_large",
                 step=self.step,
+                policy=self.policy.policy,
                 attempt=attempt,
+                requested_max_chars=limit,
                 summary_chars=len(text),
                 est_request_tokens=est,
             )
         self.c.summary_overflows += 1
-        raise _Stop("context_overflow", "summary still exceeds the hard limit after retry")
+        raise _Stop(
+            "context_overflow", "summary did not fit the acceptance limit after the bounded retry"
+        )
 
     def spill_latest(self) -> bool:
         entries = list(self.store.entries)
@@ -974,6 +1003,7 @@ class _Run:
             "generator_version": self.task.generator_version,
             "stages": self.task.n_stages,
             "prompt_version": PROMPT_VERSION,
+            "summary_policy": self.policy.policy if self.mode == "summary" else None,
             "system_prompt_sha256": sha256_text(self.system),
             "task_prompt_sha256": sha256_text(self.task.prompt),
             "provider": self.r.provider.describe(),
@@ -1075,6 +1105,7 @@ class _Run:
             "elapsed_s": round(elapsed, 1),
             "model": self.r.provider.model,
             "prompt_version": PROMPT_VERSION,
+            "summary_policy": self.policy.policy if self.mode == "summary" else None,
             "fixture_sha256": self.task.fixture_sha256,
             "steps": self.step,
             "counts": self.c.__dict__,

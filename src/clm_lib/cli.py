@@ -447,7 +447,7 @@ def run_matrix(
 ) -> tuple[list[dict[str, Any]], int]:
     """Sequential comparison matrix; returns (cells, exit code). Never parallel."""
     from .prompts import PROMPT_VERSION
-    from .tasks import GENERATOR_VERSION
+    from .tasks import SCORER_VERSION
 
     patch = source_patch()
     if patch:
@@ -458,7 +458,10 @@ def run_matrix(
         "model": runner.provider.model,
         "provider": runner.provider.describe(),
         "prompt_version": PROMPT_VERSION,
-        "generator_version": GENERATOR_VERSION,
+        # Per-task generator versions (staged tasks use their own generator).
+        "generator_version": sorted({generate(t).generator_version for t in tasks}),
+        "scorer_version": SCORER_VERSION,
+        "summary_policy": cfg.baseline.policy,
         "config": cfg.to_dict(),
         "code_state": code_state(),
     }

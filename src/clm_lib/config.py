@@ -35,9 +35,17 @@ class Limits:
 
 @dataclass
 class BaselineConfig:
+    # "fixed-tail/1": experiments 001/002 policy (keep the newest `tail_entries` verbatim).
+    # "token-tail/1": experiment 003 policy (token-bounded tail, room-leaving summaries).
+    policy: str = "fixed-tail/1"
     tail_entries: int = 4
     summary_max_chars: int = 3000
     summary_retries: int = 1
+    # token-tail/1 only (fractions of the request budget)
+    tail_ratio: float = 0.15
+    newest_ratio: float = 0.25
+    target_ratio: float = 0.50
+    summary_min_chars: int = 600
 
 
 @dataclass

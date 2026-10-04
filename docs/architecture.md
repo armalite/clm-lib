@@ -69,6 +69,8 @@ Token counts are estimated as chars ÷ chars-per-token. The ratio starts at 3.0 
    - CLM arm: one request may use the reserve (up to `B`) with an OVER LIMIT notice. If the next request is still over, the run ends as `context_overflow`.
 4. **Summary sizing.** A summary that would still exceed the limit is retried once with half the character target. If it's still too large, the run ends with an explicit `context_overflow`. Nothing is truncated.
 
+**Summary policies.** The behaviour above is the default `fixed-tail/1`. `token-tail/1` (experiment 003) instead keeps a token-bounded recent tail (the newest entry is kept up to a larger cap), summarises oversized recent entries, and sizes summaries to land near 50% of the budget. Its first attempt must relieve pressure, and its retry must fit the hard limit. See SPEC §14 and `baseline.py`.
+
 ## Execution isolation
 
 `DockerExecutor.run` starts a fresh `docker run --rm -i` per execution and runs `timeout --kill-after=2 30 python -E -s -B -c BOOTSTRAP <nonce>`. The model code is piped to it on stdin. The container settings are:

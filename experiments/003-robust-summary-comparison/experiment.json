@@ -1,0 +1,102 @@
+{
+ "id": "003-robust-summary-comparison",
+ "title": "Does CLM's efficiency and completion advantage persist against a summary policy that handles large recent messages and leaves useful space for continued work?",
+ "provenance": {
+  "source_repo": "https://github.com/armalite/clm-lib",
+  "comparison_commit": "d91b587917d40fbab28e56fde3b6a031f9b40a8a",
+  "comparison_tree_state": "HEAD plus uncommitted changes (token-tail/1 policy, exp003 config and instances, frozen-block provenance fields); the full uncommitted source was saved by `compare` as artifacts/comparisons/20261004T094550/20261004T094550.patch with its sha256 in the frozen block",
+  "calibration_tree_state": "same HEAD with the token-tail/1 implementation uncommitted, before two provenance-only edits to the comparison frozen block (scorer/policy/per-task generator fields); not recorded by the tool",
+  "system_prompt_version": "2026-10-04.1 (CLM prompt unchanged; summary-arm instructions for token-tail/1 identified by the policy id)",
+  "generator_version": "staged-incident-gen/1",
+  "summary_policy": "token-tail/1",
+  "scorer": "score/2 (unchanged)",
+  "price_source": "https://platform.claude.com/docs/en/about-claude/pricing (retrieved 2026-10-04)"
+ },
+ "settings": {
+  "config": "configs/exp003.toml",
+  "model": "claude-opus-5-5",
+  "effort": "low",
+  "max_calls": 20,
+  "max_output_tokens": 2048,
+  "context_budget_tokens": 8000,
+  "pressure_ratio": 0.7,
+  "recovery_reserve_tokens": 1000,
+  "baseline_policy": "token-tail/1",
+  "tail_ratio": 0.15,
+  "newest_ratio": 0.25,
+  "target_ratio": 0.5,
+  "summary_min_chars": 600,
+  "summary_max_chars": 3000,
+  "summary_retries": 1,
+  "evaluation_tasks": [
+   "staged-eval-4",
+   "staged-eval-5",
+   "staged-eval-6"
+  ],
+  "repetitions": 2,
+  "mode_order": "alternating per matched pair (pair 0: summary first)"
+ },
+ "runs": [
+  {
+   "run_id": "20261004T093826-summary-staged-dev-4-9f86",
+   "role": "calibration",
+   "note": "calibration 1: token-tail/1 baseline on staged-dev-4"
+  },
+  {
+   "run_id": "20261004T093955-clm-staged-dev-4-7411",
+   "role": "calibration",
+   "note": "calibration 2: clm on staged-dev-4 (matched)"
+  },
+  {
+   "run_id": "20261004T094550-summary-staged-eval-4-0ef8",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T094702-clm-staged-eval-4-13ca",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T094754-clm-staged-eval-5-d22c",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T094847-summary-staged-eval-5-ed5c",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T095008-summary-staged-eval-6-ca94",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T095107-clm-staged-eval-6-f3cf",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T095204-clm-staged-eval-4-673d",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T095304-summary-staged-eval-4-bb66",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T095427-summary-staged-eval-5-aba9",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T095600-clm-staged-eval-5-a17e",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T095650-clm-staged-eval-6-a43a",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T095741-summary-staged-eval-6-a030",
+   "role": "evaluation"
+  }
+ ],
+ "comparisons": [
+  "20261004T094550"
+ ]
+}

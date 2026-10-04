@@ -34,7 +34,13 @@ flowchart TD
 - **Staged tasks.** In experiment 002, evidence arrives in three stages. The `advance` action releases the next stage into the read-only task files. A `final` answer is accepted only once all stages are out. Single-stage tasks don't have `advance`.
 
 Modes:
-- **`summary` (baseline):** the same model, tools and limits, but no editable file. When a request reaches 70% of the budget, a separate model call summarises the older entries, which are replaced by the summary; the newest 4 entries are kept as they are.
+- **`summary` (baseline):** the same model, tools and limits, but no editable file. When a request reaches 70% of the budget, a separate model call summarises the older entries, and the summary replaces them. Two selectable policies (`[baseline] policy` in the config):
+  - `fixed-tail/1` (default; used by experiments 001 and 002): the newest 4 entries are kept as they are, whatever their size.
+  - `token-tail/1` (experiment 003, `configs/exp003.toml`):
+    - recent entries are kept up to a token allowance (15% of the budget), and the newest entry is kept if it fits 25%;
+    - larger recent entries are summarised too;
+    - summaries are sized so the request drops to about 50% of the budget, leaving room to keep working.
+  Run it with, for example, `clm-lib --config configs/exp003.toml run --mode summary --task staged-dev-4`.
 - **`clm` (evaluation):** the editable `context.json` described above, with ordinary capability instructions and pressure reminders. Editing is never required.
 - **`guided` (demonstration only):** `clm` plus an explicit request to build a helper, use it in at least two steps and revise it if useful. This shows capability when prompted; it is not part of any comparison.
 

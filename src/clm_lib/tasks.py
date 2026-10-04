@@ -67,6 +67,12 @@ INSTANCES: dict[str, InstanceSpec] = {
     "staged-eval-1": InstanceSpec("staged-eval-1", 3201, "staged_pool", "staged-eval"),
     "staged-eval-2": InstanceSpec("staged-eval-2", 3202, "staged_pool", "staged-eval"),
     "staged-eval-3": InstanceSpec("staged-eval-3", 3203, "staged_pool", "staged-eval"),
+    # Experiment 003: fresh seeds of the same generator (dev for calibration; eval frozen).
+    "staged-dev-4": InstanceSpec("staged-dev-4", 3104, "staged_pool", "staged-dev"),
+    "staged-dev-5": InstanceSpec("staged-dev-5", 3105, "staged_pool", "staged-dev"),
+    "staged-eval-4": InstanceSpec("staged-eval-4", 3204, "staged_pool", "staged-eval"),
+    "staged-eval-5": InstanceSpec("staged-eval-5", 3205, "staged_pool", "staged-eval"),
+    "staged-eval-6": InstanceSpec("staged-eval-6", 3206, "staged_pool", "staged-eval"),
 }
 HELDOUT = ("heldout-1", "heldout-2", "heldout-3")
 STAGED_EVAL = ("staged-eval-1", "staged-eval-2", "staged-eval-3")
