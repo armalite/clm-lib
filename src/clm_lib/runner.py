@@ -46,6 +46,9 @@ from .prompts import (
     SUMMARY_SYSTEM_TOKEN_TAIL_CODING,
     render_entries,
     render_user,
+    render_user_blocks,
+    run_tag_block,
+    summary_user_blocks,
     system_prompt,
 )
 from .provider import (
@@ -126,6 +129,8 @@ class _Usage:
     cost_usd: float = 0.0
     reserved_usd_total: float = 0.0
     assumed_cost_usd: float = 0.0
+    # Per call kind (action, repair, summary): calls, tokens, cost and provider latency.
+    by_kind: dict[str, dict[str, float]] = field(default_factory=dict)
 
 
 INCIDENT_FIELDS = ("root_cause", "required_value", "remedy", "evidence_refs")
@@ -214,16 +219,32 @@ class Runner:
             )
 
     # ------------------------------------------------------------------ run
-    def run(self, task: TaskInstance, mode: str, label: str = "") -> RunResult:
+    def run(
+        self, task: TaskInstance, mode: str, label: str = "", caching: bool | None = None
+    ) -> RunResult:
+        """``caching`` overrides ``request.prompt_caching`` for this run (four-condition runs)."""
         if mode not in MODES:
             raise ValueError(f"mode must be one of {MODES}")
-        run_id = f"{datetime.now(UTC):%Y%m%dT%H%M%S}-{mode}-{task.spec.name}-{secrets.token_hex(2)}"
-        return _Run(self, task, mode, run_id, label).execute()
+        req = self.cfg.request
+        on = req.prompt_caching if caching is None else caching
+        if on and req.layout != "blocks/1":
+            raise ValueError("prompt caching requires request.layout = 'blocks/1'")
+        # blocks/1 run ids carry the caching condition so the four conditions stay distinct.
+        cond = f"-cache{'on' if on else 'off'}" if req.layout == "blocks/1" else ""
+        stamp = f"{datetime.now(UTC):%Y%m%dT%H%M%S}"
+        run_id = f"{stamp}-{mode}{cond}-{task.spec.name}-{secrets.token_hex(2)}"
+        return _Run(self, task, mode, run_id, label, on).execute()
 
 
 class _Run:
     def __init__(
-        self, runner: Runner, task: TaskInstance, mode: str, run_id: str, label: str
+        self,
+        runner: Runner,
+        task: TaskInstance,
+        mode: str,
+        run_id: str,
+        label: str,
+        caching: bool = False,
     ) -> None:
         self.r = runner
         self.cfg = runner.cfg
@@ -283,6 +304,21 @@ class _Run:
             tail_tokens=self.policy.tail_tokens,
             task_kind=task.kind,
         )
+        # Request layout, caching and run isolation (SPEC section 17).
+        rq = self.cfg.request
+        self.layout = rq.layout
+        self.blocks_layout = rq.layout == "blocks/1"
+        self.cache_ttl: str | None = rq.cache_ttl if caching else None
+        # Random, fixed-length, carries no task information; never reused across runs.
+        self.run_tag = secrets.token_hex(16) if rq.run_isolation == "run-tag/1" else None
+        self.system_prefix = [run_tag_block(self.run_tag)] if self.run_tag else []
+        self.prompt_system = self.system
+        if self.blocks_layout:
+            self.system = "".join([*self.system_prefix, self.prompt_system])
+        self.last_render: tuple[str, list[str], list[int]] | None = None
+        self.prev_blocks: dict[str, list[str]] = {}
+        self.call_seq = 0
+        self.first_call_cache: dict[str, int] | None = None
 
     # --------------------------------------------------------------- helpers
     @property
@@ -322,10 +358,103 @@ class _Run:
         entries: tuple[Entry, ...] | None = None,
     ) -> tuple[str, int]:
         ents = self.store.entries if entries is None else entries
-        user = render_user(self.task.prompt, self.status_text(0, pressure, recovery), ents)
+        user = self.render(self.status_text(0, pressure, recovery), ents)
         est = self.est_tokens(self.system, user)
-        user = render_user(self.task.prompt, self.status_text(est, pressure, recovery), ents)
+        user = self.render(self.status_text(est, pressure, recovery), ents)
         return user, self.est_tokens(self.system, user)
+
+    def render(self, status: str, ents: tuple[Entry, ...]) -> str:
+        if not self.blocks_layout:
+            return render_user(self.task.prompt, status, ents)
+        blocks, bps = render_user_blocks(self.task.prompt, status, ents)
+        user = "".join(blocks)
+        self.last_render = (user, blocks, bps)
+        return user
+
+    def action_request(
+        self, user: str, purpose: str, schema: dict[str, Any], note: str = ""
+    ) -> ModelRequest:
+        """The action (or repair) request for ``user``, in this run's layout."""
+        if not self.blocks_layout:
+            return ModelRequest(
+                self.system, user + note, self.lim.max_output_tokens, purpose, schema
+            )
+        assert self.last_render is not None and self.last_render[0] == user
+        _, blocks, bps = self.last_render
+        return ModelRequest.from_blocks(
+            [*self.system_prefix, self.prompt_system],
+            [*blocks, note] if note else blocks,
+            self.lim.max_output_tokens,
+            purpose,
+            schema,
+            bps,
+            self.cache_ttl,
+        )
+
+    def request_settings(self) -> dict[str, Any]:
+        rq = self.cfg.request
+        return {
+            "layout": self.layout,
+            "prompt_caching": "on" if self.cache_ttl else "off",
+            "cache_ttl": self.cache_ttl,
+            "breakpoints": "task block + last working-context block (blocks/1)"
+            if self.cache_ttl
+            else None,
+            "run_isolation": rq.run_isolation,
+            "run_tag": self.run_tag,
+        }
+
+    def request_summary(self) -> dict[str, Any]:
+        u = self.u
+        total_in = u.input_tokens + u.cache_read_input_tokens + u.cache_creation_input_tokens
+        return {
+            **self.request_settings(),
+            "first_call_cache": self.first_call_cache,
+            "by_kind": u.by_kind,
+            "total_input_tokens_all_kinds": total_in,
+            "cache_read_share_of_input": round(u.cache_read_input_tokens / total_in, 4)
+            if total_in
+            else 0.0,
+            "provider_latency_s": round(sum(k["latency_s"] for k in u.by_kind.values()), 3),
+        }
+
+    def prefix_evidence(self, req: ModelRequest, kind: str) -> dict[str, Any]:
+        """How much of this request's leading content repeats the previous request of the
+        same family (action/repair vs summary), by blocks and characters. This is evidence
+        for interpreting cache reads; it is not itself a cache measurement."""
+        flat = (
+            [*req.system_blocks, *req.user_blocks]
+            if req.system_blocks is not None and req.user_blocks is not None
+            else [req.system, req.user]
+        )
+        family = "summary" if kind == "summary" else "action"
+        prev = self.prev_blocks.get(family)
+        self.prev_blocks[family] = flat
+        n_sys = len(req.system_blocks) if req.system_blocks is not None else 1
+        out: dict[str, Any] = {
+            "family": family,
+            "blocks": len(flat),
+            "system_blocks": n_sys,
+            "breakpoint_blocks": [n_sys + i for i in req.cache_breakpoints]
+            if req.cache_ttl
+            else [],
+            "previous": prev is not None,
+        }
+        if prev is not None:
+            k = 0
+            while k < min(len(prev), len(flat)) and prev[k] == flat[k]:
+                k += 1
+            out["common_blocks"] = k
+            out["first_changed_block"] = k if k < len(flat) else None
+            common_chars = sum(len(b) for b in flat[:k])
+            if k < min(len(prev), len(flat)):  # partial match inside the first changed block
+                a, b = prev[k], flat[k]
+                j = 0
+                while j < min(len(a), len(b)) and a[j] == b[j]:
+                    j += 1
+                common_chars += j
+            out["common_prefix_chars"] = common_chars
+        return out
 
     # ------------------------------------------------------------ provider
     def call(self, req: ModelRequest, kind: str, meta: dict[str, Any]) -> ModelResponse:
@@ -337,7 +466,10 @@ class _Run:
                 )
             payload = self.r.provider.payload(req)
             bound = input_token_bound(payload)
-            reserve = self.r.price.max_cost(bound, req.max_tokens) if self.r.price else 0.0
+            reserve = (
+                self.r.price.max_cost(bound, req.max_tokens, req.cache_ttl) if self.r.price else 0.0
+            )
+            prefix = self.prefix_evidence(req, kind)
             try:
                 res = self.r.ledger.reserve(reserve, self.run_id, kind, bound)
             except BudgetExhausted as exc:
@@ -355,6 +487,9 @@ class _Run:
                     "reserved_usd": reserve,
                     "context_revision": self.store.current.number,
                     "context_sha256": self.store.current.sha256,
+                    "layout": self.layout,
+                    "cache_ttl": req.cache_ttl,
+                    "prefix": prefix,
                     **meta,
                 },
             )
@@ -375,6 +510,7 @@ class _Run:
             self.u.reserved_usd_total += reserve
             self.u.est_input_tokens += est
             self.peak_req_est = max(self.peak_req_est, est)
+            t_call = time.monotonic()
             try:
                 resp = self.r.provider.complete(req)
             except BaseException as exc:
@@ -402,9 +538,17 @@ class _Run:
                     cost_basis=entry["cost_basis"],
                 )
                 raise
+            latency = round(time.monotonic() - t_call, 3)
             cost = self.r.price.cost(resp.usage) if self.r.price else 0.0
             entry = self.r.ledger.settle(res, actual_usd=cost, status="ok", usage=resp.usage)
             self._add_usage(resp, cost, req)
+            self._add_kind_usage(kind, resp, cost, latency)
+            self.call_seq += 1
+            if self.call_seq == 1:
+                self.first_call_cache = {
+                    "cache_read_input_tokens": resp.usage.cache_read_input_tokens,
+                    "cache_creation_input_tokens": resp.usage.cache_creation_input_tokens,
+                }
             reported = (
                 resp.usage.input_tokens
                 + resp.usage.cache_read_input_tokens
@@ -422,6 +566,8 @@ class _Run:
                 usage_source=resp.usage_source,
                 cost_usd=round(cost, 6),
                 ledger_charged_usd=entry["charged_usd"],
+                latency_s=latency,
+                prefix=prefix,
                 input_token_bound=bound,
                 bound_held=reported <= bound and resp.usage.output_tokens <= req.max_tokens,
             )
@@ -466,6 +612,28 @@ class _Run:
             cost_basis=entry["cost_basis"],
         )
 
+    def _add_kind_usage(self, kind: str, resp: ModelResponse, cost: float, latency: float) -> None:
+        k = self.u.by_kind.setdefault(
+            kind,
+            {
+                "calls": 0,
+                "input_tokens_uncached": 0,
+                "cache_read_input_tokens": 0,
+                "cache_creation_input_tokens": 0,
+                "output_tokens": 0,
+                "cost_usd": 0.0,
+                "latency_s": 0.0,
+            },
+        )
+        u = resp.usage
+        k["calls"] += 1
+        k["input_tokens_uncached"] += u.input_tokens
+        k["cache_read_input_tokens"] += u.cache_read_input_tokens
+        k["cache_creation_input_tokens"] += u.cache_creation_input_tokens
+        k["output_tokens"] += u.output_tokens
+        k["cost_usd"] = round(k["cost_usd"] + cost, 6)
+        k["latency_s"] = round(k["latency_s"] + latency, 3)
+
     def _add_usage(self, resp: ModelResponse, cost: float, req: ModelRequest) -> None:
         u = resp.usage
         self.u.input_tokens += u.input_tokens
@@ -506,6 +674,17 @@ class _Run:
                 limit,
                 system=SUMMARY_SYSTEM_TOKEN_TAIL_CODING if self.task.kind == "coding" else None,
             )
+            if self.blocks_layout:
+                ub, bps = summary_user_blocks(self.task.prompt, older, limit)
+                req = ModelRequest.from_blocks(
+                    [*self.system_prefix, req.system],
+                    ub,
+                    req.max_tokens,
+                    "summary",
+                    None,
+                    bps,
+                    self.cache_ttl,
+                )
             resp = self.call(
                 req,
                 "summary",
@@ -924,9 +1103,14 @@ class _Run:
                     "recovery": recovery,
                 }
             )
-            req = ModelRequest(self.system, user, self.lim.max_output_tokens, "action", schema)
+            req = self.action_request(user, "action", schema)
             resp = self.call(req, "action", {"pressure": pressure, "recovery": recovery})
             self.timeline[-1]["reported_input_tokens"] = self.last_reported_input
+            self.timeline[-1]["cache_read_input_tokens"] = resp.usage.cache_read_input_tokens
+            self.timeline[-1]["cache_creation_input_tokens"] = (
+                resp.usage.cache_creation_input_tokens
+            )
+            self.timeline[-1]["uncached_input_tokens"] = resp.usage.input_tokens
             action, err = parse_action(resp.text, self.lim.max_code_chars, staged, fields)
             if action is None:
                 self.trace.event(
@@ -937,9 +1121,7 @@ class _Run:
                     f"{' (output token limit reached)' if resp.stop_reason == 'max_tokens' else ''}. "
                     "Reply again with exactly one JSON object; keep code short.\n</runtime_status>\n"
                 )
-                repair = ModelRequest(
-                    self.system, user + note, self.lim.max_output_tokens, "repair", schema
-                )
+                repair = self.action_request(user, "repair", schema, note)
                 resp = self.call(repair, "repair", {"error": err})
                 action, err = parse_action(resp.text, self.lim.max_code_chars, staged, fields)
                 if action is None:
@@ -1044,8 +1226,9 @@ class _Run:
             "stages": self.task.n_stages,
             "prompt_version": PROMPT_VERSION,
             "summary_policy": self.policy.policy if self.mode == "summary" else None,
-            "system_prompt_sha256": sha256_text(self.system),
+            "system_prompt_sha256": sha256_text(self.prompt_system),
             "task_prompt_sha256": sha256_text(self.task.prompt),
+            "request": self.request_settings(),
             "provider": self.r.provider.describe(),
             "price": self.r.price.__dict__ if self.r.price else None,
             "executor": self.r.executor.describe(),
@@ -1254,6 +1437,7 @@ class _Run:
             },
             "peak_request_tokens_est": self.peak_req_est,
             "peak_request_input_tokens_reported": self.peak_req_reported,
+            "request": self.request_summary(),
             "peak_working_context_chars": self.peak_ctx_chars,
             "context_revisions": len(self.store.revisions) - 1,
             "helpers": self.helper_summary(),

@@ -374,7 +374,10 @@ def _live_runner(cfg: Config, max_usd: float | None) -> Runner:
 def cmd_run(args: argparse.Namespace) -> int:
     cfg = _config(args)
     runner = _live_runner(cfg, args.max_usd)
-    res = runner.run(generate(args.task), args.mode, label=args.label or "single run")
+    caching = None if args.caching == "config" else args.caching == "on"
+    res = runner.run(
+        generate(args.task), args.mode, label=args.label or "single run", caching=caching
+    )
     _print_result(res)
     return 0
 
@@ -442,6 +445,51 @@ def code_state() -> dict[str, Any]:
     }
 
 
+# Williams design for four conditions: each condition appears once in every position, and
+# each ordered pair of adjacent conditions occurs once across the four rows.
+WILLIAMS_4 = ((0, 1, 3, 2), (1, 2, 0, 3), (2, 3, 1, 0), (3, 0, 2, 1))
+
+
+def parse_conditions(text: str) -> list[tuple[str, bool]]:
+    """``summary:off,summary:on,clm:off,clm:on`` -> [(mode, caching), ...]."""
+    out = []
+    for part in text.split(","):
+        mode, _, cache = part.strip().partition(":")
+        if mode not in ("summary", "clm") or cache not in ("on", "off"):
+            raise ValueError(f"bad condition {part!r}; expected <summary|clm>:<on|off>")
+        out.append((mode, cache == "on"))
+    if len(set(out)) != len(out):
+        raise ValueError("conditions must be distinct")
+    return out
+
+
+def condition_schedule(
+    tasks: list[str], reps: int, conditions: list[tuple[str, bool]]
+) -> list[dict[str, Any]]:
+    """Four-condition run order: for task index i and repetition r, Williams row (i + r - 1)
+    mod 4. Repetitions are outer, tasks inner, as in the two-arm matrix."""
+    if len(conditions) != 4:
+        raise ValueError("the condition schedule needs exactly four conditions")
+    rows = []
+    for rep in range(1, reps + 1):
+        for index, task in enumerate(tasks):
+            row = WILLIAMS_4[(index + rep - 1) % 4]
+            for position, c in enumerate(row):
+                mode, caching = conditions[c]
+                rows.append(
+                    {
+                        "task": task,
+                        "rep": rep,
+                        "block": (rep - 1) * len(tasks) + index,
+                        "position": position,
+                        "williams_row": (index + rep - 1) % 4,
+                        "mode": mode,
+                        "caching": "on" if caching else "off",
+                    }
+                )
+    return rows
+
+
 def run_matrix(
     runner: Runner,
     cfg: Config,
@@ -450,12 +498,14 @@ def run_matrix(
     out: Path,
     stamp: str,
     order: str = "pair",
+    conditions: list[tuple[str, bool]] | None = None,
 ) -> tuple[list[dict[str, Any]], int]:
     """Sequential comparison matrix; returns (cells, exit code). Never parallel.
 
     ``order`` sets which arm runs first in each matched pair: "pair" alternates by pair index
     (the original scheme), "balanced" alternates by instance index plus repetition, so repeated
-    runs of one instance also alternate.
+    runs of one instance also alternate. With ``conditions`` (mode, caching) the four-condition
+    Williams schedule is used instead (``order`` is then "williams").
     """
     from .prompts import PROMPT_VERSION
     from .tasks import scorer_version_for
@@ -463,7 +513,7 @@ def run_matrix(
     patch = source_patch()
     if patch:
         out.with_suffix(".patch").write_text(patch)
-    frozen = {
+    frozen: dict[str, Any] = {
         "source_patch": out.with_suffix(".patch").name if patch else None,
         "source_patch_sha256": hashlib.sha256(patch.encode()).hexdigest() if patch else None,
         "model": runner.provider.model,
@@ -473,7 +523,10 @@ def run_matrix(
         "generator_version": sorted({generate(t).generator_version for t in tasks}),
         # Per-task scorer versions (coding tasks use their own evaluator).
         "scorer_version": sorted({scorer_version_for(generate(t)) for t in tasks}),
-        "mode_order": order,
+        "mode_order": "williams" if conditions else order,
+        "conditions": [f"{m}:{'on' if c else 'off'}" for m, c in conditions]
+        if conditions
+        else None,
         "tasks": tasks,
         "reps": reps,
         "summary_policy": cfg.baseline.policy,
@@ -481,60 +534,67 @@ def run_matrix(
         "code_state": code_state(),
     }
     cells: list[dict[str, Any]] = []
-    pair = 0
     stopped = ""
     exit_code = 0
+    schedule = condition_schedule(tasks, reps, conditions) if conditions else []
+    if conditions:
+        frozen["schedule"] = schedule
+    plan: list[list[dict[str, Any]]] = []  # one list of cells per matched block
     for rep in range(1, reps + 1):
         for index, task in enumerate(tasks):
-            parity = pair if order == "pair" else index + rep - 1
+            if conditions:
+                block = (rep - 1) * len(tasks) + index
+                plan.append([dict(r) for r in schedule if r["block"] == block])
+                continue
+            parity = len(plan) if order == "pair" else index + rep - 1
             arms = ["summary", "clm"] if parity % 2 == 0 else ["clm", "summary"]
-            for mode in arms:
-                cell: dict[str, Any] = {
-                    "task": task,
-                    "rep": rep,
-                    "mode": mode,
-                    "pair": pair,
-                    "order": arms,
-                }
-                if not stopped and runner.ledger.remaining_usd < cfg.budget.min_run_reserve_usd:
-                    stopped = (
-                        f"remaining ${runner.ledger.remaining_usd:.4f} below per-run reserve "
-                        f"${cfg.budget.min_run_reserve_usd:.2f}"
-                    )
-                if stopped:
-                    cell.update(status="missing", reason=stopped)
-                else:
-                    res = runner.run(
-                        generate(task), mode, label=f"compare {stamp} pair {pair} rep {rep}"
-                    )
-                    _print_result(res)
-                    m = res.metrics
-                    cell.update(
-                        run_id=res.run_id,
-                        status=res.status,
-                        outcome=m["score"]["outcome"],
-                        strict=m["score"]["strict_success"],
-                        cost_usd=m["cost"]["incurred_usd"],
-                        valid=m["valid_for_comparison"],
-                    )
-                    if res.status in COMPARE_HALT:
-                        stopped = f"{COMPARE_HALT[res.status]} in run {res.run_id}"
-                        if res.status == "accounting_bound_violated":
-                            exit_code = 4
-                cells.append(cell)
-                out.write_text(
-                    json.dumps(
-                        {
-                            "comparison": stamp,
-                            "frozen": frozen,
-                            "frozen_prompt_version": PROMPT_VERSION,
-                            "halted": stopped or None,
-                            "cells": cells,
-                        },
-                        indent=1,
-                    )
+            plan.append([{"task": task, "rep": rep, "mode": m, "order": arms} for m in arms])
+    for pair, block_cells in enumerate(plan):
+        for cell in block_cells:
+            task, rep, mode = cell["task"], cell["rep"], cell["mode"]
+            caching = None if "caching" not in cell else cell["caching"] == "on"
+            cell["pair"] = pair
+            if not stopped and runner.ledger.remaining_usd < cfg.budget.min_run_reserve_usd:
+                stopped = (
+                    f"remaining ${runner.ledger.remaining_usd:.4f} below per-run reserve "
+                    f"${cfg.budget.min_run_reserve_usd:.2f}"
                 )
-            pair += 1
+            if stopped:
+                cell.update(status="missing", reason=stopped)
+            else:
+                res = runner.run(
+                    generate(task),
+                    mode,
+                    label=f"compare {stamp} pair {pair} rep {rep}",
+                    caching=caching,
+                )
+                _print_result(res)
+                m = res.metrics
+                cell.update(
+                    run_id=res.run_id,
+                    status=res.status,
+                    outcome=m["score"]["outcome"],
+                    strict=m["score"]["strict_success"],
+                    cost_usd=m["cost"]["incurred_usd"],
+                    valid=m["valid_for_comparison"],
+                )
+                if res.status in COMPARE_HALT:
+                    stopped = f"{COMPARE_HALT[res.status]} in run {res.run_id}"
+                    if res.status == "accounting_bound_violated":
+                        exit_code = 4
+            cells.append(cell)
+            out.write_text(
+                json.dumps(
+                    {
+                        "comparison": stamp,
+                        "frozen": frozen,
+                        "frozen_prompt_version": PROMPT_VERSION,
+                        "halted": stopped or None,
+                        "cells": cells,
+                    },
+                    indent=1,
+                )
+            )
     return cells, exit_code
 
 
@@ -545,7 +605,8 @@ def cmd_compare(args: argparse.Namespace) -> int:
     stamp = f"{datetime.now(UTC):%Y%m%dT%H%M%S}"
     out = _runs_dir(cfg) / "comparisons" / f"{stamp}.json"
     out.parent.mkdir(parents=True, exist_ok=True)
-    cells, code = run_matrix(runner, cfg, tasks, args.reps, out, stamp, args.order)
+    conditions = parse_conditions(args.conditions) if args.conditions else None
+    cells, code = run_matrix(runner, cfg, tasks, args.reps, out, stamp, args.order, conditions)
     done = sum(1 for c in cells if c["status"] != "missing")
     print(f"comparison {stamp}: {done}/{len(cells)} cells run; record {out}")
     if code:
@@ -629,6 +690,12 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--task", choices=sorted(INSTANCES), default="dev")
     r.add_argument("--label", default="")
     r.add_argument("--max-usd", type=float, default=None)
+    r.add_argument(
+        "--caching",
+        choices=("config", "on", "off"),
+        default="config",
+        help="prompt caching for this run (default: request.prompt_caching from the config)",
+    )
     r.set_defaults(func=cmd_run)
 
     g = sub.add_parser(
@@ -647,6 +714,12 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("pair", "balanced"),
         default="pair",
         help="arm order: alternate by pair index (default) or by instance and repetition",
+    )
+    c.add_argument(
+        "--conditions",
+        default="",
+        help="four conditions mode:caching, e.g. summary:off,summary:on,clm:off,clm:on "
+        "(Williams order; needs request.layout = blocks/1)",
     )
     c.set_defaults(func=cmd_compare)
 

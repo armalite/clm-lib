@@ -42,17 +42,27 @@ class ModelPrice:
     retrieved: str
 
     def cost(self, usage: Usage) -> float:
+        """USD for provider-reported usage. ``input_tokens`` is the uncached remainder only;
+        cache writes and reads are separate fields (never double-counted). Writes reported as
+        1-hour TTL are priced at the 1-hour rate, all other writes at the 5-minute rate."""
         m = 1_000_000
+        writes_1h = usage.cache_creation_1h or 0
+        writes_5m = usage.cache_creation_input_tokens - writes_1h
         return (
             usage.input_tokens * self.input / m
-            + usage.cache_creation_input_tokens * self.cache_write_5m / m
+            + writes_5m * self.cache_write_5m / m
+            + writes_1h * self.cache_write_1h / m
             + usage.cache_read_input_tokens * self.cache_read / m
             + usage.output_tokens * self.output / m
         )
 
-    def max_cost(self, input_tokens_upper: int, max_output_tokens: int) -> float:
-        # Assume every input token is billed at the highest input-side rate.
+    def max_cost(
+        self, input_tokens_upper: int, max_output_tokens: int, cache_ttl: str | None = None
+    ) -> float:
+        # Assume every input token is billed at the highest input-side rate that can apply.
         worst_in = max(self.input, self.cache_write_5m)
+        if cache_ttl == "1h":
+            worst_in = max(worst_in, self.cache_write_1h)
         return (input_tokens_upper * worst_in + max_output_tokens * self.output) / 1_000_000
 
 

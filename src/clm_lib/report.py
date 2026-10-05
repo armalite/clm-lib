@@ -20,8 +20,10 @@ def _events(run_dir: Path) -> list[dict[str, Any]]:
 
 
 def context_entries(payload: dict[str, Any]) -> list[dict[str, str]]:
-    """Decode the <working_context> entries exactly as they were sent."""
+    """Decode the <working_context> entries exactly as they were sent (either layout)."""
     user = payload["messages"][0]["content"]
+    if isinstance(user, list):  # blocks/1: text content blocks in order
+        user = "".join(b["text"] for b in user if b.get("type") == "text")
     block = user.split("<working_context>\n", 1)[1].split("\n</working_context>", 1)[0]
     return [json.loads(line) for line in block.splitlines() if line.strip()]
 
@@ -267,7 +269,11 @@ def build_report(
         "`setting=value` correction). Coding tasks: deterministic evaluator checks "
         f"({', '.join(coding_scorers) or 'none'}); the recorded score is the current score.",
         "",
-        "| run | label | mode | task | status | outcome (recorded) | outcome (current scorer) | strict (current) | components: cause/remedy/value/evidence, or coding checks by category | calls (act/rep/sum/retry) | exec | edits ok/unch/rej | summaries | pressure steps | in/out tokens | peak req tok (rep) | bound held | cost $ | elapsed s |",
+        "Mode shows the request layout and caching condition for runs with layout `blocks/1` "
+        "(experiment 006 onwards); earlier runs used `single-user/1` without caching. Tokens are "
+        "uncached input / cache reads / cache writes / output.",
+        "",
+        "| run | label | mode | task | status | outcome (recorded) | outcome (current scorer) | strict (current) | components: cause/remedy/value/evidence, or coding checks by category | calls (act/rep/sum/retry) | exec | edits ok/unch/rej | summaries | pressure steps | in/cache read/cache write/out tokens | peak req tok (rep) | bound held | cost $ | elapsed s |",
         "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     rescored: dict[str, dict[str, Any] | None] = {}
@@ -298,13 +304,18 @@ def build_report(
             )
         u = m["usage_provider_reported"]
         n, held = bound_checks(run_dir)
+        rq = m.get("request") or {}
+        mode = m["mode"]
+        if rq.get("layout", "single-user/1") != "single-user/1":
+            mode = f"{mode} ({rq['layout']}, caching {rq.get('prompt_caching', 'off')})"
         lines.append(
-            f"| {m['run_id']} | {m.get('label', '')} | {m['mode']} | {m['task']} | {m['status']} | "
+            f"| {m['run_id']} | {m.get('label', '')} | {mode} | {m['task']} | {m['status']} | "
             f"{sc['outcome']} | {rs['outcome'] if rs else 'no answer'} | "
             f"{rs['strict_success'] if rs else False} | {comp_str} | {c['provider_calls']} ({c['action_calls']}/"
             f"{c['repair_calls']}/{c['summary_calls']}/{c['api_retries']}) | {c['executions']} | "
             f"{c['edits_accepted_changed']}/{c['edits_unchanged_write']}/{c['edits_rejected']} | "
             f"{c['summaries_applied']} | {c['pressure_steps']} | {u['input_tokens_uncached']}/"
+            f"{u.get('cache_read_input_tokens', 0)}/{u.get('cache_creation_input_tokens', 0)}/"
             f"{u['output_tokens']} | {m['peak_request_input_tokens_reported']} | {held}/{n} | "
             f"{m['cost']['incurred_usd']:.4f} | {m['elapsed_s']} |"
         )
@@ -344,17 +355,23 @@ def build_report(
             f"## Comparison {comp['comparison']} (prompt {comp.get('frozen_prompt_version')})",
             "",
         ]
-        for arm in ("summary", "clm"):
+        arms: list[tuple[str, str | None]] = []
+        for cell in comp["cells"]:
+            key = (cell["mode"], cell.get("caching"))
+            if key not in arms:
+                arms.append(key)
+        for arm, caching in sorted(arms, key=lambda a: (a[0] != "summary", str(a[1]))):
             ms = [
                 (summaries[c["run_id"]], rescored.get(c["run_id"]))
                 for c in comp["cells"]
-                if c["mode"] == arm and c.get("run_id")
+                if c["mode"] == arm and c.get("caching") == caching and c.get("run_id")
             ]
             if not ms:
                 continue
             k = len(ms)
+            label = arm if caching is None else f"{arm}, caching {caching}"
             lines.append(
-                f"- {arm}: {k} runs; strict success recorded "
+                f"- {label}: {k} runs; strict success recorded "
                 f"{sum(m['score']['strict_success'] for m, _ in ms)}/{k}, current scorer "
                 f"{sum(bool(r and r['strict_success']) for _, r in ms)}/{k}; mean cost "
                 f"${sum(m['cost']['incurred_usd'] for m, _ in ms) / k:.4f}; mean calls "
@@ -362,6 +379,9 @@ def build_report(
                 f"{sum(m['counts']['edits_accepted_changed'] for m, _ in ms)}; summaries "
                 f"{sum(m['counts']['summaries_applied'] for m, _ in ms)}; mean input tokens "
                 f"{sum(m['usage_provider_reported']['input_tokens_uncached'] for m, _ in ms) / k:.0f}"
+                f"; mean cache read/write tokens "
+                f"{sum(m['usage_provider_reported'].get('cache_read_input_tokens', 0) for m, _ in ms) / k:.0f}/"
+                f"{sum(m['usage_provider_reported'].get('cache_creation_input_tokens', 0) for m, _ in ms) / k:.0f}"
             )
         lines.append("")
         lines += [
@@ -370,7 +390,8 @@ def build_report(
         ]
         for cell in comp["cells"]:
             lines.append(
-                f"| {cell['pair']} | {cell['task']} | {cell['rep']} | {cell['mode']} | {cell['status']} | "
+                f"| {cell['pair']} | {cell['task']} | {cell['rep']} | {cell['mode']}"
+                f"{' (caching ' + cell['caching'] + ')' if cell.get('caching') else ''} | {cell['status']} | "
                 f"{cell.get('outcome', '-')} | {cell.get('strict', '-')} | "
                 f"{cell.get('cost_usd', 0):.4f} | {cell.get('run_id', cell.get('reason', ''))} |"
             )

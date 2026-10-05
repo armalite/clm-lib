@@ -1,0 +1,263 @@
+{
+ "id": "006-prompt-caching-comparison",
+ "title": "Does CLM's cost and speed advantage persist when both approaches can use provider prompt caching?",
+ "provenance": {
+  "source_repo": "https://github.com/armalite/clm-lib",
+  "comparison_commit": "e486caefb21f85d04fe01967b000cb278db26001",
+  "comparison_tree_state": "HEAD plus uncommitted changes (request layout blocks/1, prompt-caching controls, run-tag/1 isolation, cache-aware accounting evidence, four-condition Williams schedule, exp006 config); the full uncommitted source was saved by compare as artifacts/comparisons/20261004T234408/20261004T234408.patch with its sha256 in the frozen block",
+  "calibration_tree_state": "the same uncommitted source as the evaluation (patch sha256 c4db53b41c7d270a415b910f04b0bb1625d6ab97ea9c1fde5053ec30f0ed6f4d at both)",
+  "post_evaluation_change": "report.context_entries now also reads blocks/1 payloads (reporting only; no effect on runs), with a test",
+  "generator_version": "invoice-gen/1",
+  "scorer": "invoice-checks/1",
+  "summary_policy": "token-tail/1",
+  "prompt_version": "2026-10-04.1",
+  "request_layout": "blocks/1",
+  "prompt_caching": "per condition: explicit 5-minute breakpoints on the task block and last working-context block; off sends no cache_control",
+  "run_isolation": "run-tag/1 (32 random hex characters as the first system block of every request)",
+  "price_source": "https://platform.claude.com/docs/en/about-claude/pricing (retrieved 2026-10-04); cache rates rechecked against https://platform.claude.com/docs/en/build-with-claude/prompt-caching on 2026-10-05",
+  "budget": "ledger ceiling set once, explicitly, from USD 46.213524 to USD 49.932944 (spend at change USD 19.932944) for at most USD 30 of experiment-006 spend; calibration sub-limit USD 8"
+ },
+ "settings": {
+  "config": "configs/exp006.toml",
+  "model": "claude-opus-5-5",
+  "effort": "low",
+  "max_calls": 30,
+  "max_output_tokens": 4096,
+  "context_budget_tokens": 8000,
+  "pressure_ratio": 0.7,
+  "baseline_policy": "token-tail/1",
+  "conditions": [
+   "summary:off",
+   "summary:on",
+   "clm:off",
+   "clm:on"
+  ],
+  "evaluation_tasks": [
+   "coding-eval-1",
+   "coding-eval-2",
+   "coding-eval-3",
+   "coding-eval-4"
+  ],
+  "repetitions": 3,
+  "condition_order": "Williams design: block (instance i, repetition r) uses row (i + r - 1) mod 4; schedule in the comparison frozen block",
+  "workload_note": "coding-eval-1..4 are experiment-004 evaluation instances reused with fresh runs (an established workload, not unseen instances)"
+ },
+ "runs": [
+  {
+   "run_id": "20261004T233901-summary-cacheoff-coding-dev-1-8371",
+   "role": "calibration",
+   "note": "calibration block 1 position 0: summary, caching off on coding-dev-1"
+  },
+  {
+   "run_id": "20261004T234009-summary-cacheon-coding-dev-1-b2b6",
+   "role": "calibration",
+   "note": "calibration block 1 position 1: summary, caching on on coding-dev-1"
+  },
+  {
+   "run_id": "20261004T234117-clm-cacheon-coding-dev-1-3845",
+   "role": "calibration",
+   "note": "calibration block 1 position 2: clm, caching on on coding-dev-1"
+  },
+  {
+   "run_id": "20261004T234211-clm-cacheoff-coding-dev-1-55d8",
+   "role": "calibration",
+   "note": "calibration block 1 position 3: clm, caching off on coding-dev-1"
+  },
+  {
+   "run_id": "20261004T234408-summary-cacheoff-coding-eval-1-5d4e",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T234523-summary-cacheon-coding-eval-1-8f9b",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T234635-clm-cacheon-coding-eval-1-769d",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T234740-clm-cacheoff-coding-eval-1-c9bb",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T234849-summary-cacheon-coding-eval-2-c12c",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T234951-clm-cacheoff-coding-eval-2-358b",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T235048-summary-cacheoff-coding-eval-2-ef98",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T235154-clm-cacheon-coding-eval-2-6ea7",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T235258-clm-cacheoff-coding-eval-3-79fa",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T235401-clm-cacheon-coding-eval-3-1fc1",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T235526-summary-cacheon-coding-eval-3-0cce",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T235646-summary-cacheoff-coding-eval-3-8489",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T235809-clm-cacheon-coding-eval-4-7a4e",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261004T235917-summary-cacheoff-coding-eval-4-4520",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261005T000050-clm-cacheoff-coding-eval-4-83fc",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261005T000149-summary-cacheon-coding-eval-4-f6cd",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261005T000338-summary-cacheon-coding-eval-1-5991",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261005T000451-clm-cacheoff-coding-eval-1-36f3",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261005T000600-summary-cacheoff-coding-eval-1-4fbe",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261005T000706-clm-cacheon-coding-eval-1-a0c8",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261005T000759-clm-cacheoff-coding-eval-2-3f68",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261005T000906-clm-cacheon-coding-eval-2-cd0c",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261005T001005-summary-cacheon-coding-eval-2-0517",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261005T001128-summary-cacheoff-coding-eval-2-3877",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261005T001252-clm-cacheon-coding-eval-3-6c64",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261005T001346-summary-cacheoff-coding-eval-3-ab81",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261005T001511-clm-cacheoff-coding-eval-3-9615",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261005T001609-summary-cacheon-coding-eval-3-1035",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261005T001729-summary-cacheoff-coding-eval-4-0069",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261005T001844-summary-cacheon-coding-eval-4-0bc5",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261005T001949-clm-cacheon-coding-eval-4-c2bc",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261005T002056-clm-cacheoff-coding-eval-4-e506",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261005T002204-clm-cacheoff-coding-eval-1-92af",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261005T002314-clm-cacheon-coding-eval-1-bbc5",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261005T002410-summary-cacheon-coding-eval-1-d6b3",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261005T002512-summary-cacheoff-coding-eval-1-77b4",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261005T002615-clm-cacheon-coding-eval-2-a322",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261005T002711-summary-cacheoff-coding-eval-2-8f39",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261005T002817-clm-cacheoff-coding-eval-2-2797",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261005T002913-summary-cacheon-coding-eval-2-5915",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261005T003016-summary-cacheoff-coding-eval-3-37dd",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261005T003143-summary-cacheon-coding-eval-3-75f1",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261005T003312-clm-cacheon-coding-eval-3-4f5a",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261005T003414-clm-cacheoff-coding-eval-3-3a9a",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261005T003511-summary-cacheon-coding-eval-4-cb4f",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261005T003655-clm-cacheoff-coding-eval-4-f248",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261005T003752-summary-cacheoff-coding-eval-4-423f",
+   "role": "evaluation"
+  },
+  {
+   "run_id": "20261005T003925-clm-cacheon-coding-eval-4-24a6",
+   "role": "evaluation"
+  }
+ ],
+ "comparisons": [
+  "20261004T233901",
+  "20261004T234408"
+ ]
+}

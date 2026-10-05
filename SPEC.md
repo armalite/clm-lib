@@ -1,6 +1,6 @@
 # clm-lib: Technical Specification
 
-Version: 1.7 | 5 October 2026
+Version: 1.8 | 5 October 2026
 
 Repository: `clm-lib` | Python package: `clm_lib` | CLI: `clm-lib`
 
@@ -12,6 +12,7 @@ Version history:
 - 1.4: experiment write-ups move to the results repository, and the exporter preserves human-maintained documents (§13). The blog notes and detailed results move there too (§9).
 - 1.5: adds a selectable, versioned summary-baseline policy (§14) for experiment 003. The original policy stays the default.
 - 1.6: adds a coding task family with changing requirements and a sandboxed evaluator (§15), and an explicit, recorded ledger-ceiling change.
+- 1.8: adds a versioned request layout (`blocks/1`), optional provider prompt caching with explicit breakpoints, per-run cache isolation, cache-aware accounting evidence, and a four-condition comparison schedule (§17).
 - 1.7: adds a second coding generator with interacting, partially changing rules, an evaluator with richer categories, exact type checks and stage snapshots (§16), a balanced comparison order, and per-task scorer metadata in comparisons and exports.
 
 ## 1. Purpose and intended outcome
@@ -355,3 +356,27 @@ The summary baseline's policy is selected by `[baseline] policy`, and recorded i
   - **Validation:** the evaluator is validated offline against an independently written correct implementation and deliberately faulty ones: forgotten and outdated rules, over-applied partial changes, calculation-order mistakes and interaction mistakes.
 - **Comparison order:** `compare --order balanced` alternates the first arm across instances and across repetitions within an instance. The default `pair` order is unchanged.
 - **Scorer metadata:** the comparison `frozen.scorer_version` and the export manifest's `exported_with.current_scorer` report each task's own scorer. A selection mixing scorers gives a sorted list.
+
+## 17. Request layouts, prompt caching and run isolation
+
+- **Layouts are versioned** (`request.layout`, recorded in every run, export row and report):
+  - `single-user/1`: one system string; one user string with `<task>`, `<runtime_status>` and `<working_context>`, in that order. It is the default and is used by every earlier configuration, whose payloads must stay unchanged.
+  - `blocks/1`: text content blocks.
+    - **System:** the run tag (when enabled), then the system prompt.
+    - **User message:** the task block (which also opens `<working_context>`), one block per context entry, and the runtime-status block last.
+    - **Summary requests** use the same convention, with the transcript to summarise as entry blocks.
+    - **Repairs** append their notice as a final block.
+- **Prompt caching** (`request.prompt_caching`, or set per run) is allowed only with `blocks/1`.
+  - **On:** an explicit `cache_control` with the configured TTL goes on the task block and on the last entry block of every action, repair and summary request. Nothing after them is marked.
+  - **Off:** no `cache_control` is sent, and the payload is otherwise identical.
+  - **No padding:** prompts are never padded to reach the provider's minimum cacheable length.
+- **Run isolation** (`request.run_isolation = "run-tag/1"`): every request in a run begins with a fixed-length system block holding 32 random hex characters. The tag is generated per run, is stable within the run and carries no task information. Because cache matching is an exact prefix match, no run can read another run's entries.
+- **Accounting:**
+  - Cost prices uncached input, 5-minute and 1-hour cache writes, cache reads and output separately; `input_tokens` excludes cached tokens.
+  - Reservations assume the dearest applicable input-side rate.
+  - Request-size budgeting, pressure and the response bound check use total input including cached tokens.
+- **Evidence per request:**
+  - the saved request's `meta.prefix` (common leading blocks with the previous request of the same family, the first changed block, breakpoints);
+  - `latency_s` and the cache usage on each response;
+  - per run, `summary.json → request` (settings, run tag, first-call cache usage, usage, cost and latency per call kind).
+- **Four-condition comparisons:** `compare --conditions summary:off,summary:on,clm:off,clm:on` runs each instance and repetition block in Williams order. Each condition appears equally often in each position, and the schedule is written into the frozen block.

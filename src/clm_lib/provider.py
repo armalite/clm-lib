@@ -68,6 +68,61 @@ class ModelRequest:
     max_tokens: int
     purpose: str  # "action" | "repair" | "summary" | "smoke"
     json_schema: dict[str, Any] | None = None
+    # Layout blocks/1: the same text split into content blocks (system and user are their
+    # concatenations). None keeps the single-string layout of experiments 001-005.
+    system_blocks: tuple[str, ...] | None = None
+    user_blocks: tuple[str, ...] | None = None
+    # Indices into user_blocks that get a cache breakpoint when cache_ttl is set.
+    cache_breakpoints: tuple[int, ...] = ()
+    cache_ttl: str | None = None  # "5m" / "1h": prompt caching on; None: off
+
+    @classmethod
+    def from_blocks(
+        cls,
+        system_blocks: list[str] | tuple[str, ...],
+        user_blocks: list[str] | tuple[str, ...],
+        max_tokens: int,
+        purpose: str,
+        json_schema: dict[str, Any] | None = None,
+        cache_breakpoints: list[int] | tuple[int, ...] = (),
+        cache_ttl: str | None = None,
+    ) -> ModelRequest:
+        if any(not b for b in (*system_blocks, *user_blocks)):
+            raise ValueError("content blocks must be non-empty")
+        return cls(
+            system="".join(system_blocks),
+            user="".join(user_blocks),
+            max_tokens=max_tokens,
+            purpose=purpose,
+            json_schema=json_schema,
+            system_blocks=tuple(system_blocks),
+            user_blocks=tuple(user_blocks),
+            cache_breakpoints=tuple(cache_breakpoints),
+            cache_ttl=cache_ttl,
+        )
+
+
+def message_body(req: ModelRequest, model: str) -> dict[str, Any]:
+    """Messages API body (without output_config). Shared by real and scripted providers."""
+    if req.user_blocks is None or req.system_blocks is None:
+        return {
+            "model": model,
+            "max_tokens": req.max_tokens,
+            "system": req.system,
+            "messages": [{"role": "user", "content": req.user}],
+        }
+    content: list[dict[str, Any]] = []
+    for i, text in enumerate(req.user_blocks):
+        block: dict[str, Any] = {"type": "text", "text": text}
+        if req.cache_ttl is not None and i in req.cache_breakpoints:
+            block["cache_control"] = {"type": "ephemeral", "ttl": req.cache_ttl}
+        content.append(block)
+    return {
+        "model": model,
+        "max_tokens": req.max_tokens,
+        "system": [{"type": "text", "text": t} for t in req.system_blocks],
+        "messages": [{"role": "user", "content": content}],
+    }
 
 
 @dataclass
@@ -77,15 +132,22 @@ class Usage:
     cache_read_input_tokens: int = 0
     cache_creation_input_tokens: int = 0
     thinking_tokens: int | None = None  # included in output_tokens when reported
+    # Provider breakdown of cache_creation_input_tokens by TTL, when reported.
+    cache_creation_5m: int | None = None
+    cache_creation_1h: int | None = None
 
     def to_dict(self) -> dict[str, int | None]:
-        return {
+        out: dict[str, int | None] = {
             "input_tokens": self.input_tokens,
             "output_tokens": self.output_tokens,
             "cache_read_input_tokens": self.cache_read_input_tokens,
             "cache_creation_input_tokens": self.cache_creation_input_tokens,
             "thinking_tokens": self.thinking_tokens,
         }
+        if self.cache_creation_5m is not None or self.cache_creation_1h is not None:
+            out["cache_creation_5m"] = self.cache_creation_5m
+            out["cache_creation_1h"] = self.cache_creation_1h
+        return out
 
 
 @dataclass
@@ -169,12 +231,7 @@ class AnthropicProvider:
         }
 
     def payload(self, req: ModelRequest) -> dict[str, Any]:
-        body: dict[str, Any] = {
-            "model": self.model,
-            "max_tokens": req.max_tokens,
-            "system": req.system,
-            "messages": [{"role": "user", "content": req.user}],
-        }
+        body = message_body(req, self.model)
         output_config: dict[str, Any] = {}
         if self.effort:
             output_config["effort"] = self.effort
@@ -232,12 +289,19 @@ class AnthropicProvider:
             ) from exc
         u = msg.usage
         details = getattr(u, "output_tokens_details", None)
+        creation = getattr(u, "cache_creation", None)
         usage = Usage(
             input_tokens=u.input_tokens or 0,
             output_tokens=u.output_tokens or 0,
             cache_read_input_tokens=getattr(u, "cache_read_input_tokens", None) or 0,
             cache_creation_input_tokens=getattr(u, "cache_creation_input_tokens", None) or 0,
             thinking_tokens=getattr(details, "thinking_tokens", None) if details else None,
+            cache_creation_5m=getattr(creation, "ephemeral_5m_input_tokens", None)
+            if creation
+            else None,
+            cache_creation_1h=getattr(creation, "ephemeral_1h_input_tokens", None)
+            if creation
+            else None,
         )
         text = "".join(b.text for b in msg.content if getattr(b, "type", None) == "text")
         if msg.stop_reason == "refusal":
@@ -274,12 +338,7 @@ class ScriptedProvider:
         return {"provider": self.name, "model": self.model, "note": "scripted test double"}
 
     def payload(self, req: ModelRequest) -> dict[str, Any]:
-        return {
-            "model": self.model,
-            "max_tokens": req.max_tokens,
-            "system": req.system,
-            "messages": [{"role": "user", "content": req.user}],
-        }
+        return message_body(req, self.model)
 
     def complete(self, req: ModelRequest) -> ModelResponse:
         index = len(self.requests)

@@ -247,6 +247,27 @@ def _metrics_row(run_id: str, role: str, src: Path, charged: float) -> dict[str,
         prompt_version=m.get("prompt_version"),
         fixture_sha256=m.get("fixture_sha256"),
     )
+    rq = m.get("request") or {}
+    u = m["usage_provider_reported"]
+    row.update(
+        # Request layout and caching condition (single-user/1 and off before experiment 006).
+        request_layout=rq.get("layout", "single-user/1"),
+        prompt_caching=rq.get("prompt_caching", "off"),
+        cache_ttl=rq.get("cache_ttl"),
+        run_isolation=rq.get("run_isolation", "none"),
+        cache_read_input_tokens=u.get("cache_read_input_tokens", 0),
+        cache_creation_input_tokens=u.get("cache_creation_input_tokens", 0),
+        first_call_cache_read_tokens=(rq.get("first_call_cache") or {}).get(
+            "cache_read_input_tokens"
+        ),
+        provider_latency_s=rq.get("provider_latency_s"),
+    )
+    for kind, k in sorted((rq.get("by_kind") or {}).items()):
+        row[f"{kind}_cost_usd"] = k["cost_usd"]
+        row[f"{kind}_cache_read_tokens"] = k["cache_read_input_tokens"]
+        row[f"{kind}_cache_creation_tokens"] = k["cache_creation_input_tokens"]
+        row[f"{kind}_uncached_input_tokens"] = k["input_tokens_uncached"]
+        row[f"{kind}_latency_s"] = k["latency_s"]
     for k, v in (m.get("management") or {}).items():
         row[f"mgmt_{k}"] = json.dumps(v) if isinstance(v, (dict, list)) else v
     return row

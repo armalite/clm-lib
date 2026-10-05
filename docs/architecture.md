@@ -203,13 +203,30 @@ Ground truth exists only in memory until the run ends, then goes to `evaluator/`
   - `test_manifest_reports_the_scorer_of_the_exported_tasks` in `tests/test_export.py`;
   - `test_balanced_order_alternates_within_each_instance` in `tests/test_budget.py`.
 
+## Request layouts and prompt caching (experiment 006)
+
+- **Rendering:**
+  - `prompts.render_user_blocks` and `summary_user_blocks` return text blocks and breakpoint candidates.
+  - `ModelRequest.from_blocks` keeps the joined `system`/`user` strings, used for estimates, logs and tests, next to the blocks.
+  - `provider.message_body` renders either layout; it is shared by the real and scripted providers, so tests see the exact payload shape.
+- **Block content:** the working context is split into one block per entry because cache hits happen only at block boundaries. A growing single block could never be read back, and a step appends 2–3 entries, well inside the provider's 20-block lookback.
+- **Breakpoints:** explicit, not automatic. Automatic caching would mark the per-call status block, a unique tail.
+- **Per-run settings:** `Runner.run(..., caching=)` overrides the config for one run (the four-condition matrix), and the run id carries `-cacheon-` / `-cacheoff-` under `blocks/1`.
+- **The run tag** is the first system block, so every cache entry key starts with it.
+- **Evidence:**
+  - `_Run.prefix_evidence` compares each request's blocks with the previous request of the same family;
+  - `call()` records provider latency and per-kind usage;
+  - `summary.json → request` collects them.
+- **Cost:** `ModelPrice.cost` prices 1-hour writes separately when the provider reports the TTL breakdown.
+- **Tests:** `tests/test_caching.py` uses a scripted provider that simulates prefix caching with a 20-block lookback, which tests the accounting plumbing, plus a Docker test of edits under `blocks/1`.
+
 ## Design choices
 
 - **JSON-lines transcript with escaping** instead of nonce delimiters: it's simple and can't be forged.
 - **The budget covers the whole request**, which is what the provider actually sees. CLM's system text is about 1.1K chars (~350 tokens) longer than the baseline's (2,685 vs 1,622 chars), so the CLM arm has slightly less transcript room under the same budget. This is recorded, not compensated.
 - **A fresh container per execution.** Only the workspace persists, so helpers persist as files and must be imported (cwd is on `sys.path` because `-E -s` is used rather than `-I`).
 - **Effort `low` by default** (`claude-opus-5-5` can't disable thinking). This keeps thinking and the JSON within the 2,048-token output cap and keeps cost bounded. It's identical for both arms and recorded in `run.json`.
-- **No prompt caching by default.** The protected prefix is below useful cache sizes, and cache fields are still accounted if present.
+- **No prompt caching by default.** Earlier configs send no `cache_control`; experiment 006 adds it as an explicit, versioned option (see above). Cache fields are always accounted when present.
 - **The scenario name is hidden from the model.** The full cause/remedy code list is shown in every instance.
 
 ## Departures from the spec

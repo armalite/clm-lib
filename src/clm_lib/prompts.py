@@ -167,6 +167,50 @@ def render_entries(entries: tuple[Entry, ...] | list[Entry]) -> str:
     return "\n".join(lines)
 
 
+RUN_TAG_FORMAT = "run-ref: {tag}\n"  # tag: 32 random hex chars, so the block length is fixed
+
+
+def run_tag_block(tag: str) -> str:
+    if len(tag) != 32 or any(c not in "0123456789abcdef" for c in tag):
+        raise ValueError("run tag must be 32 lowercase hex characters")
+    return RUN_TAG_FORMAT.format(tag=tag)
+
+
+def entry_lines(entries: tuple[Entry, ...] | list[Entry]) -> list[str]:
+    """One escaped JSON line per entry (same text as render_entries, without joining)."""
+    return render_entries(entries).split("\n") if entries else []
+
+
+def render_user_blocks(
+    task: str, status: str, entries: tuple[Entry, ...] | list[Entry]
+) -> tuple[list[str], list[int]]:
+    """Layout blocks/1: (text blocks, indices of cache breakpoint candidates).
+
+    Stable content first: the task block (which opens <working_context>), then one block per
+    context entry, then the changing runtime status. Breakpoint candidates are the task block
+    and the last entry block, so an unchanged prefix of entries can be reused as it grows.
+    """
+    blocks = [f"<task>\n{task.strip()}\n</task>\n\n<working_context>\n"]
+    blocks += [line + "\n" for line in entry_lines(entries)]
+    breakpoints = [0] if len(blocks) == 1 else [0, len(blocks) - 1]
+    blocks.append(f"</working_context>\n\n<runtime_status>\n{status.strip()}\n</runtime_status>\n")
+    return blocks, breakpoints
+
+
+def summary_user_blocks(
+    task: str, entries: list[Entry], max_chars: int
+) -> tuple[list[str], list[int]]:
+    """Layout blocks/1 for summary requests, with the same breakpoint convention."""
+    blocks = [f"<task>\n{task.strip()}\n</task>\n\n<transcript_to_summarise>\n"]
+    blocks += [line + "\n" for line in entry_lines(entries)]
+    breakpoints = [0] if len(blocks) == 1 else [0, len(blocks) - 1]
+    blocks.append(
+        "</transcript_to_summarise>\n\n"
+        f"Write the replacement summary now, at most {max_chars} characters."
+    )
+    return blocks, breakpoints
+
+
 def render_user(task: str, status: str, entries: tuple[Entry, ...] | list[Entry]) -> str:
     body = render_entries(entries)
     return (

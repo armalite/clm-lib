@@ -80,6 +80,14 @@ The answer has four fields: `root_cause`, `required_value`, `remedy` and `eviden
 - **Hidden checks:** they are tagged *retained*, *replaced* (with stale-rule detection), *kept_part*, *interaction* or *final_stage*, and may be flagged *boundary*. Return types are checked exactly.
 - **Snapshots:** the workspace is snapshotted host-side at each `advance`, so a failed retained rule is called a regression only if it had passed its checks at an earlier stage.
 
+**Request layouts and prompt caching** (`[request]` in the config; SPEC §17):
+- **`single-user/1`** (the default) is the original layout.
+- **`blocks/1`** sends text content blocks:
+  - the stable task first, then one block per context entry, then the changing runtime status;
+  - optionally, explicit 5-minute `cache_control` breakpoints on the task block and the last entry block;
+  - optionally, a random per-run tag that keeps cache entries private to the run.
+- **Per-run caching:** `run --caching on|off` sets caching for one run.
+
 ## Quickstart (offline, no API calls)
 
 Prerequisites: Python 3.11+ with [uv](https://docs.astral.sh/uv/), and a running Docker daemon.
@@ -141,6 +149,7 @@ Live commands are paid. Each call goes through a persistent ledger (`runs/ledger
 | `clm-lib smoke` | One minimal live call with structured-output and accounting checks |
 | `clm-lib guided --task dev` | Prompted helper demonstration (not comparative) |
 | `clm-lib run --mode summary\|clm\|guided --task NAME` | One live run (used for calibration) |
+| `clm-lib compare ... --conditions summary:off,summary:on,clm:off,clm:on` | Four-condition comparison (approach × prompt caching) in Williams order; needs `request.layout = "blocks/1"` |
 | `clm-lib compare --reps 2 [--tasks a,b,c] [--order pair\|balanced]` | Frozen comparison: tasks × 2 modes × reps. The mode order alternates per pair, or with `balanced`, across instances and across repetitions of each instance |
 | `clm-lib report --out runs/report.md` | Markdown report from recorded evidence |
 | `clm-lib export experiments/<id> --dest ../clm-lib-test-results` | Copy an experiment's evidence to the results repo |

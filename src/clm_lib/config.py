@@ -49,6 +49,21 @@ class BaselineConfig:
 
 
 @dataclass
+class RequestConfig:
+    # "single-user/1": experiments 001-005 (one system string; one user string with <task>,
+    # <runtime_status>, then <working_context>). "blocks/1": experiment 006 (text content
+    # blocks; stable task first, one block per context entry, runtime status last).
+    layout: str = "single-user/1"
+    # Provider prompt caching (blocks/1 only): explicit 5-minute breakpoints on the task block
+    # and on the last working-context block; off sends no cache_control at all.
+    prompt_caching: bool = False
+    cache_ttl: str = "5m"
+    # "run-tag/1": a fixed-length random per-run tag is the first system block, so cache
+    # prefixes (and any cache entry) are unique to the run. "none": no tag.
+    run_isolation: str = "none"
+
+
+@dataclass
 class BudgetConfig:
     ceiling_usd: float = 10.0
     min_run_reserve_usd: float = 0.75
@@ -71,6 +86,7 @@ class Config:
     baseline: BaselineConfig = field(default_factory=BaselineConfig)
     budget: BudgetConfig = field(default_factory=BudgetConfig)
     sandbox: SandboxConfig = field(default_factory=SandboxConfig)
+    request: RequestConfig = field(default_factory=RequestConfig)
     runs_dir: str = "runs"
 
     def to_dict(self) -> dict[str, Any]:
@@ -95,6 +111,7 @@ def load_config(path: Path | None) -> Config:
         "baseline": BaselineConfig,
         "budget": BudgetConfig,
         "sandbox": SandboxConfig,
+        "request": RequestConfig,
     }
     kwargs: dict[str, Any] = {}
     for key, cls in sections.items():
@@ -104,4 +121,22 @@ def load_config(path: Path | None) -> Config:
         kwargs["runs_dir"] = str(data.pop("runs_dir"))
     if data:
         raise ValueError(f"unknown config sections: {sorted(data)}")
-    return Config(**kwargs)
+    cfg = Config(**kwargs)
+    validate_request(cfg.request)
+    return cfg
+
+
+LAYOUTS = ("single-user/1", "blocks/1")
+
+
+def validate_request(r: RequestConfig) -> None:
+    if r.layout not in LAYOUTS:
+        raise ValueError(f"request.layout must be one of {LAYOUTS}")
+    if r.run_isolation not in ("none", "run-tag/1"):
+        raise ValueError("request.run_isolation must be 'none' or 'run-tag/1'")
+    if r.cache_ttl not in ("5m", "1h"):
+        raise ValueError("request.cache_ttl must be '5m' or '1h'")
+    if r.prompt_caching and r.layout == "single-user/1":
+        raise ValueError("prompt caching requires request.layout = 'blocks/1'")
+    if r.run_isolation != "none" and r.layout == "single-user/1":
+        raise ValueError("run isolation requires request.layout = 'blocks/1'")
