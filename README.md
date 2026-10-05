@@ -80,6 +80,8 @@ The answer has four fields: `root_cause`, `required_value`, `remedy` and `eviden
 - **Hidden checks:** they are tagged *retained*, *replaced* (with stale-rule detection), *kept_part*, *interaction* or *final_stage*, and may be flagged *boundary*. Return types are checked exactly.
 - **Snapshots:** the workspace is snapshotted host-side at each `advance`, so a failed retained rule is called a regression only if it had passed its checks at an earlier stage.
 
+**Multi-round incident** (`rounds-dev-*`, `rounds-eval-*`; `src/clm_lib/rounds.py`): 10–12 evidence rounds per instance. The answer lists incidents and unresolved follow-ups, scored by `rounds-score/1`. Modes `clm_direct` and `clm_helpers` give the same CLM capabilities, with reusable context-management helpers asked against or permitted; `helper_audit.py` classifies helper evidence.
+
 **Request layouts and prompt caching** (`[request]` in the config; SPEC §17):
 - **`single-user/1`** (the default) is the original layout.
 - **`blocks/1`** sends text content blocks:
@@ -201,6 +203,8 @@ src/clm_lib/
   staged.py     staged incident fixtures
   coding.py     coding task (changing requirements), reference model, sandboxed evaluator
   coding2.py    coding task with interacting, partially changing rules (invoice-gen/2) + evaluator
+  rounds.py     multi-round incident task (incident-rounds-gen/1) + scorer
+  helper_audit.py  helper-evidence tiers and direct-edit reuse findings
   invoice_ref2.py  standalone reference rules for invoice-gen/2
   prompts.py    frozen prompt text and request rendering
   report.py     markdown report from evidence

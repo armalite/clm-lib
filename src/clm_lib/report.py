@@ -182,7 +182,7 @@ def rescore(run_dir: Path) -> dict[str, Any] | None:
     if not truth_path.exists():
         return None
     t = _load(truth_path)
-    if t.get("kind") == "coding":
+    if t.get("kind") in ("coding", "rounds"):
         # Coding checks are deterministic data; the recorded score is the current score.
         score: dict[str, Any] = _load(run_dir / "evaluator" / "score.json")
         return score
@@ -216,6 +216,8 @@ def build_report(
     run_dirs: list[Path] | None = None,
     comparisons: list[Path] | None = None,
     title: str = "clm-lib run report",
+    phases: dict[str, str] | None = None,
+    comparison_phases: dict[str, str] | None = None,
 ) -> str:
     """Markdown report. By default covers every run under ``runs_dir``; ``run_dirs`` and
     ``comparisons`` restrict it (ledger entries are then filtered to those run ids)."""
@@ -308,8 +310,11 @@ def build_report(
         mode = m["mode"]
         if rq.get("layout", "single-user/1") != "single-user/1":
             mode = f"{mode} ({rq['layout']}, caching {rq.get('prompt_caching', 'off')})"
+        label = m.get("label", "")
+        if phases and m["run_id"] in phases:
+            label = f"[{phases[m['run_id']]}] {label}"
         lines.append(
-            f"| {m['run_id']} | {m.get('label', '')} | {mode} | {m['task']} | {m['status']} | "
+            f"| {m['run_id']} | {label} | {mode} | {m['task']} | {m['status']} | "
             f"{sc['outcome']} | {rs['outcome'] if rs else 'no answer'} | "
             f"{rs['strict_success'] if rs else False} | {comp_str} | {c['provider_calls']} ({c['action_calls']}/"
             f"{c['repair_calls']}/{c['summary_calls']}/{c['api_retries']}) | {c['executions']} | "
@@ -352,7 +357,12 @@ def build_report(
                 summaries[rid] = _load(runs_dir / rid / "summary.json")
         lines += [
             "",
-            f"## Comparison {comp['comparison']} (prompt {comp.get('frozen_prompt_version')})",
+            f"## Comparison {comp['comparison']} (prompt {comp.get('frozen_prompt_version')})"
+            + (
+                f": phase {comparison_phases[comp['comparison']]}; do not pool with other phases"
+                if comparison_phases and comp["comparison"] in comparison_phases
+                else ""
+            ),
             "",
         ]
         arms: list[tuple[str, str | None]] = []

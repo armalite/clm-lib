@@ -31,6 +31,20 @@ class Limits:
     spill_min_chars: int = 1500
     initial_chars_per_token: float = 3.0
     max_code_chars: int = 20_000
+    # Experiments 001-006 count summary calls against max_calls. With this false, max_calls
+    # covers task calls only (actions, repairs, their retries) and summary calls have their own
+    # cap, so the summary baseline is not denied investigation steps.
+    summary_calls_in_max_calls: bool = True
+    max_summary_calls: int = 0
+    # Defect fix found in experiment-007 calibration: when a CLM step both edits the context and
+    # prints a large observation, the runtime appends a receipt after the observation, and the
+    # spill rule (which only looked at the last entry) could not move the observation out. True
+    # also spills an observation followed directly by its receipt. False keeps the original rule.
+    spill_past_receipt: bool = False
+    # Defect fix found in the revised experiment-007 calibration: the CLM PRESSURE notice is added
+    # after the hard-limit checks, and could itself push a request just over the hard limit, ending
+    # the run without the spill or recovery handling. True re-checks after adding the notice.
+    recheck_after_notice: bool = False
 
 
 @dataclass

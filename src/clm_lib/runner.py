@@ -44,6 +44,7 @@ from .executor import DockerExecutor, ExecResult, Executor, ExecutorUnavailable
 from .prompts import (
     PROMPT_VERSION,
     SUMMARY_SYSTEM_TOKEN_TAIL_CODING,
+    SUMMARY_SYSTEM_TOKEN_TAIL_ROUNDS,
     render_entries,
     render_user,
     render_user_blocks,
@@ -60,6 +61,7 @@ from .provider import (
     Provider,
     ProviderError,
 )
+from .rounds import ROUNDS_ANSWER_SCHEMA, ROUNDS_FIELDS, score_rounds
 from .tasks import (
     TaskInstance,
     no_answer_score,
@@ -68,7 +70,10 @@ from .tasks import (
 )
 from .tracing import RunTrace, now_iso, sha256_text, snapshot_files
 
-MODES = ("summary", "clm", "guided")
+MODES = ("summary", "clm", "guided", "clm_direct", "clm_helpers", "clm_reuse")
+# Experiment 007 CLM conditions: the same capabilities, with a direct-editing-only clause or a
+# reusable-helpers-allowed clause (prompts.CLM_CLAUSE).
+CLM_MODES = ("clm", "guided", "clm_direct", "clm_helpers", "clm_reuse")
 INVALID_FOR_COMPARISON = {
     "infrastructure_error",
     "executor_unavailable",
@@ -134,6 +139,11 @@ class _Usage:
 
 
 INCIDENT_FIELDS = ("root_cause", "required_value", "remedy", "evidence_refs")
+# Experiment 007 rounds task: staged actions with the rounds answer contract.
+ROUNDS_ACTION_SCHEMA: dict[str, Any] = {
+    **STAGED_ACTION_SCHEMA,
+    "properties": {**STAGED_ACTION_SCHEMA["properties"], "answer": ROUNDS_ANSWER_SCHEMA},
+}
 CODING_FIELDS = ("summary",)
 
 
@@ -171,6 +181,8 @@ def parse_action(
             return None, f"final action needs answer with fields {list(need)}"
         if "evidence_refs" in need and not isinstance(ans["evidence_refs"], list):
             return None, "evidence_refs must be a list of strings"
+        if "incidents" in need and not isinstance(ans["incidents"], list):
+            return None, "incidents must be a list of objects"
         return obj, ""
     return None, "action must be 'execute' or 'final'"
 
@@ -323,7 +335,14 @@ class _Run:
     # --------------------------------------------------------------- helpers
     @property
     def clm(self) -> bool:
-        return self.mode in ("clm", "guided")
+        return self.mode in CLM_MODES
+
+    def task_calls(self) -> int:
+        """Calls counted against max_calls: all provider attempts, or all except summary calls
+        when ``limits.summary_calls_in_max_calls`` is false (they then have their own cap)."""
+        if self.lim.summary_calls_in_max_calls:
+            return self.c.provider_calls
+        return self.c.provider_calls - self.c.summary_calls
 
     def est_tokens(self, system: str, user: str) -> int:
         return int((len(system) + len(user)) / self.cpt) + 1
@@ -332,7 +351,7 @@ class _Run:
         b = self.lim.context_budget_tokens
         entries = self.store.entries
         lines = [
-            f"step {self.step}; model calls used {self.c.provider_calls}/{self.lim.max_calls}",
+            f"step {self.step}; model calls used {self.task_calls()}/{self.lim.max_calls}",
             f"request size ~{est} tokens of {b} budget ({100 * est // b}%); "
             f"pressure threshold {int(self.lim.pressure_ratio * 100)}%; "
             f"hard limit {b - self.lim.recovery_reserve_tokens} tokens",
@@ -460,7 +479,13 @@ class _Run:
     def call(self, req: ModelRequest, kind: str, meta: dict[str, Any]) -> ModelResponse:
         retries = self.cfg.provider.api_retries
         for attempt in range(retries + 1):
-            if self.c.provider_calls >= self.lim.max_calls:
+            if kind == "summary" and not self.lim.summary_calls_in_max_calls:
+                if self.c.summary_calls >= self.lim.max_summary_calls:
+                    raise _Stop(
+                        "max_summary_calls",
+                        f"summary call cap {self.lim.max_summary_calls} reached",
+                    )
+            elif self.task_calls() >= self.lim.max_calls:
                 raise _Stop(
                     "max_calls", f"call cap {self.lim.max_calls} reached before {kind} call"
                 )
@@ -672,7 +697,11 @@ class _Run:
                 attempt,
                 self.lim.max_output_tokens,
                 limit,
-                system=SUMMARY_SYSTEM_TOKEN_TAIL_CODING if self.task.kind == "coding" else None,
+                system=SUMMARY_SYSTEM_TOKEN_TAIL_CODING
+                if self.task.kind == "coding"
+                else SUMMARY_SYSTEM_TOKEN_TAIL_ROUNDS
+                if self.task.kind == "rounds"
+                else None,
             )
             if self.blocks_layout:
                 ub, bps = summary_user_blocks(self.task.prompt, older, limit)
@@ -738,16 +767,25 @@ class _Run:
 
     def spill_latest(self) -> bool:
         entries = list(self.store.entries)
-        if not entries or entries[-1].role != "observation":
+        idx = len(entries) - 1
+        if (
+            self.lim.spill_past_receipt
+            and entries
+            and entries[-1].role == "receipt"
+            and len(entries) >= 2
+            and entries[-2].role == "observation"
+        ):
+            idx = len(entries) - 2  # the step's observation, followed by its edit receipt
+        if not entries or entries[idx].role != "observation":
             return False
-        last = entries[-1]
+        last = entries[idx]
         if len(last.body) < self.lim.spill_min_chars:
             return False
         spill_dir = self.ws / "spill"
         spill_dir.mkdir(exist_ok=True)
         name = re.sub(r"[^A-Za-z0-9_.-]", "_", last.id) + ".txt"
         (spill_dir / name).write_text(last.body, encoding="utf-8")
-        entries[-1] = Entry(
+        entries[idx] = Entry(
             last.id,
             "observation",
             (
@@ -813,6 +851,16 @@ class _Run:
                 self.mgmt["recovery"].append(self.step)
         self.recovery_active = recovery
         user, est = self.assemble(pressure=pressure, recovery=recovery)
+        if self.lim.recheck_after_notice and not recovery and est > hard:
+            # The runtime's own PRESSURE notice pushed the request over the hard limit: handle it
+            # like any other oversized request (spill, then the CLM recovery request).
+            if self.spill_latest():
+                user, est = self.assemble(pressure=pressure)
+            if est > hard and self.clm and est <= b:
+                recovery = self.recovery_active = True
+                self.c.recovery_requests += 1
+                self.mgmt["recovery"].append(self.step)
+                user, est = self.assemble(pressure=pressure, recovery=True)
         if est > (b if recovery else hard):
             raise _Stop("context_overflow", f"request ~{est} tokens exceeds limit")
         return user, est, pressure, recovery
@@ -1081,14 +1129,17 @@ class _Run:
     # --------------------------------------------------------------- loop
     def loop(self) -> tuple[str, str]:
         coding = self.task.kind == "coding"
+        rounds = self.task.kind == "rounds"
         schema = (
             CODING_ACTION_SCHEMA
             if coding
+            else ROUNDS_ACTION_SCHEMA
+            if rounds
             else STAGED_ACTION_SCHEMA
             if self.task.staged
             else ACTION_SCHEMA
         )
-        fields = CODING_FIELDS if coding else INCIDENT_FIELDS
+        fields = CODING_FIELDS if coding else ROUNDS_FIELDS if rounds else INCIDENT_FIELDS
         staged = self.task.staged
         while True:
             self.step += 1
@@ -1377,6 +1428,8 @@ class _Run:
         score: Any
         if self.task.kind == "coding":
             score = self.evaluate_coding(completed=self.answer is not None)
+        elif self.task.kind == "rounds":
+            score = score_rounds(self.answer, truth, self.task.files)
         else:
             score = (
                 score_answer(self.answer, truth, self.task.files)

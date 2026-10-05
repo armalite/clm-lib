@@ -12,17 +12,20 @@
 | 004: coding with changing requirements | On an invoice-package task with requirements added and replaced over four stages, both approaches got 12/12 strict successes with no regressions or stale rules. CLM was about 25% cheaper, matching the baseline's spending on summary calls. | [004](https://github.com/armalite/clm-lib-test-results/tree/main/experiments/004-coding-changing-requirements) |
 | 005: harder coding accuracy | Stopped after calibration: with interacting, partially changing rules over 6 or 8 stages, both approaches passed every hidden check in all 8 calibration runs. By the pre-registered rule, the evaluation was not run, and no correctness claim is made. | [005](https://github.com/armalite/clm-lib-test-results/tree/main/experiments/005-harder-coding-accuracy) |
 | 006: prompt-caching comparison | On the experiment-004 coding task, with a shared block layout and explicit 5-minute cache breakpoints, all 48 runs were strictly successful. With caching on, CLM was about 35% cheaper than the baseline (27% with caching off) and about 20% faster either way. | [006](https://github.com/armalite/clm-lib-test-results/tree/main/experiments/006-prompt-caching-comparison) |
+| 007: reusable context-management helpers | On a 10–12-round incident task, CLM did not create helpers when merely allowed (initial calibration). With the strategy instructed (revised phase, 24 runs), strict success was baseline 4/8, direct editing 6/8, reusable functions 7/8; both CLM strategies were about a third cheaper and a quarter faster than the baseline in every block, with no clear difference between them. Two CLM-only runtime defects were found and fixed. | [007](https://github.com/armalite/clm-lib-test-results/tree/main/experiments/007-reusable-context-helpers) |
 
 The previous, longer version of this file is archived verbatim in the results repository as [`notes/clm-lib-results-log-2026-10-04.md`](https://github.com/armalite/clm-lib-test-results/blob/main/notes/clm-lib-results-log-2026-10-04.md). The draft blog notes moved there too, to [`notes/blog-notes.md`](https://github.com/armalite/clm-lib-test-results/blob/main/notes/blog-notes.md).
 
 ## Spend
 
-The active ledger is `runs/ledger.json` in this repository (gitignored). Totals so far: **USD 31.140** (experiments 001–003 USD 8.917; experiment 004 USD 7.297; experiment 005 USD 3.719, calibration only; experiment 006 USD 11.207), all from provider-reported usage, with no unresolved assumed charges. The ceiling was changed three times, each time explicitly and with a recorded reason (`ceiling_history`):
+The active ledger is `runs/ledger.json` in this repository (gitignored). Totals so far: **USD 46.994** (experiments 001–003 USD 8.917; 004 USD 7.297; 005 USD 3.719, calibration only; 006 USD 11.207; 007 initial calibration USD 2.573; 007 revised phase USD 13.281), all from provider-reported usage. One interrupted call was charged its full reservation (USD 0.141, assumed). The ceiling was changed five times, each time explicitly and with a recorded reason (`ceiling_history`):
 - for experiment 004, from USD 10 to USD 38.917;
 - for experiment 005, to USD 46.214;
-- for experiment 006, to USD 49.933 (each later change: spend at the change + USD 30).
+- for experiment 006, to USD 49.933;
+- for the 007 initial phase, to USD 61.140;
+- for the 007 revised phase, to USD 63.713 (each later change: spend at the change + USD 30).
 
-It was never reset. Live commands now need a config whose ceiling is not below USD 49.933, such as `configs/exp006.toml`; a config with a lower ceiling lowers it again. Historical snapshots are exported to the results repository's `ledger-snapshots/`.
+It was never reset. Live commands now need a config whose ceiling is not below USD 63.713, such as `configs/exp007r.toml`; a config with a lower ceiling lowers it again. Historical snapshots are exported to the results repository's `ledger-snapshots/`.
 
 ## Live accounting checks
 
@@ -93,6 +96,21 @@ Phases 2–4 (smoke, guided dev run, frozen comparison) were **not run**. `ANTHR
 Verification: `ruff check`, `ruff format --check` and `mypy src` are clean; **56 passed**. `doctor --sandbox` is unchanged.
 
 Live phases: **still not run**. `ANTHROPIC_API_KEY` is still unset in the agent process (`doctor`). Live spend $0.00; cumulative $0.00 of $10.00.
+
+## Multi-round incidents and helper conditions (2026-10-05)
+
+`rounds.py`, the `clm_direct` / `clm_helpers` modes, the separate summary-call allowance, `helper_audit.py`, three-condition schedules and the `spill_past_receipt` fix are covered by SPEC §18. The tests are in `tests/test_rounds.py`:
+- generation and evidence support;
+- the scorer, on correct answers and ten kinds of faulty answer;
+- the condition texts, with earlier prompts byte-identical;
+- the summary allowance;
+- helper tiers and wrapper detection (Docker);
+- direct-edit reuse detection (Docker);
+- release visibility end-to-end (Docker);
+- the spill fix;
+- schedule balance.
+
+With ruff, format and mypy clean, **132 passed**. The revised 007 phase adds the `clm_reuse` condition, phase labels in exports, helper categories and adherence, and the `recheck_after_notice` fix. With these, **138 passed**.
 
 ## Request layouts and prompt caching (2026-10-05)
 

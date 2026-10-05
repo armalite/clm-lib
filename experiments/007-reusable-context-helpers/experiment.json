@@ -1,0 +1,298 @@
+{
+ "id": "007-reusable-context-helpers",
+ "title": "Reusable context-management helpers: helpers permitted (initial calibration) and an instructed reusable-function editing strategy (revised phase)",
+ "provenance": {
+  "source_repo": "https://github.com/armalite/clm-lib",
+  "calibration_commit": "c391457c79a9ba1df91a56beedea56f8b02e494c",
+  "calibration_tree_state": "HEAD plus uncommitted changes (incident-rounds-gen/1 task and rounds-score/1, clm_direct/clm_helpers modes, separate summary-call allowance, helper audit, three-condition schedule, exp007 config); patch saved by compare as artifacts/comparisons/20261005T061432/20261005T061432.patch",
+  "post_calibration_change": "spill rule defect fix behind limits.spill_past_receipt; configs/exp007.toml keeps the original rule (as run by the initial calibration) and configs/exp007r.toml enables the fix for the revised phase; the fix affected initial run 20261005T061804-clm_direct-cacheon-rounds-dev-1-b3a5",
+  "generator_version": "incident-rounds-gen/1",
+  "scorer": "rounds-score/1",
+  "prompt_version": "2026-10-05.1",
+  "summary_policy": "token-tail/1 (rounds summariser instruction)",
+  "request_layout": "blocks/1, caching on, 5m, run-tag/1",
+  "price_source": "https://platform.claude.com/docs/en/about-claude/pricing (retrieved 2026-10-04)",
+  "budget": "ledger ceiling set once, explicitly, from USD 49.932944 to USD 61.140097 (spend at change USD 31.140097) for at most USD 30 of experiment-007 spend; calibration sub-limit USD 8 and six runs",
+  "outcome": "initial calibration stopped by its gate (no helpers appeared when optional); revised phase: instructed reusable-function strategy, revised calibration (7 runs incl. one interrupted) and a 24-run evaluation",
+  "revised_evaluation": {
+   "comparison": "20261005T073045",
+   "git_head": "c391457c79a9ba1df91a56beedea56f8b02e494c",
+   "source_patch_sha256": "22333795cd3f133ec9229da6a4c7a2004afd5cd0d5ecbd891991a450f850478d",
+   "prompt_version": "2026-10-05.2",
+   "note": "same source as the revised validation triplet (20261005T072003); revised block 1 (20261005T070400) ran an earlier source (patch c7d1cbdf..., before the pressure-notice fix)"
+  }
+ },
+ "settings": {
+  "config": "configs/exp007.toml",
+  "model": "claude-opus-5-5",
+  "effort": "low",
+  "max_calls": 60,
+  "max_summary_calls": 20,
+  "summary_calls_in_max_calls": false,
+  "max_output_tokens": 4096,
+  "context_budget_tokens": 8000,
+  "conditions": [
+   "summary:on",
+   "clm_direct:on",
+   "clm_helpers:on"
+  ],
+  "calibration_tasks": [
+   "rounds-dev-1",
+   "rounds-dev-2"
+  ],
+  "evaluation_tasks": [
+   "rounds-eval-1",
+   "rounds-eval-2",
+   "rounds-eval-3",
+   "rounds-eval-4"
+  ],
+  "revised_config": "configs/exp007r.toml",
+  "revised_conditions": [
+   "summary:on",
+   "clm_direct:on",
+   "clm_reuse:on"
+  ],
+  "repetitions": 2
+ },
+ "runs": [
+  {
+   "run_id": "20261005T061432-summary-cacheon-rounds-dev-1-4a35",
+   "role": "calibration",
+   "note": "calibration block 0 position 0: summary on rounds-dev-1",
+   "phase": "initial-calibration"
+  },
+  {
+   "run_id": "20261005T061804-clm_direct-cacheon-rounds-dev-1-b3a5",
+   "role": "calibration",
+   "note": "calibration block 0 position 1: clm_direct on rounds-dev-1",
+   "phase": "initial-calibration"
+  },
+  {
+   "run_id": "20261005T062036-clm_helpers-cacheon-rounds-dev-1-34cd",
+   "role": "calibration",
+   "note": "calibration block 0 position 2: clm_helpers on rounds-dev-1",
+   "phase": "initial-calibration"
+  },
+  {
+   "run_id": "20261005T062320-clm_direct-cacheon-rounds-dev-2-fd51",
+   "role": "calibration",
+   "note": "calibration block 1 position 0: clm_direct on rounds-dev-2",
+   "phase": "initial-calibration"
+  },
+  {
+   "run_id": "20261005T062620-clm_helpers-cacheon-rounds-dev-2-066e",
+   "role": "calibration",
+   "note": "calibration block 1 position 1: clm_helpers on rounds-dev-2",
+   "phase": "initial-calibration"
+  },
+  {
+   "run_id": "20261005T062903-summary-cacheon-rounds-dev-2-2a08",
+   "role": "calibration",
+   "note": "calibration block 1 position 2: summary on rounds-dev-2",
+   "phase": "initial-calibration"
+  },
+  {
+   "run_id": "20261005T070400-summary-cacheon-rounds-dev-1-b73b",
+   "role": "calibration",
+   "phase": "revised-calibration",
+   "note": "revised block 1 (comparison 20261005T070400) position 0: summary on rounds-dev-1"
+  },
+  {
+   "run_id": "20261005T070816-clm_direct-cacheon-rounds-dev-1-d5f6",
+   "role": "calibration",
+   "phase": "revised-calibration",
+   "note": "revised block 1 (comparison 20261005T070400) position 1: clm_direct on rounds-dev-1"
+  },
+  {
+   "run_id": "20261005T071052-clm_reuse-cacheon-rounds-dev-1-9be4",
+   "role": "calibration",
+   "phase": "revised-calibration",
+   "note": "revised block 1 (comparison 20261005T070400) position 2: clm_reuse on rounds-dev-1"
+  },
+  {
+   "run_id": "20261005T071143-clm_direct-cacheon-rounds-dev-2-9275",
+   "role": "calibration",
+   "phase": "revised-calibration",
+   "note": "revised block 1: clm_direct on rounds-dev-2, interrupted by us (SIGINT) to fix the pressure-notice defect; not in the comparison record"
+  },
+  {
+   "run_id": "20261005T072003-clm_direct-cacheon-rounds-dev-2-93fb",
+   "role": "calibration",
+   "phase": "revised-calibration",
+   "note": "revised validation triplet (comparison 20261005T072003) position 0: clm_direct on rounds-dev-2"
+  },
+  {
+   "run_id": "20261005T072252-clm_reuse-cacheon-rounds-dev-2-daac",
+   "role": "calibration",
+   "phase": "revised-calibration",
+   "note": "revised validation triplet (comparison 20261005T072003) position 1: clm_reuse on rounds-dev-2"
+  },
+  {
+   "run_id": "20261005T072543-summary-cacheon-rounds-dev-2-6431",
+   "role": "calibration",
+   "phase": "revised-calibration",
+   "note": "revised validation triplet (comparison 20261005T072003) position 2: summary on rounds-dev-2"
+  },
+  {
+   "run_id": "20261005T073045-summary-cacheon-rounds-eval-1-2e35",
+   "role": "evaluation",
+   "phase": "revised-evaluation",
+   "note": "block 0 position 0: summary on rounds-eval-1 rep 1"
+  },
+  {
+   "run_id": "20261005T073428-clm_direct-cacheon-rounds-eval-1-4210",
+   "role": "evaluation",
+   "phase": "revised-evaluation",
+   "note": "block 0 position 1: clm_direct on rounds-eval-1 rep 1"
+  },
+  {
+   "run_id": "20261005T073731-clm_reuse-cacheon-rounds-eval-1-d06a",
+   "role": "evaluation",
+   "phase": "revised-evaluation",
+   "note": "block 0 position 2: clm_reuse on rounds-eval-1 rep 1"
+  },
+  {
+   "run_id": "20261005T074048-clm_direct-cacheon-rounds-eval-2-e0b4",
+   "role": "evaluation",
+   "phase": "revised-evaluation",
+   "note": "block 1 position 0: clm_direct on rounds-eval-2 rep 1"
+  },
+  {
+   "run_id": "20261005T074523-clm_reuse-cacheon-rounds-eval-2-d51b",
+   "role": "evaluation",
+   "phase": "revised-evaluation",
+   "note": "block 1 position 1: clm_reuse on rounds-eval-2 rep 1"
+  },
+  {
+   "run_id": "20261005T074838-summary-cacheon-rounds-eval-2-3412",
+   "role": "evaluation",
+   "phase": "revised-evaluation",
+   "note": "block 1 position 2: summary on rounds-eval-2 rep 1"
+  },
+  {
+   "run_id": "20261005T075320-clm_reuse-cacheon-rounds-eval-3-48d0",
+   "role": "evaluation",
+   "phase": "revised-evaluation",
+   "note": "block 2 position 0: clm_reuse on rounds-eval-3 rep 1"
+  },
+  {
+   "run_id": "20261005T075616-summary-cacheon-rounds-eval-3-a8d1",
+   "role": "evaluation",
+   "phase": "revised-evaluation",
+   "note": "block 2 position 1: summary on rounds-eval-3 rep 1"
+  },
+  {
+   "run_id": "20261005T075954-clm_direct-cacheon-rounds-eval-3-77c0",
+   "role": "evaluation",
+   "phase": "revised-evaluation",
+   "note": "block 2 position 2: clm_direct on rounds-eval-3 rep 1"
+  },
+  {
+   "run_id": "20261005T080240-clm_reuse-cacheon-rounds-eval-4-6d85",
+   "role": "evaluation",
+   "phase": "revised-evaluation",
+   "note": "block 3 position 0: clm_reuse on rounds-eval-4 rep 1"
+  },
+  {
+   "run_id": "20261005T080539-clm_direct-cacheon-rounds-eval-4-3436",
+   "role": "evaluation",
+   "phase": "revised-evaluation",
+   "note": "block 3 position 1: clm_direct on rounds-eval-4 rep 1"
+  },
+  {
+   "run_id": "20261005T080826-summary-cacheon-rounds-eval-4-26b6",
+   "role": "evaluation",
+   "phase": "revised-evaluation",
+   "note": "block 3 position 2: summary on rounds-eval-4 rep 1"
+  },
+  {
+   "run_id": "20261005T081240-summary-cacheon-rounds-eval-1-c289",
+   "role": "evaluation",
+   "phase": "revised-evaluation",
+   "note": "block 4 position 0: summary on rounds-eval-1 rep 2"
+  },
+  {
+   "run_id": "20261005T081649-clm_reuse-cacheon-rounds-eval-1-5476",
+   "role": "evaluation",
+   "phase": "revised-evaluation",
+   "note": "block 4 position 1: clm_reuse on rounds-eval-1 rep 2"
+  },
+  {
+   "run_id": "20261005T081957-clm_direct-cacheon-rounds-eval-1-a1f9",
+   "role": "evaluation",
+   "phase": "revised-evaluation",
+   "note": "block 4 position 2: clm_direct on rounds-eval-1 rep 2"
+  },
+  {
+   "run_id": "20261005T082251-clm_direct-cacheon-rounds-eval-2-29c7",
+   "role": "evaluation",
+   "phase": "revised-evaluation",
+   "note": "block 5 position 0: clm_direct on rounds-eval-2 rep 2"
+  },
+  {
+   "run_id": "20261005T082607-summary-cacheon-rounds-eval-2-286b",
+   "role": "evaluation",
+   "phase": "revised-evaluation",
+   "note": "block 5 position 1: summary on rounds-eval-2 rep 2"
+  },
+  {
+   "run_id": "20261005T083041-clm_reuse-cacheon-rounds-eval-2-bb5e",
+   "role": "evaluation",
+   "phase": "revised-evaluation",
+   "note": "block 5 position 2: clm_reuse on rounds-eval-2 rep 2"
+  },
+  {
+   "run_id": "20261005T083413-summary-cacheon-rounds-eval-3-7fcc",
+   "role": "evaluation",
+   "phase": "revised-evaluation",
+   "note": "block 6 position 0: summary on rounds-eval-3 rep 2"
+  },
+  {
+   "run_id": "20261005T083849-clm_direct-cacheon-rounds-eval-3-0108",
+   "role": "evaluation",
+   "phase": "revised-evaluation",
+   "note": "block 6 position 1: clm_direct on rounds-eval-3 rep 2"
+  },
+  {
+   "run_id": "20261005T084141-clm_reuse-cacheon-rounds-eval-3-0371",
+   "role": "evaluation",
+   "phase": "revised-evaluation",
+   "note": "block 6 position 2: clm_reuse on rounds-eval-3 rep 2"
+  },
+  {
+   "run_id": "20261005T084417-clm_direct-cacheon-rounds-eval-4-03fb",
+   "role": "evaluation",
+   "phase": "revised-evaluation",
+   "note": "block 7 position 0: clm_direct on rounds-eval-4 rep 2"
+  },
+  {
+   "run_id": "20261005T084658-clm_reuse-cacheon-rounds-eval-4-788a",
+   "role": "evaluation",
+   "phase": "revised-evaluation",
+   "note": "block 7 position 1: clm_reuse on rounds-eval-4 rep 2"
+  },
+  {
+   "run_id": "20261005T085011-summary-cacheon-rounds-eval-4-f7cf",
+   "role": "evaluation",
+   "phase": "revised-evaluation",
+   "note": "block 7 position 2: summary on rounds-eval-4 rep 2"
+  }
+ ],
+ "comparisons": [
+  "20261005T061432",
+  "20261005T070400",
+  "20261005T072003",
+  "20261005T073045"
+ ],
+ "comparison_phases": {
+  "20261005T061432": "initial-calibration",
+  "20261005T070400": "revised-calibration (block 1, stopped for a defect)",
+  "20261005T072003": "revised-calibration (validation triplet)",
+  "20261005T073045": "revised-evaluation"
+ },
+ "phases": {
+  "initial-calibration": "helpers optional (clm_helpers); configs/exp007.toml as run (original spill rule); comparison 20261005T061432; stopped by the original gate",
+  "revised-calibration": "instructed reusable editing functions (clm_reuse); configs/exp007r.toml (spill fix)",
+  "revised-evaluation": "instructed reusable editing functions (clm_reuse); configs/exp007r.toml (spill fix)"
+ }
+}

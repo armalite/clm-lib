@@ -1,6 +1,6 @@
 # clm-lib: Technical Specification
 
-Version: 1.8 | 5 October 2026
+Version: 1.9 | 5 October 2026
 
 Repository: `clm-lib` | Python package: `clm_lib` | CLI: `clm-lib`
 
@@ -12,6 +12,7 @@ Version history:
 - 1.4: experiment write-ups move to the results repository, and the exporter preserves human-maintained documents (§13). The blog notes and detailed results move there too (§9).
 - 1.5: adds a selectable, versioned summary-baseline policy (§14) for experiment 003. The original policy stays the default.
 - 1.6: adds a coding task family with changing requirements and a sandboxed evaluator (§15), and an explicit, recorded ledger-ceiling change.
+- 1.9: adds a multi-round incident task family, two CLM capability variants (direct editing only; reusable helpers allowed), a separate summary-call allowance, helper-evidence tiers and a three-condition schedule (§18).
 - 1.8: adds a versioned request layout (`blocks/1`), optional provider prompt caching with explicit breakpoints, per-run cache isolation, cache-aware accounting evidence, and a four-condition comparison schedule (§17).
 - 1.7: adds a second coding generator with interacting, partially changing rules, an evaluator with richer categories, exact type checks and stage snapshots (§16), a balanced comparison order, and per-task scorer metadata in comparisons and exports.
 
@@ -380,3 +381,24 @@ The summary baseline's policy is selected by `[baseline] policy`, and recorded i
   - `latency_s` and the cache usage on each response;
   - per run, `summary.json → request` (settings, run tag, first-call cache usage, usage, cost and latency per call kind).
 - **Four-condition comparisons:** `compare --conditions summary:off,summary:on,clm:off,clm:on` runs each instance and repetition block in Williams order. Each condition appears equally often in each position, and the schedule is written into the frozen block.
+
+## 18. Multi-round incidents and reusable context-management helpers
+
+- **Task family `incident-rounds-gen/1`** (`rounds.py`, kind `rounds`):
+  - **Evidence:** 10–12 hourly evidence rounds released by `advance` under `round-NN/`: service logs, incident-board updates and change records. Rounds never change and stay rereadable.
+  - **Answer contract:** a final answer lists incidents (cause, services, status, evidence references) and unresolved follow-up codes.
+  - **Scorer `rounds-score/1`:** deterministic checks for causes (with superseded and false-alarm detection), services, statuses (with stale detection), evidence groups including early change records, and open follow-ups.
+- **CLM capability variants** (modes `clm_direct`, `clm_helpers` and `clm_reuse`):
+  - **Shared text:** the CLM instructions without the reusable-helper sentence, plus one clause. `clm_direct` asks the model not to save context-management routines for later steps; `clm_helpers` permits saving, calling and revising them; `clm_reuse` (the revised experiment 007) instructs the model to perform its context edits through a reusable module it writes, while it still decides what to keep and when to edit.
+  - **Unchanged modes:** `clm` and `guided` keep their original text.
+  - **No runtime involvement:** the runtime never generates, schedules or invokes model-written code.
+- **Summary-call allowance:** `limits.summary_calls_in_max_calls = false` counts only task calls against `max_calls` and caps summary calls separately (`max_summary_calls`). The default (true) preserves earlier experiments.
+- **Helper evidence** (`helper_audit.py`):
+  - **Tiers:** created, executed, repeated accepted edits (at least two steps, confirmed in the next request), and substantive repeated logic (a static classification of the writing function, distinguishing wrappers).
+  - **Reuse findings** for saved context-management code reused in later steps, used to check `clm_direct` compliance.
+  - **Export:** tiers are exported per run.
+- **Spill fix:** `limits.spill_past_receipt = true` lets the spill rule move an oversized observation followed by its edit receipt. The default (false) keeps the original rule. It was found in experiment-007 calibration.
+- **Pressure-notice fix:** `limits.recheck_after_notice = true` re-checks the request after the runtime adds its CLM pressure notice. A request the notice pushes over the hard limit then gets the spill and recovery handling, instead of ending the run. The default (false) keeps the original behaviour. It was found in the revised experiment-007 calibration.
+- **Phases:** an experiment's runs may carry a `phase` label (and comparisons a `comparison_phases` entry) in `experiment.json`. The exporter copies it into the manifest and metrics rows, and the report labels runs and comparisons with it, so phases are never pooled.
+- **Helper categories:** for each helper function, the audit reports whether it writes supplied note content, selects, removes or reorganises existing entries, applies more substantial logic, or only reads. It also reports per-run adherence for `clm_reuse` (full, partial or none, by whether accepted edits happened in steps where saved context-management code executed) and for `clm_direct`.
+- **Three-condition schedules:** `compare --conditions` with three conditions uses the six permutations in turn, one per block, and records the realised order balance in the frozen block.

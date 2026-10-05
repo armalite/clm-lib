@@ -220,6 +220,23 @@ Ground truth exists only in memory until the run ends, then goes to `evaluator/`
 - **Cost:** `ModelPrice.cost` prices 1-hour writes separately when the provider reports the TTL breakdown.
 - **Tests:** `tests/test_caching.py` uses a scripted provider that simulates prefix caching with a 20-block lookback, which tests the accounting plumbing, plus a Docker test of edits under `blocks/1`.
 
+## Multi-round incidents and helper conditions (experiment 007)
+
+- **The rounds task:** `rounds.py` builds the per-round files and the truth together. The board's line numbers are recorded as updates are written, so evidence groups point at the exact lines. Log signature lines for each thread are collected while the logs are rendered.
+- **Prompts:**
+  - `prompts.CLM_SHARED` is `CLM_INSTRUCTIONS` minus its helper sentence, and `CLM_CLAUSE[mode]` is inserted before the ordering rule. `clm` and `guided` are untouched (hash-tested).
+  - `SUMMARY_SYSTEM_TOKEN_TAIL_ROUNDS` is the task-kind summariser instruction for the baseline.
+- **Separate summary cap:** `Runner._Run.task_calls()` excludes summary calls when `summary_calls_in_max_calls` is false; summary calls then stop at `max_summary_calls`. The status line reports task calls.
+- **Helper audit:**
+  - `helper_audit.audit_run` combines the saved file versions, the in-container runtime record (`helpers.uses`) and `report.edit_evidence`, giving tiers per context-management code file.
+  - `classify_function` is a deliberately simple AST heuristic: does the writing function read existing entries, reference entry fields, and filter, slice, sort or join them? Ambiguous cases are checked by hand.
+  - `reuse_findings` lists later-step reuse (runtime record, `exec` or `compile` of a read file, subprocess, import text).
+- **Revised experiment 007:**
+  - `CLM_CLAUSE["clm_reuse"]` adds the instructed strategy. The audit adds `categories`, `functions`, `repeated_execution`, `accepted_edit_steps`, `helper_assisted_edit_steps`, `helper_attributed_edit_steps` and `adherence`.
+  - `prepare_request` optionally re-checks after the pressure notice (`recheck_after_notice`).
+  - The exporter and report carry per-run `phase` labels.
+- **Tests:** `tests/test_rounds.py`.
+
 ## Design choices
 
 - **JSON-lines transcript with escaping** instead of nonce delimiters: it's simple and can't be forged.

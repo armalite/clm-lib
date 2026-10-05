@@ -268,6 +268,24 @@ def _metrics_row(run_id: str, role: str, src: Path, charged: float) -> dict[str,
         row[f"{kind}_cache_creation_tokens"] = k["cache_creation_input_tokens"]
         row[f"{kind}_uncached_input_tokens"] = k["input_tokens_uncached"]
         row[f"{kind}_latency_s"] = k["latency_s"]
+    if m["mode"] in ("clm_direct", "clm_helpers", "clm_reuse"):  # experiment 007 helper evidence
+        from .helper_audit import audit_run
+
+        a = audit_run(src)
+        row.update(
+            helper_files=json.dumps(sorted(a["files"])),
+            helper_created=a["tiers"]["created"],
+            helper_executed=a["tiers"]["executed"],
+            helper_repeated_accepted_edits=a["tiers"]["repeated_accepted_edits"],
+            helper_substantive_repeated=a["tiers"]["substantive_repeated"],
+            helper_reuse_findings=len(a["reuse_violations"]),
+            code_chars_all_steps=a["code_chars_all_steps"],
+            helper_repeated_execution=a["tiers"].get("repeated_execution"),
+            helper_categories=json.dumps(a.get("categories", [])),
+            accepted_edit_steps=len(a.get("accepted_edit_steps", [])),
+            helper_attributed_edit_steps=len(a.get("helper_attributed_edit_steps", [])),
+            adherence=a.get("adherence"),
+        )
     for k, v in (m.get("management") or {}).items():
         row[f"mgmt_{k}"] = json.dumps(v) if isinstance(v, (dict, list)) else v
     return row
@@ -326,6 +344,7 @@ def export_experiment(
         meta: dict[str, Any] = {
             "run_id": rid,
             "role": role,
+            **({"phase": r["phase"]} if r.get("phase") else {}),
             "note": r.get("note", ""),
             "artifact_path": f"artifacts/runs/{role}/{rid}",
             "sha256sums_sha256": _sha(sums_text(files).encode()),
@@ -356,7 +375,14 @@ def export_experiment(
                 meta["fixtures_match_generator"] = on_disk == inst.sha_upto(released)
                 tasks[rj["task"]] = rj["fixture_sha256"]
         runs_meta.append(meta)
-        rows.append(_metrics_row(rid, role, src, charged.get(rid, 0.0)))
+        row = _metrics_row(rid, role, src, charged.get(rid, 0.0))
+        if r.get("phase"):  # experiment phases (e.g. initial vs revised calibration) stay distinct
+            row = {
+                "run_id": rid,
+                "phase": r["phase"],
+                **{k: v for k, v in row.items() if k != "run_id"},
+            }
+        rows.append(row)
 
     for task, expected in sorted(tasks.items()):
         inst = generate(task)
@@ -409,6 +435,8 @@ def export_experiment(
         run_dirs=[runs_root / r["run_id"] for r in spec["runs"]],
         comparisons=[runs_root / "comparisons" / f"{n}.json" for n in spec.get("comparisons", [])],
         title=f"{exp_id}: generated report",
+        phases={r["run_id"]: r["phase"] for r in spec["runs"] if r.get("phase")},
+        comparison_phases=spec.get("comparison_phases"),
     )
     log["derived"]["report.md"] = _write_if_changed(out / "report.md", report)
     log["derived"]["metrics.json"] = _write_if_changed(

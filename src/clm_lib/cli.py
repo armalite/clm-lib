@@ -448,6 +448,10 @@ def code_state() -> dict[str, Any]:
 # Williams design for four conditions: each condition appears once in every position, and
 # each ordered pair of adjacent conditions occurs once across the four rows.
 WILLIAMS_4 = ((0, 1, 3, 2), (1, 2, 0, 3), (2, 3, 1, 0), (3, 0, 2, 1))
+# Three conditions: all six orders (two Latin squares), so over six blocks each condition is in
+# every position twice and each ordered adjacent pair occurs twice.
+ORDERS_3 = ((0, 1, 2), (1, 2, 0), (2, 0, 1), (2, 1, 0), (0, 2, 1), (1, 0, 2))
+CONDITION_MODES = ("summary", "clm", "clm_direct", "clm_helpers", "clm_reuse")
 
 
 def parse_conditions(text: str) -> list[tuple[str, bool]]:
@@ -455,8 +459,10 @@ def parse_conditions(text: str) -> list[tuple[str, bool]]:
     out = []
     for part in text.split(","):
         mode, _, cache = part.strip().partition(":")
-        if mode not in ("summary", "clm") or cache not in ("on", "off"):
-            raise ValueError(f"bad condition {part!r}; expected <summary|clm>:<on|off>")
+        if mode not in CONDITION_MODES or cache not in ("on", "off"):
+            raise ValueError(
+                f"bad condition {part!r}; expected <{'|'.join(CONDITION_MODES)}>:<on|off>"
+            )
         out.append((mode, cache == "on"))
     if len(set(out)) != len(out):
         raise ValueError("conditions must be distinct")
@@ -466,23 +472,32 @@ def parse_conditions(text: str) -> list[tuple[str, bool]]:
 def condition_schedule(
     tasks: list[str], reps: int, conditions: list[tuple[str, bool]]
 ) -> list[dict[str, Any]]:
-    """Four-condition run order: for task index i and repetition r, Williams row (i + r - 1)
-    mod 4. Repetitions are outer, tasks inner, as in the two-arm matrix."""
-    if len(conditions) != 4:
-        raise ValueError("the condition schedule needs exactly four conditions")
+    """Condition run order per (task, repetition) block. Four conditions: Williams row
+    (i + r - 1) mod 4 for task index i and repetition r. Three conditions: block b (repetitions
+    outer, tasks inner) uses order b mod 6 of ORDERS_3; balance is exact only for multiples of
+    six blocks, so callers should report the realised position counts."""
+    if len(conditions) not in (3, 4):
+        raise ValueError("the condition schedule needs three or four conditions")
     rows = []
     for rep in range(1, reps + 1):
         for index, task in enumerate(tasks):
-            row = WILLIAMS_4[(index + rep - 1) % 4]
+            block = (rep - 1) * len(tasks) + index
+            row: tuple[int, ...]
+            if len(conditions) == 4:
+                row_index = (index + rep - 1) % 4
+                row = WILLIAMS_4[row_index]
+            else:
+                row_index = block % 6
+                row = ORDERS_3[row_index]
             for position, c in enumerate(row):
                 mode, caching = conditions[c]
                 rows.append(
                     {
                         "task": task,
                         "rep": rep,
-                        "block": (rep - 1) * len(tasks) + index,
+                        "block": block,
                         "position": position,
-                        "williams_row": (index + rep - 1) % 4,
+                        "williams_row": row_index,
                         "mode": mode,
                         "caching": "on" if caching else "off",
                     }
@@ -523,7 +538,9 @@ def run_matrix(
         "generator_version": sorted({generate(t).generator_version for t in tasks}),
         # Per-task scorer versions (coding tasks use their own evaluator).
         "scorer_version": sorted({scorer_version_for(generate(t)) for t in tasks}),
-        "mode_order": "williams" if conditions else order,
+        "mode_order": ("williams" if len(conditions) == 4 else "all-orders-3")
+        if conditions
+        else order,
         "conditions": [f"{m}:{'on' if c else 'off'}" for m, c in conditions]
         if conditions
         else None,

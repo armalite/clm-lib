@@ -91,6 +91,14 @@ INSTANCES: dict[str, InstanceSpec] = {
         for split, n, seed0 in (("dev", 2, base + 100), ("eval", 6, base + 200))
         for i in range(1, n + 1)
     },
+    # Experiment 007: multi-service incident over 10-12 evidence rounds (rounds.py).
+    **{
+        f"rounds-{split}-{i}": InstanceSpec(
+            f"rounds-{split}-{i}", seed0 + i, "incident_rounds", f"rounds-{split}"
+        )
+        for split, n, seed0 in (("dev", 2, 7100), ("eval", 4, 7200))
+        for i in range(1, n + 1)
+    },
 }
 HELDOUT = ("heldout-1", "heldout-2", "heldout-3")
 STAGED_EVAL = ("staged-eval-1", "staged-eval-2", "staged-eval-3")
@@ -131,7 +139,7 @@ class TaskInstance:
     stages: list[dict[str, str]] = field(default_factory=list)
     stage_updates: list[str] = field(default_factory=list)
     generator_version: str = GENERATOR_VERSION
-    kind: str = "incident"  # "incident" | "coding"
+    kind: str = "incident"  # "incident" | "coding" | "rounds"
     # Files copied into the agent workspace at the start (coding tasks: the project skeleton).
     workspace_seed: dict[str, str] = field(default_factory=dict)
     # Scorer version for this task; empty means the task kind's default (see scorer_version_for).
@@ -880,6 +888,10 @@ def generate(name: str) -> TaskInstance:
         from .coding import generate_coding
 
         return generate_coding(spec)
+    if spec.scenario == "incident_rounds":
+        from .rounds import generate_rounds
+
+        return generate_rounds(spec)
     if spec.scenario == "coding_invoice2":
         from .coding2 import generate_coding2
 

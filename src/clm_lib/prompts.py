@@ -9,7 +9,10 @@ import json
 
 from .context import Entry
 
-PROMPT_VERSION = "2026-10-04.1"
+# 2026-10-05.1 adds the experiment-007 texts (CLM capability variants, the rounds task kind and
+# its summariser instruction). Every earlier text is unchanged (tests pin their hashes).
+# 2026-10-05.2 adds the revised experiment-007 clause (clm_reuse); all other texts unchanged.
+PROMPT_VERSION = "2026-10-05.2"
 
 PROTOCOL = """You are {agent_role} working through a strict JSON protocol.
 
@@ -33,13 +36,21 @@ what you need: search and filter (with line numbers) instead of printing whole f
 
 # Task-kind specific protocol fragments. The "incident" values reproduce the original text
 # byte for byte, so incident-task prompts (experiments 001-003) are unchanged.
-AGENT_ROLE = {"incident": "an investigation agent", "coding": "a software engineering agent"}
+AGENT_ROLE = {
+    "incident": "an investigation agent",
+    "coding": "a software engineering agent",
+    "rounds": "an investigation agent",
+}
 FINAL_EXAMPLE = {
     "incident": (
         '  {"action": "final", "answer": {"root_cause": "...", "required_value": "...", "remedy": "...",\n'
         '                                 "evidence_refs": ["path:line", ...]}}'
     ),
     "coding": '  {"action": "final", "answer": {"summary": "<what you implemented and changed>"}}',
+    "rounds": (
+        '  {"action": "final", "answer": {"incidents": [...], "unresolved": [...],\n'
+        '                                 "summary": "..."}}   (fields as specified in <task>)'
+    ),
 }
 
 CLM_INSTRUCTIONS = """
@@ -61,6 +72,32 @@ CONTEXT EDITING (you control your working context):
 - Editing is optional. When <runtime_status> reports pressure, manage the context before it runs
   out. Keep exact values, file:line references and open questions you still need.
 """
+
+# Experiment 007: the same CLM capabilities with one condition-specific clause each. The shared
+# part is CLM_INSTRUCTIONS without its sentence about reusable helper modules.
+CLM_SHARED = CLM_INSTRUCTIONS.replace(
+    " You may also write reusable helper\n  modules in /task/workspace and import them in later steps (the working directory is importable).",
+    "",
+)
+CLM_CLAUSE = {
+    "clm_direct": """- Context-management code (this run): write the code that inspects or rewrites context.json
+  within each step. You may define functions inside a step's code, but do not save
+  context-management functions or scripts to files for importing, running or exec-ing in later
+  steps. Saving notes and other non-executable files is fine, and so is saving code that only
+  analyses task files.
+""",
+    "clm_helpers": """- Context-management code (this run): you may also save reusable context-management functions
+  in /task/workspace (for example as a Python module), call them in later steps and revise them.
+  The working directory is importable. This is optional.
+""",
+    # Revised experiment 007: the reusable-function editing strategy is instructed, not optional.
+    "clm_reuse": """- Context-management code (this run): perform working-context edits through a reusable Python
+  module that you create in /task/workspace (the working directory is importable). Define
+  functions for the editing operations you need, and invoke the saved functions when you choose
+  to edit context. Reuse them for later edits and revise them if useful. You decide what
+  information to retain and how the functions work. You do not need to edit on every step.
+""",
+}
 
 SUMMARY_INSTRUCTIONS = """
 CONTEXT MANAGEMENT (automatic):
@@ -125,6 +162,20 @@ compact bullet points. Plain text only. Stay within the requested length; it is 
 room to continue."""
 
 
+SUMMARY_SYSTEM_TOKEN_TAIL_ROUNDS = """You compress an agent's working transcript. The agent is
+investigating a multi-service production incident whose evidence arrives in hourly rounds, and will
+keep working after your summary replaces the entries below. The transcript may include an earlier
+summary: carry its facts forward. Preserve, exactly and verbatim where relevant:
+- each incident thread: its current cause and any superseded cause, affected services, current
+  status and the record that set it;
+- follow-up items opened and closed, with their codes;
+- early facts that may matter later (change records, builds, configuration values);
+- every file:line reference needed as evidence, and observed log formats;
+- open questions and the next planned steps, including rounds still to be released.
+Drop repetition and raw log dumps. Use compact bullet points. Plain text only. Stay within the
+requested length; it is set so the agent has room to continue."""
+
+
 def system_prompt(
     mode: str,
     *,
@@ -146,6 +197,11 @@ def system_prompt(
     )
     if mode in ("clm", "guided"):
         text += CLM_INSTRUCTIONS.format(max_entries=max_entries, max_body=max_body)
+    elif mode in CLM_CLAUSE:
+        shared = CLM_SHARED.format(max_entries=max_entries, max_body=max_body)
+        marker = "- Ordering rule:"
+        before, after = shared.split(marker, 1)
+        text += before + CLM_CLAUSE[mode] + marker + after
     else:
         if summary_policy == "token-tail/1":
             text += SUMMARY_INSTRUCTIONS_TOKEN_TAIL.format(
