@@ -41,7 +41,9 @@ from .context import (
     unified_diff,
 )
 from .executor import DockerExecutor, ExecResult, Executor, ExecutorUnavailable
+from .jev import QUESTION_VERSION, JevError, ReviewItem, build_request
 from .prompts import (
+    JEV_CLAUSE,
     PROMPT_VERSION,
     SUMMARY_SYSTEM_TOKEN_TAIL_CODING,
     SUMMARY_SYSTEM_TOKEN_TAIL_ROUNDS,
@@ -102,6 +104,12 @@ class RunResult:
 
 @dataclass
 class _Counters:
+    # experiment 008 (host-mediated Jev context review)
+    jev_reviews: int = 0
+    jev_reviews_rejected: int = 0
+    jev_attempts: int = 0
+    jev_errors: int = 0
+    jev_retries: int = 0
     provider_calls: int = 0
     action_calls: int = 0
     repair_calls: int = 0
@@ -147,11 +155,23 @@ ROUNDS_ACTION_SCHEMA: dict[str, Any] = {
 CODING_FIELDS = ("summary",)
 
 
+def with_review_action(schema: dict[str, Any]) -> dict[str, Any]:
+    """Experiment 008: the action schema plus the optional review_context action."""
+    props = dict(schema["properties"])
+    props["action"] = {**props["action"], "enum": [*props["action"]["enum"], "review_context"]}
+    props["revision"] = {"type": "integer"}
+    props["entry_ids"] = {"type": "array", "items": {"type": "string"}}
+    props["update"] = {"type": "string"}
+    props["update_entry_id"] = {"type": "string"}
+    return {**schema, "properties": props}
+
+
 def parse_action(
     text: str,
     max_code_chars: int,
     allow_advance: bool = False,
     answer_fields: tuple[str, ...] = INCIDENT_FIELDS,
+    allow_review: bool = False,
 ) -> tuple[dict[str, Any] | None, str]:
     """Return (action, error). Only a whole-response JSON object is accepted."""
     raw = text.strip()
@@ -166,6 +186,19 @@ def parse_action(
         return None, "response JSON must be an object"
     kind = obj.get("action")
     if kind == "advance" and allow_advance:
+        return obj, ""
+    if kind == "review_context" and allow_review:
+        ids = obj.get("entry_ids")
+        if not isinstance(obj.get("revision"), int) or isinstance(obj.get("revision"), bool):
+            return None, "review_context needs an integer 'revision'"
+        if not isinstance(ids, list) or not ids or not all(isinstance(i, str) for i in ids):
+            return None, "review_context needs a non-empty list of string 'entry_ids'"
+        has_text, has_ref = (
+            isinstance(obj.get("update"), str),
+            isinstance(obj.get("update_entry_id"), str),
+        )
+        if has_text == has_ref:
+            return None, "review_context needs exactly one of 'update' or 'update_entry_id'"
         return obj, ""
     if kind == "execute":
         code = obj.get("code")
@@ -219,8 +252,13 @@ class Runner:
     live: bool
     runs_dir: Path = field(default_factory=lambda: Path("runs"))
     sleep: Any = time.sleep
+    # Experiment 008: optional Jev advisor (TypeSafeAdvisor or a test FakeAdvisor) and its price.
+    jev: Any = None
+    jev_price: Any = None
 
     def __post_init__(self) -> None:
+        if self.live and self.jev is not None and getattr(self.jev, "name", "") == "fake":
+            raise ValueError("a fake Jev advisor cannot be used for a live run")
         if self.live and self.provider.is_scripted:
             raise ValueError("a scripted provider cannot be used for a live run")
         if not self.live and not self.provider.is_scripted:
@@ -232,9 +270,15 @@ class Runner:
 
     # ------------------------------------------------------------------ run
     def run(
-        self, task: TaskInstance, mode: str, label: str = "", caching: bool | None = None
+        self,
+        task: TaskInstance,
+        mode: str,
+        label: str = "",
+        caching: bool | None = None,
+        jev: bool | None = None,
     ) -> RunResult:
-        """``caching`` overrides ``request.prompt_caching`` for this run (four-condition runs)."""
+        """``caching`` overrides ``request.prompt_caching`` for this run (four-condition runs);
+        ``jev`` overrides ``jev.enabled`` (experiment 008; CLM modes only)."""
         if mode not in MODES:
             raise ValueError(f"mode must be one of {MODES}")
         req = self.cfg.request
@@ -244,8 +288,14 @@ class Runner:
         # blocks/1 run ids carry the caching condition so the four conditions stay distinct.
         cond = f"-cache{'on' if on else 'off'}" if req.layout == "blocks/1" else ""
         stamp = f"{datetime.now(UTC):%Y%m%dT%H%M%S}"
-        run_id = f"{stamp}-{mode}{cond}-{task.spec.name}-{secrets.token_hex(2)}"
-        return _Run(self, task, mode, run_id, label, on).execute()
+        jev_on = self.cfg.jev.enabled if jev is None else jev
+        if jev_on and mode not in CLM_MODES:
+            raise ValueError("Jev context review is available to CLM modes only")
+        if jev_on and self.jev is None:
+            raise ValueError("Jev context review requested but no Jev advisor is configured")
+        tag = "-jev" if jev_on else ""
+        run_id = f"{stamp}-{mode}{cond}{tag}-{task.spec.name}-{secrets.token_hex(2)}"
+        return _Run(self, task, mode, run_id, label, on, jev_on).execute()
 
 
 class _Run:
@@ -257,8 +307,14 @@ class _Run:
         run_id: str,
         label: str,
         caching: bool = False,
+        jev_on: bool = False,
     ) -> None:
         self.r = runner
+        self.jev_on = jev_on
+        self.reviews: list[dict[str, Any]] = []
+        self.edit_log: list[dict[str, Any]] = []
+        self.jev_seq = 0
+        self.jev_usage = {"input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0, "latency_s": 0.0}
         self.cfg = runner.cfg
         self.lim = runner.cfg.limits
         self.task = task
@@ -316,6 +372,8 @@ class _Run:
             tail_tokens=self.policy.tail_tokens,
             task_kind=task.kind,
         )
+        if self.jev_on:
+            self.system += JEV_CLAUSE.format(max_reviews=self.cfg.jev.max_reviews)
         # Request layout, caching and run isolation (SPEC section 17).
         rq = self.cfg.request
         self.layout = rq.layout
@@ -358,6 +416,10 @@ class _Run:
             f"working context: {len(entries)} entries, {total_chars(entries)} chars "
             f"(~{self.cpt:.2f} chars/token)",
         ]
+        if self.lim.status_shows_revision:
+            lines.append(f"context revision {self.store.current.number}")
+        if self.jev_on:
+            lines.append(f"context reviews used {self.c.jev_reviews}/{self.cfg.jev.max_reviews}")
         if pressure and self.clm:
             lines.append(
                 "PRESSURE: the request is above the pressure threshold. Manage your "
@@ -1114,6 +1176,16 @@ class _Run:
             chars_before=total_chars(out.before.entries),
             chars_after=total_chars(out.after.entries),
         )
+        self.edit_log.append(
+            {
+                "step": self.step,
+                "before_revision": out.before.number,
+                "after_revision": out.after.number,
+                "removed": removed,
+                "rewritten": rewritten,
+                "added": added,
+            }
+        )
         self._save_revision()
 
         def ids(xs: list[str]) -> str:
@@ -1141,6 +1213,8 @@ class _Run:
         )
         fields = CODING_FIELDS if coding else ROUNDS_FIELDS if rounds else INCIDENT_FIELDS
         staged = self.task.staged
+        if self.jev_on:
+            schema = with_review_action(schema)
         while True:
             self.step += 1
             user, est, pressure, recovery = self.prepare_request()
@@ -1162,7 +1236,9 @@ class _Run:
                 resp.usage.cache_creation_input_tokens
             )
             self.timeline[-1]["uncached_input_tokens"] = resp.usage.input_tokens
-            action, err = parse_action(resp.text, self.lim.max_code_chars, staged, fields)
+            action, err = parse_action(
+                resp.text, self.lim.max_code_chars, staged, fields, self.jev_on
+            )
             if action is None:
                 self.trace.event(
                     "invalid_action", step=self.step, error=err, stop_reason=resp.stop_reason
@@ -1174,13 +1250,18 @@ class _Run:
                 )
                 repair = self.action_request(user, "repair", schema, note)
                 resp = self.call(repair, "repair", {"error": err})
-                action, err = parse_action(resp.text, self.lim.max_code_chars, staged, fields)
+                action, err = parse_action(
+                    resp.text, self.lim.max_code_chars, staged, fields, self.jev_on
+                )
                 if action is None:
                     self.trace.event("invalid_action", step=self.step, error=err, after_repair=True)
                     return "failed_protocol", f"invalid response after repair: {err}"
             self.timeline[-1]["action"] = action["action"]
             if action["action"] == "advance":
                 self.advance_step(action)
+                continue
+            if action["action"] == "review_context":
+                self.review_step(action)
                 continue
             if action["action"] == "final":
                 if staged and self.stage < self.task.n_stages:
@@ -1231,6 +1312,228 @@ class _Run:
             self.step,
         )
         self._save_revision()
+
+    # ---------------------------------------------------- Jev context review (exp 008)
+    def _validate_review(
+        self, action: dict[str, Any]
+    ) -> tuple[list[ReviewItem], str, str, int] | str:
+        """(items, update text, update source, revision) or an error message."""
+        j = self.cfg.jev
+        if self.c.jev_reviews >= j.max_reviews:
+            return f"review limit reached ({j.max_reviews} per task)"
+        number = action["revision"]
+        rev = next((r for r in self.store.revisions if r.number == number), None)
+        if rev is None:
+            return (
+                f"revision {number} does not exist (current revision {self.store.current.number})"
+            )
+        ids: list[str] = action["entry_ids"]
+        if len(ids) > j.max_entries:
+            return f"{len(ids)} entries requested; at most {j.max_entries} per review"
+        if len(set(ids)) != len(ids):
+            return "entry_ids contains duplicates"
+        by_id = {e.id: e for e in rev.entries}
+        missing = [i for i in ids if i not in by_id]
+        if missing:
+            return f"entry ids not in revision {number}: {missing[:10]}"
+        if "update_entry_id" in action:
+            ref = action["update_entry_id"]
+            if ref not in by_id:
+                return f"update_entry_id {ref!r} is not in revision {number}"
+            update, source = by_id[ref].body, f"entry {ref} of revision {number}"
+        else:
+            update, source = action["update"], "text supplied in the action"
+        if not update.strip():
+            return "the update is empty"
+        if len(update) > j.max_update_chars:
+            return f"the update is {len(update)} chars; at most {j.max_update_chars}"
+        return [ReviewItem(i, by_id[i].body) for i in ids], update, source, number
+
+    def _jev_attempts(self, body: dict[str, Any]) -> tuple[Any, str | None]:
+        """Call Jev with the configured bounded retries; every attempt is in the ledger."""
+        j = self.cfg.jev
+        last = None
+        for attempt in range(j.retries + 1):
+            price = self.r.jev_price
+            reserve = price.max_cost(body) if price else 0.0
+            try:
+                res = self.r.ledger.reserve(reserve, self.run_id, "jev")
+            except BudgetExhausted as exc:
+                raise _Stop("budget_exhausted", str(exc)) from exc
+            self.jev_seq += 1
+            self.c.jev_attempts += 1
+            rec: dict[str, Any] = {"attempt": attempt, "request": body, "model_requested": j.model}
+            try:
+                resp, latency = self.r.jev.call(body)
+            except JevError as exc:
+                actual = 0.0 if exc.billing == "none" else None
+                entry = self.r.ledger.settle(
+                    res,
+                    actual_usd=actual,
+                    status=f"error:{exc.kind}",
+                    note=json.dumps({"provider": "typesafe", "error": exc.kind}),
+                )
+                self.u.cost_usd += entry["charged_usd"]
+                self.jev_usage["cost_usd"] += entry["charged_usd"]
+                if actual is None:
+                    self.u.assumed_cost_usd += entry["charged_usd"]
+                self.c.jev_errors += 1
+                rec.update(error=str(exc)[:300], charged_usd=entry["charged_usd"])
+                self.trace.write_json(f"jev/{self.jev_seq:04d}.json", rec)
+                self.trace.event("jev_error", step=self.step, attempt=attempt, error=str(exc)[:300])
+                last = str(exc)[:300]
+                if exc.retryable and attempt < j.retries:
+                    self.c.jev_retries += 1
+                    self.r.sleep(min(10.0, 1.0 * 2**attempt))
+                    continue
+                return None, last
+            cost = price.cost(resp.input_tokens, resp.output_tokens) if price else 0.0
+            entry = self.r.ledger.settle(
+                res,
+                actual_usd=cost,
+                status="ok",
+                note=json.dumps(
+                    {
+                        "provider": "typesafe",
+                        "model": resp.model,
+                        "input_tokens": resp.input_tokens,
+                        "output_tokens": resp.output_tokens,
+                    }
+                ),
+            )
+            self.u.cost_usd += entry["charged_usd"]
+            for k, v in (
+                ("input_tokens", resp.input_tokens),
+                ("output_tokens", resp.output_tokens),
+            ):
+                self.jev_usage[k] += v
+            self.jev_usage["cost_usd"] += entry["charged_usd"]
+            self.jev_usage["latency_s"] += latency
+            rec.update(
+                response=resp.raw,
+                model=resp.model,
+                latency_s=round(latency, 4),
+                usage={"input_tokens": resp.input_tokens, "output_tokens": resp.output_tokens},
+                cost_usd=round(cost, 8),
+            )
+            self.trace.write_json(f"jev/{self.jev_seq:04d}.json", rec)
+            return resp, None
+        return None, last
+
+    def review_step(self, action: dict[str, Any]) -> None:
+        """Advice only: the context is never changed here (the runtime appends the step's
+        action and observation, as for every step)."""
+        thought = str(action.get("thought", ""))[:1000]
+        checked = self._validate_review(action)
+        record: dict[str, Any] = {
+            "step": self.step,
+            "request": {
+                k: action.get(k) for k in ("revision", "entry_ids", "update", "update_entry_id")
+            },
+        }
+        if isinstance(checked, str):
+            self.c.jev_reviews_rejected += 1
+            record.update(status="rejected", error=checked)
+            obs = f"Context review not performed: {checked}. Your context is unchanged."
+        else:
+            items, update, source, number = checked
+            self.c.jev_reviews += 1
+            j = self.cfg.jev
+            answers: dict[str, float | None] = {}
+            models: set[str] = set()
+            errors: list[str] = []
+            for start in range(0, len(items), j.batch_size):
+                batch = items[start : start + j.batch_size]
+                body = build_request(update, batch, j.model)
+                resp, err = self._jev_attempts(body)
+                for i, item in enumerate(batch):
+                    answers[item.entry_id] = resp.probabilities.get(f"e{i}") if resp else None
+                if resp:
+                    models.add(resp.model)
+                if err:
+                    errors.append(err)
+            answered = sum(1 for v in answers.values() if v is not None)
+            lines = [
+                f"Context review advice ({QUESTION_VERSION}; Jev {', '.join(sorted(models)) or 'unavailable'}; "
+                f"revision {number}; update: {source}). Probability that the update requires "
+                "reconsidering a current assertion or planned action in each entry. Advisory only: "
+                "your context is unchanged.",
+            ]
+            lines += [
+                f"  {eid}: {p:.2f}" if p is not None else f"  {eid}: no answer"
+                for eid, p in answers.items()
+            ]
+            lines.append(f"Coverage: {answered} of {len(answers)} entries answered.")
+            if errors:
+                lines.append(f"Service problem: {errors[-1]}")
+            obs = "\n".join(lines)
+            record.update(
+                status="ok" if answered else "failed",
+                revision=number,
+                update_source=source,
+                update_chars=len(update),
+                entry_ids=[i.entry_id for i in items],
+                answers=answers,
+                models=sorted(models),
+                errors=errors,
+            )
+        self.reviews.append(record)
+        self.trace.event("context_review", **record)
+        req = {k: v for k, v in action.items() if k != "thought"}
+        self.store.append(
+            [
+                Entry(
+                    f"s{self.step}.act",
+                    "assistant",
+                    f"[step {self.step}] review_context {json.dumps(req)[:1500]}\nthought: {thought}",
+                ),
+                Entry(f"s{self.step}.obs", "observation", obs),
+            ],
+            "runtime",
+            self.step,
+        )
+        self._save_revision()
+
+    def jev_summary(self) -> dict[str, Any]:
+        """Reviews, usage, and which flagged entries were later changed by accepted edits.
+        "Followed by an edit" is temporal association only, not attribution to the advice."""
+        reviews = []
+        for i, r in enumerate(self.reviews):
+            nxt = self.reviews[i + 1]["step"] if i + 1 < len(self.reviews) else 10**9
+            later = [e for e in self.edit_log if r["step"] < e["step"] < nxt]
+            changed = {x for e in later for x in (*e["removed"], *e["rewritten"])}
+            ans = r.get("answers") or {}
+            reviews.append(
+                {
+                    **r,
+                    "reporting_threshold": 0.5,
+                    "flagged": [k for k, v in ans.items() if v is not None and v >= 0.5],
+                    "later_accepted_edit_steps": [e["step"] for e in later],
+                    "flagged_then_changed": sorted(
+                        k for k, v in ans.items() if v is not None and v >= 0.5 and k in changed
+                    ),
+                    "unflagged_then_changed": sorted(
+                        k for k, v in ans.items() if (v is None or v < 0.5) and k in changed
+                    ),
+                }
+            )
+        return {
+            "enabled": self.jev_on,
+            "question_version": QUESTION_VERSION if self.jev_on else None,
+            "model_requested": self.cfg.jev.model if self.jev_on else None,
+            "reviews": len(self.reviews) - self.c.jev_reviews_rejected,
+            "reviews_rejected": self.c.jev_reviews_rejected,
+            "attempts": self.c.jev_attempts,
+            "errors": self.c.jev_errors,
+            "retries": self.c.jev_retries,
+            "usage_typesafe_tokens": {
+                "input_tokens": self.jev_usage["input_tokens"],
+                "output_tokens": self.jev_usage["output_tokens"],
+            },
+            "cost_usd": round(self.jev_usage["cost_usd"], 8),
+            "latency_s": round(self.jev_usage["latency_s"], 4),
+            "review_records": reviews,
+        }
 
     def premature_final_step(self, action: dict[str, Any]) -> None:
         self.c.premature_finals += 1
@@ -1480,6 +1783,10 @@ class _Run:
             },
             "cost": {
                 "incurred_usd": round(u.cost_usd, 6),
+                "by_provider": {
+                    "anthropic": round(u.cost_usd - self.jev_usage["cost_usd"], 6),
+                    "typesafe": round(self.jev_usage["cost_usd"], 8),
+                },
                 "of_which_assumed_from_reservation_usd": round(u.assumed_cost_usd, 6),
                 "reserved_total_usd": round(u.reserved_usd_total, 6),
                 "basis": "provider usage x dated price"
@@ -1490,6 +1797,7 @@ class _Run:
             },
             "peak_request_tokens_est": self.peak_req_est,
             "peak_request_input_tokens_reported": self.peak_req_reported,
+            "jev": self.jev_summary(),
             "request": self.request_summary(),
             "peak_working_context_chars": self.peak_ctx_chars,
             "context_revisions": len(self.store.revisions) - 1,

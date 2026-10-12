@@ -237,6 +237,15 @@ Ground truth exists only in memory until the run ends, then goes to `evaluator/`
   - The exporter and report carry per-run `phase` labels.
 - **Tests:** `tests/test_rounds.py`.
 
+## Optional Jev context review (experiment 008)
+
+- **Boundary:** the sandbox keeps no network and no credentials. `review_context` is handled by `_Run.review_step` on the host: it runs `_validate_review` against `ContextStore.revisions`, builds requests with `jev.build_request`, and calls `_jev_attempts`, which does the ledger reserve and settle per attempt, the bounded retries and the trace writes. It then appends the advice observation through the normal runtime append, and never through an edit.
+- **Client:** `jev.TypeSafeAdvisor` uses stdlib HTTP with an injectable transport for tests. It does not use the TypeSafe SDK, whose default two retries would be hidden from the ledger. `jev.FakeAdvisor` is the test double, and a live `Runner` refuses it.
+- **Linking advice to edits:** `_Run.edit_log` records each accepted edit's removed and rewritten ids. `jev_summary()` relates them to the preceding review: flagged then changed, and unflagged then changed. This is temporal association only.
+- **Conditions:** a `+jev` suffix on a condition mode (`clm_helpers+jev:on`) turns Jev on for that run; conditions without it are explicitly off. Two-condition schedules alternate by (instance + repetition). Run ids carry `-jev`.
+- **Exports:** they add `jev_*` metrics columns and `cost_anthropic_usd` / `cost_typesafe_usd`, and copy `diagnostics: [...]` from `runs/jev-diagnostic/` to `artifacts/diagnostics/` (immutable). Reports label runs "+ Jev review".
+- **Tests:** `tests/test_jev.py`.
+
 ## Design choices
 
 - **JSON-lines transcript with escaping** instead of nonce delimiters: it's simple and can't be forged.

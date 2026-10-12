@@ -12,7 +12,9 @@ from .context import Entry
 # 2026-10-05.1 adds the experiment-007 texts (CLM capability variants, the rounds task kind and
 # its summariser instruction). Every earlier text is unchanged (tests pin their hashes).
 # 2026-10-05.2 adds the revised experiment-007 clause (clm_reuse); all other texts unchanged.
-PROMPT_VERSION = "2026-10-05.2"
+# 2026-10-12.1 adds the optional experiment-008 Jev review notice (JEV_CLAUSE); all other texts
+# unchanged.
+PROMPT_VERSION = "2026-10-12.1"
 
 PROTOCOL = """You are {agent_role} working through a strict JSON protocol.
 
@@ -160,6 +162,21 @@ forward. Preserve, exactly where relevant:
 Drop repetition, full code listings and raw test dumps (the code is in the workspace files). Use
 compact bullet points. Plain text only. Stay within the requested length; it is set so the agent has
 room to continue."""
+
+
+# Experiment 008: neutral availability notice for the optional Jev context review action.
+JEV_CLAUSE = """
+CONTEXT REVIEW ADVICE (optional, this run):
+- Reply {{"action": "review_context", "revision": <context revision number from <runtime_status>>,
+  "entry_ids": ["<id>", ...], "update": "<the new information>"}} to ask a fast classifier (Jev)
+  whether that update requires reconsidering a current assertion or planned action in each listed
+  entry of that context revision. Instead of "update" you may give "update_entry_id": the id of
+  an entry in the same revision that contains the update.
+- The runtime sends only the update text and the listed entries' text. The next observation gives
+  one probability per entry. The advice is probabilistic and can be wrong; it never edits your
+  context, and you decide whether and how to edit. A review uses one of your model calls (at most
+  {max_reviews} reviews per task); if the service fails you get a notice instead of advice.
+"""
 
 
 SUMMARY_SYSTEM_TOKEN_TAIL_ROUNDS = """You compress an agent's working transcript. The agent is

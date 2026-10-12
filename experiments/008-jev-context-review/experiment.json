@@ -1,0 +1,34 @@
+{
+ "id": "008-jev-context-review",
+ "title": "Can a fast decision model help an agent manage its own context? (optional Jev context review)",
+ "provenance": {
+  "source_repo": "https://github.com/armalite/clm-lib",
+  "base_commit": "2938da5",
+  "status": "implemented; not run (no TypeSafe API key in the 2026-10-12 session)",
+  "diagnostic_cases": "experiments/008-jev-context-review/diagnostic-cases-v1.json (sha256 68860b7579fdeb7bd08f9ff60c9159802394bd0a9322a02f00600d1d3ff9d843)",
+  "question_version": "jev-review/1",
+  "jev_model": "jev-1.13.0",
+  "prompt_version": "2026-10-12.1",
+  "budget": "ledger ceiling set explicitly to USD 56.993902 (spend USD 46.993902 + USD 10) for this session; no paid call made"
+ },
+ "settings": {
+  "config": "configs/exp008.toml",
+  "conditions": [
+   "clm_helpers:on",
+   "clm_helpers+jev:on"
+  ],
+  "pilot_tasks": [
+   "rounds-dev-1",
+   "rounds-dev-2"
+  ],
+  "pilot_repetitions": 1
+ },
+ "phases": {
+  "diagnostic": "Jev component diagnostic on the frozen labelled cases (not run)",
+  "pilot": "2 development instances x 2 conditions (not run)",
+  "evaluation": "planned only; needs fresh instances and separate authorisation"
+ },
+ "runs": [],
+ "comparisons": [],
+ "diagnostics": []
+}

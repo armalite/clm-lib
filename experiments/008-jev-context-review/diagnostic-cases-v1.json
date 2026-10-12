@@ -1,0 +1,313 @@
+{
+ "version": "jev-diag/1",
+ "question_version": "jev-review/1",
+ "labelled": "2026-10-12, before any Jev answer was obtained (no TypeSafe access in this session)",
+ "reporting_threshold": 0.5,
+ "label_meaning": {
+  "affected": "the update requires reconsidering a current assertion or planned action in the entry (not necessarily that the entry is wrong or should be deleted)",
+  "unaffected": "it does not",
+  "ambiguous": "reasonable readers could disagree; reported separately and not counted as hits or errors"
+ },
+ "cases": [
+  {
+   "id": "dev-1",
+   "split": "dev",
+   "update_id": "D1",
+   "update": "Board round 03: Thread A opened: DNS lookups failing for a dependency confirmed as the cause (code DNS_RESOLUTION) in checkout-api; impact also on inventory-svc. Status: ongoing.",
+   "entry": "Initial guess: checkout-api errors are caused by deploy CHG-110; next step is to diff its config.",
+   "label": "affected",
+   "kind": "explicit_replacement",
+   "justification": "The board now confirms DNS_RESOLUTION as the cause, which replaces the entry's guessed cause and its planned next step."
+  },
+  {
+   "id": "dev-2",
+   "split": "dev",
+   "update_id": "D1",
+   "update": "Board round 03: Thread A opened: DNS lookups failing for a dependency confirmed as the cause (code DNS_RESOLUTION) in checkout-api; impact also on inventory-svc. Status: ongoing.",
+   "entry": "Follow-ups open: ALERT_TUNING.",
+   "label": "unaffected",
+   "kind": "unrelated",
+   "justification": "The update concerns thread A's cause and services, not follow-up items."
+  },
+  {
+   "id": "dev-3",
+   "split": "dev",
+   "update_id": "D2",
+   "update": "Board round 06: Thread A status: mitigated (errors reduced after the applied change; monitoring).",
+   "entry": "Thread A (checkout-api, inventory-svc): status ongoing (round-03/board.md:3).",
+   "label": "affected",
+   "kind": "explicit_replacement",
+   "justification": "The status ongoing is replaced by mitigated."
+  },
+  {
+   "id": "dev-4",
+   "split": "dev",
+   "update_id": "D2",
+   "update": "Board round 06: Thread A status: mitigated (errors reduced after the applied change; monitoring).",
+   "entry": "Thread A cause DNS_RESOLUTION confirmed (round-03/board.md:3).",
+   "label": "unaffected",
+   "kind": "partial_unchanged",
+   "justification": "The status update leaves the cause unchanged; the entry asserts only the cause."
+  },
+  {
+   "id": "dev-5",
+   "split": "dev",
+   "update_id": "D3",
+   "update": "Board round 07: Follow-up OPEN DATA_BACKFILL: backfill of records missed during the incident.",
+   "entry": "Open follow-ups: ALERT_TUNING.",
+   "label": "ambiguous",
+   "kind": "additive_list",
+   "justification": "A new follow-up is added; the entry is not contradicted, but if it is read as the complete list of open items it is now incomplete."
+  },
+  {
+   "id": "dev-6",
+   "split": "dev",
+   "update_id": "D3",
+   "update": "Board round 07: Follow-up OPEN DATA_BACKFILL: backfill of records missed during the incident.",
+   "entry": "Thread B services: shipping-svc.",
+   "label": "unaffected",
+   "kind": "unrelated",
+   "justification": "Follow-ups do not change thread B's services."
+  },
+  {
+   "id": "f-01",
+   "split": "frozen",
+   "update_id": "F1",
+   "update": "Board round 08: Thread B root cause revised: an upstream provider rejecting requests with 429 (UPSTREAM_RATE_LIMIT); this supersedes the earlier suspicion of CACHE_STAMPEDE.",
+   "entry": "Thread B (payments-svc): suspected cause CACHE_STAMPEDE per round-04/board.md:3; next: confirm via cache miss logs.",
+   "label": "affected",
+   "kind": "explicit_replacement",
+   "justification": "The suspected cause is explicitly superseded, and the planned confirmation targets the superseded cause."
+  },
+  {
+   "id": "f-02",
+   "split": "frozen",
+   "update_id": "F1",
+   "update": "Board round 08: Thread B root cause revised: an upstream provider rejecting requests with 429 (UPSTREAM_RATE_LIMIT); this supersedes the earlier suspicion of CACHE_STAMPEDE.",
+   "entry": "Thread A (auth-svc, search-api): DB_POOL_EXHAUSTED confirmed at round-03/board.md:3; status mitigated at round-05/board.md:3.",
+   "label": "unaffected",
+   "kind": "unrelated",
+   "justification": "The update concerns thread B only."
+  },
+  {
+   "id": "f-03",
+   "split": "frozen",
+   "update_id": "F1",
+   "update": "Board round 08: Thread B root cause revised: an upstream provider rejecting requests with 429 (UPSTREAM_RATE_LIMIT); this supersedes the earlier suspicion of CACHE_STAMPEDE.",
+   "entry": "History: at round 4 the board first suspected CACHE_STAMPEDE for thread B.",
+   "label": "unaffected",
+   "kind": "historical",
+   "justification": "The entry is a correct historical statement about what was first suspected; the revision does not make it wrong."
+  },
+  {
+   "id": "f-04",
+   "split": "frozen",
+   "update_id": "F1",
+   "update": "Board round 08: Thread B root cause revised: an upstream provider rejecting requests with 429 (UPSTREAM_RATE_LIMIT); this supersedes the earlier suspicion of CACHE_STAMPEDE.",
+   "entry": "Open follow-ups: ALERT_TUNING, RUNBOOK_UPDATE, VENDOR_TICKET.",
+   "label": "unaffected",
+   "kind": "unrelated",
+   "justification": "A cause revision does not change follow-up items."
+  },
+  {
+   "id": "f-05",
+   "split": "frozen",
+   "update_id": "F1",
+   "update": "Board round 08: Thread B root cause revised: an upstream provider rejecting requests with 429 (UPSTREAM_RATE_LIMIT); this supersedes the earlier suspicion of CACHE_STAMPEDE.",
+   "entry": "Notes R1-R5: auth-svc db pool exhausted (thread A); thread B on payments-svc suspected CACHE_STAMPEDE; checkout-api added to thread B in round 5; CHG-120 sets http.max_inflight=0 on notify-worker.",
+   "label": "affected",
+   "kind": "multi_fact",
+   "justification": "One of several facts (thread B's suspected cause) is superseded; the other facts remain valid."
+  },
+  {
+   "id": "f-06",
+   "split": "frozen",
+   "update_id": "F2",
+   "update": "Board round 05: Thread B update: affected services now also include checkout-api; cause and status unchanged.",
+   "entry": "Thread B: services payments-svc; status ongoing; suspected cause CACHE_STAMPEDE.",
+   "label": "affected",
+   "kind": "partial_change",
+   "justification": "The services list gains checkout-api; the cause and status in the entry remain valid."
+  },
+  {
+   "id": "f-07",
+   "split": "frozen",
+   "update_id": "F2",
+   "update": "Board round 05: Thread B update: affected services now also include checkout-api; cause and status unchanged.",
+   "entry": "Thread B suspected cause: CACHE_STAMPEDE (round-04/board.md:3).",
+   "label": "unaffected",
+   "kind": "partial_unchanged",
+   "justification": "The update states that the cause is unchanged; the entry asserts only the cause."
+  },
+  {
+   "id": "f-08",
+   "split": "frozen",
+   "update_id": "F3",
+   "update": "Board round 08: Thread A status: resolved (no recurrence for two hours).",
+   "entry": "Thread A status: mitigated (round-05/board.md:3); keep monitoring auth-svc pool waits.",
+   "label": "affected",
+   "kind": "explicit_replacement",
+   "justification": "The status mitigated is replaced by resolved, and the monitoring plan rests on the superseded status."
+  },
+  {
+   "id": "f-09",
+   "split": "frozen",
+   "update_id": "F3",
+   "update": "Board round 08: Thread A status: resolved (no recurrence for two hours).",
+   "entry": "Thread A cause DB_POOL_EXHAUSTED confirmed at round-03/board.md:3.",
+   "label": "unaffected",
+   "kind": "partial_unchanged",
+   "justification": "Resolving the thread does not change its confirmed cause."
+  },
+  {
+   "id": "f-10",
+   "split": "frozen",
+   "update_id": "F3",
+   "update": "Board round 08: Thread A status: resolved (no recurrence for two hours).",
+   "entry": "CHG-143 APPLIED: mitigation for thread A deployed to auth-svc (round-05/changes.md:4).",
+   "label": "unaffected",
+   "kind": "historical",
+   "justification": "The applied change remains a correct historical record."
+  },
+  {
+   "id": "f-11",
+   "split": "frozen",
+   "update_id": "F4",
+   "update": "Board round 10: Follow-up CLOSED CAPACITY_REVIEW.",
+   "entry": "Open follow-ups: CAPACITY_REVIEW, CUSTOMER_COMMS.",
+   "label": "affected",
+   "kind": "explicit_replacement",
+   "justification": "CAPACITY_REVIEW is closed, so the entry's list of open items is now partly wrong."
+  },
+  {
+   "id": "f-12",
+   "split": "frozen",
+   "update_id": "F4",
+   "update": "Board round 10: Follow-up CLOSED CAPACITY_REVIEW.",
+   "entry": "Thread C (notify-worker): ongoing; config validation failures key=http.max_inflight value=0.",
+   "label": "unaffected",
+   "kind": "unrelated",
+   "justification": "Closing a follow-up does not change thread C."
+  },
+  {
+   "id": "f-13",
+   "split": "frozen",
+   "update_id": "F5",
+   "update": "Round 09 log, notify-worker: ERROR config validation failed key=http.max_inflight value=0 build=5.23.1 (repeated on several pods).",
+   "entry": "Round 2 change log: CHG-120 APPLIED build 5.23.1 rolled out to notify-worker; sets http.max_inflight=0 (round-02/changes.md:4). Looks routine.",
+   "label": "affected",
+   "kind": "early_fact_connection",
+   "justification": "The later failures name the same key, value and build, so the entry's assessment that the change looks routine needs reconsidering; the change record itself stays correct."
+  },
+  {
+   "id": "f-14",
+   "split": "frozen",
+   "update_id": "F5",
+   "update": "Round 09 log, notify-worker: ERROR config validation failed key=http.max_inflight value=0 build=5.23.1 (repeated on several pods).",
+   "entry": "Thread C: cause not yet identified; next step: inspect notify-worker restarts.",
+   "label": "affected",
+   "kind": "explicit_replacement",
+   "justification": "The log update points to a configuration validation failure, which bears directly on the entry's 'cause not identified' and its next step."
+  },
+  {
+   "id": "f-15",
+   "split": "frozen",
+   "update_id": "F5",
+   "update": "Round 09 log, notify-worker: ERROR config validation failed key=http.max_inflight value=0 build=5.23.1 (repeated on several pods).",
+   "entry": "search-api logs show only routine slow queries in rounds 1-8.",
+   "label": "unaffected",
+   "kind": "unrelated",
+   "justification": "The update concerns notify-worker."
+  },
+  {
+   "id": "f-16",
+   "split": "frozen",
+   "update_id": "F6",
+   "update": "From round 06 onward the service logs are JSON lines with fields ts, level, svc and msg instead of key=value text.",
+   "entry": "Search plan: grep each log for lines with a timestamp followed by ERROR or WARN in key=value format.",
+   "label": "affected",
+   "kind": "format_change",
+   "justification": "The planned search relies on the key=value format that no longer applies from round 6."
+  },
+  {
+   "id": "f-17",
+   "split": "frozen",
+   "update_id": "F6",
+   "update": "From round 06 onward the service logs are JSON lines with fields ts, level, svc and msg instead of key=value text.",
+   "entry": "Thread B: cause UPSTREAM_RATE_LIMIT; services payments-svc, checkout-api.",
+   "label": "unaffected",
+   "kind": "unrelated",
+   "justification": "A log format change does not change thread B's facts."
+  },
+  {
+   "id": "f-18",
+   "split": "frozen",
+   "update_id": "F7",
+   "update": "Board round 07: Thread D closed: false alarm (synthetic monitor misconfigured); not an incident.",
+   "entry": "Thread D: DISK_PRESSURE alerts on ledger-svc; next: check whether disk usage affects thread B.",
+   "label": "affected",
+   "kind": "explicit_replacement",
+   "justification": "Thread D is closed as a false alarm, so the planned investigation of its alerts is obsolete."
+  },
+  {
+   "id": "f-19",
+   "split": "frozen",
+   "update_id": "F7",
+   "update": "Board round 07: Thread D closed: false alarm (synthetic monitor misconfigured); not an incident.",
+   "entry": "Monitoring has been unreliable during this incident; treat synthetic alerts with care.",
+   "label": "ambiguous",
+   "kind": "ambiguous",
+   "justification": "The closure is consistent with the entry; whether it calls for reconsidering a general caution is a matter of judgment."
+  },
+  {
+   "id": "f-20",
+   "split": "frozen",
+   "update_id": "F8",
+   "update": "Board round 09: Thread C note: failing pods still restarting; investigation continues.",
+   "entry": "Thread C status: ongoing (round-08/board.md:4).",
+   "label": "unaffected",
+   "kind": "consistent",
+   "justification": "The note confirms that thread C is still ongoing."
+  },
+  {
+   "id": "f-21",
+   "split": "frozen",
+   "update_id": "F8",
+   "update": "Board round 09: Thread C note: failing pods still restarting; investigation continues.",
+   "entry": "Plan: before the final answer, re-check whether thread C has been mitigated.",
+   "label": "ambiguous",
+   "kind": "ambiguous",
+   "justification": "The note does not settle the plan: it is still sensible, but the update could also be read as answering it for now."
+  },
+  {
+   "id": "f-22",
+   "split": "frozen",
+   "update_id": "F9",
+   "update": "Requirement change (stage 4): tax for region 'NZ' is now 15% and for 'US' 0%; every other region keeps the earlier 10% rate.",
+   "entry": "Implemented tax_rate(): a flat 10% for every region (invoice/core.py).",
+   "label": "affected",
+   "kind": "partial_change",
+   "justification": "NZ and US now differ from 10%, so the implementation needs changing for those regions; other regions keep 10%."
+  },
+  {
+   "id": "f-23",
+   "split": "frozen",
+   "update_id": "F9",
+   "update": "Requirement change (stage 4): tax for region 'NZ' is now 15% and for 'US' 0%; every other region keeps the earlier 10% rate.",
+   "entry": "AU customers are taxed at 10% (visible test passes).",
+   "label": "unaffected",
+   "kind": "partial_unchanged",
+   "justification": "AU is one of the other regions that keep 10%."
+  },
+  {
+   "id": "f-24",
+   "split": "frozen",
+   "update_id": "F9",
+   "update": "Requirement change (stage 4): tax for region 'NZ' is now 15% and for 'US' 0%; every other region keeps the earlier 10% rate.",
+   "entry": "Tier discount: gold 5%, silver 2%, other tiers 0%.",
+   "label": "unaffected",
+   "kind": "unrelated",
+   "justification": "A tax change does not change tier discounts."
+  }
+ ]
+}

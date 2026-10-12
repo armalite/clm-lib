@@ -365,18 +365,55 @@ def _count_tokens(prov: AnthropicProvider, payload: dict[str, Any]) -> int | str
         return f"unavailable ({type(exc).__name__})"
 
 
-def _live_runner(cfg: Config, max_usd: float | None) -> Runner:
+def _jev_advisor(cfg: Config) -> tuple[Any, Any]:
+    """Experiment 008: (TypeSafeAdvisor, JevPrice). The key is read from the host environment
+    (TYPESAFE_API_KEY) and is never printed, logged or passed to the sandbox."""
+    import os
+
+    from .jev import TypeSafeAdvisor, load_jev_price
+
+    key = os.environ.get("TYPESAFE_API_KEY", "")
+    if not key:
+        raise SystemExit(
+            "Jev requested but TYPESAFE_API_KEY is not set in this process's environment. "
+            "Add it to your private credential file (for example ~/.config/clm-lib/api.env) and "
+            "source that file in the same shell as the live command."
+        )
+    price = load_jev_price(_resolve(cfg.budget.prices), cfg.jev.model)
+    if price is None:
+        raise SystemExit(f"Jev blocked: no dated price for {cfg.jev.model} in {cfg.budget.prices}")
+    j = cfg.jev
+    return TypeSafeAdvisor(key, model=j.model, base_url=j.base_url, timeout_s=j.timeout_s), price
+
+
+def _live_runner(cfg: Config, max_usd: float | None, need_jev: bool = False) -> Runner:
     ledger = _ledger(cfg, max_usd)
     prov, price, ex = _live_preflight(cfg, ledger)
-    return Runner(cfg, prov, ex, ledger, price, live=True, runs_dir=_runs_dir(cfg))
+    jev, jev_price = _jev_advisor(cfg) if (need_jev or cfg.jev.enabled) else (None, None)
+    return Runner(
+        cfg,
+        prov,
+        ex,
+        ledger,
+        price,
+        live=True,
+        runs_dir=_runs_dir(cfg),
+        jev=jev,
+        jev_price=jev_price,
+    )
 
 
 def cmd_run(args: argparse.Namespace) -> int:
     cfg = _config(args)
-    runner = _live_runner(cfg, args.max_usd)
+    jev = None if args.jev == "config" else args.jev == "on"
+    runner = _live_runner(cfg, args.max_usd, need_jev=bool(jev))
     caching = None if args.caching == "config" else args.caching == "on"
     res = runner.run(
-        generate(args.task), args.mode, label=args.label or "single run", caching=caching
+        generate(args.task),
+        args.mode,
+        label=args.label or "single run",
+        caching=caching,
+        jev=jev,
     )
     _print_result(res)
     return 0
@@ -455,11 +492,15 @@ CONDITION_MODES = ("summary", "clm", "clm_direct", "clm_helpers", "clm_reuse")
 
 
 def parse_conditions(text: str) -> list[tuple[str, bool]]:
-    """``summary:off,summary:on,clm:off,clm:on`` -> [(mode, caching), ...]."""
+    """``summary:off,summary:on,clm:off,clm:on`` -> [(mode, caching), ...]. A mode may carry
+    ``+jev`` (experiment 008: Jev context review on), e.g. ``clm_helpers+jev:on``."""
     out = []
     for part in text.split(","):
         mode, _, cache = part.strip().partition(":")
-        if mode not in CONDITION_MODES or cache not in ("on", "off"):
+        base, _, flag = mode.partition("+")
+        if flag not in ("", "jev"):
+            raise ValueError(f"bad condition {part!r}; only '+jev' may follow a mode")
+        if base not in CONDITION_MODES or cache not in ("on", "off"):
             raise ValueError(
                 f"bad condition {part!r}; expected <{'|'.join(CONDITION_MODES)}>:<on|off>"
             )
@@ -476,8 +517,8 @@ def condition_schedule(
     (i + r - 1) mod 4 for task index i and repetition r. Three conditions: block b (repetitions
     outer, tasks inner) uses order b mod 6 of ORDERS_3; balance is exact only for multiples of
     six blocks, so callers should report the realised position counts."""
-    if len(conditions) not in (3, 4):
-        raise ValueError("the condition schedule needs three or four conditions")
+    if len(conditions) not in (2, 3, 4):
+        raise ValueError("the condition schedule needs two, three or four conditions")
     rows = []
     for rep in range(1, reps + 1):
         for index, task in enumerate(tasks):
@@ -486,6 +527,9 @@ def condition_schedule(
             if len(conditions) == 4:
                 row_index = (index + rep - 1) % 4
                 row = WILLIAMS_4[row_index]
+            elif len(conditions) == 2:  # experiment 008: alternate by instance and repetition
+                row_index = (index + rep - 1) % 2
+                row = (0, 1) if row_index == 0 else (1, 0)
             else:
                 row_index = block % 6
                 row = ORDERS_3[row_index]
@@ -570,6 +614,10 @@ def run_matrix(
         for cell in block_cells:
             task, rep, mode = cell["task"], cell["rep"], cell["mode"]
             caching = None if "caching" not in cell else cell["caching"] == "on"
+            jev = None
+            if "caching" in cell:  # condition schedules: +jev is explicit, otherwise off
+                mode, _, flag = mode.partition("+")
+                jev = flag == "jev"
             cell["pair"] = pair
             if not stopped and runner.ledger.remaining_usd < cfg.budget.min_run_reserve_usd:
                 stopped = (
@@ -584,6 +632,7 @@ def run_matrix(
                     mode,
                     label=f"compare {stamp} pair {pair} rep {rep}",
                     caching=caching,
+                    jev=jev,
                 )
                 _print_result(res)
                 m = res.metrics
@@ -617,7 +666,7 @@ def run_matrix(
 
 def cmd_compare(args: argparse.Namespace) -> int:
     cfg = _config(args)
-    runner = _live_runner(cfg, args.max_usd)
+    runner = _live_runner(cfg, args.max_usd, need_jev="+jev" in (args.conditions or ""))
     tasks = args.tasks.split(",") if args.tasks else list(HELDOUT)
     stamp = f"{datetime.now(UTC):%Y%m%dT%H%M%S}"
     out = _runs_dir(cfg) / "comparisons" / f"{stamp}.json"
@@ -635,6 +684,26 @@ def runner_prompt_version() -> str:
     from .prompts import PROMPT_VERSION
 
     return PROMPT_VERSION
+
+
+def cmd_jev_diagnostic(args: argparse.Namespace) -> int:
+    """Experiment 008 component diagnostic (paid: TypeSafe only)."""
+    from .jev_diag import run_diagnostic
+
+    cfg = _config(args)
+    ledger = _ledger(cfg, args.max_usd)
+    advisor, price = _jev_advisor(cfg)
+    out = run_diagnostic(
+        advisor,
+        price,
+        ledger,
+        Path(args.cases),
+        args.split,
+        _runs_dir(cfg) / "jev-diagnostic",
+        cfg.jev.model,
+    )
+    print(f"diagnostic written to {out}")
+    return 0
 
 
 def cmd_report(args: argparse.Namespace) -> int:
@@ -713,6 +782,12 @@ def build_parser() -> argparse.ArgumentParser:
         default="config",
         help="prompt caching for this run (default: request.prompt_caching from the config)",
     )
+    r.add_argument(
+        "--jev",
+        choices=("config", "on", "off"),
+        default="config",
+        help="experiment 008 Jev context review for this run (default: jev.enabled)",
+    )
     r.set_defaults(func=cmd_run)
 
     g = sub.add_parser(
@@ -739,6 +814,12 @@ def build_parser() -> argparse.ArgumentParser:
         "(Williams order; needs request.layout = blocks/1)",
     )
     c.set_defaults(func=cmd_compare)
+
+    jd = sub.add_parser("jev-diagnostic", help="experiment 008: Jev on labelled cases (paid)")
+    jd.add_argument("--cases", required=True)
+    jd.add_argument("--split", choices=("dev", "frozen"), default="frozen")
+    jd.add_argument("--max-usd", type=float, default=None)
+    jd.set_defaults(func=cmd_jev_diagnostic)
 
     rp = sub.add_parser("report", help="markdown report from recorded runs and the ledger")
     rp.add_argument("--out", default="")

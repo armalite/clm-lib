@@ -1,6 +1,6 @@
 # clm-lib: Technical Specification
 
-Version: 1.9 | 5 October 2026
+Version: 2.0 | 5 October 2026
 
 Repository: `clm-lib` | Python package: `clm_lib` | CLI: `clm-lib`
 
@@ -12,6 +12,7 @@ Version history:
 - 1.4: experiment write-ups move to the results repository, and the exporter preserves human-maintained documents (§13). The blog notes and detailed results move there too (§9).
 - 1.5: adds a selectable, versioned summary-baseline policy (§14) for experiment 003. The original policy stays the default.
 - 1.6: adds a coding task family with changing requirements and a sandboxed evaluator (§15), and an explicit, recorded ledger-ceiling change.
+- 2.0: adds an optional, host-mediated context-review action backed by TypeSafe Jev (§19), off by default.
 - 1.9: adds a multi-round incident task family, two CLM capability variants (direct editing only; reusable helpers allowed), a separate summary-call allowance, helper-evidence tiers and a three-condition schedule (§18).
 - 1.8: adds a versioned request layout (`blocks/1`), optional provider prompt caching with explicit breakpoints, per-run cache isolation, cache-aware accounting evidence, and a four-condition comparison schedule (§17).
 - 1.7: adds a second coding generator with interacting, partially changing rules, an evaluator with richer categories, exact type checks and stage snapshots (§16), a balanced comparison order, and per-task scorer metadata in comparisons and exports.
@@ -402,3 +403,26 @@ The summary baseline's policy is selected by `[baseline] policy`, and recorded i
 - **Phases:** an experiment's runs may carry a `phase` label (and comparisons a `comparison_phases` entry) in `experiment.json`. The exporter copies it into the manifest and metrics rows, and the report labels runs and comparisons with it, so phases are never pooled.
 - **Helper categories:** for each helper function, the audit reports whether it writes supplied note content, selects, removes or reorganises existing entries, applies more substantial logic, or only reads. It also reports per-run adherence for `clm_reuse` (full, partial or none, by whether accepted edits happened in steps where saved context-management code executed) and for `clm_direct`.
 - **Three-condition schedules:** `compare --conditions` with three conditions uses the six permutations in turn, one per block, and records the realised order balance in the frozen block.
+
+## 19. Optional host-mediated context review (TypeSafe Jev)
+
+- **Opt-in:** `[jev] enabled` (default false), or the per-run condition `<clm mode>+jev`, adds the `review_context` action to a CLM run's action schema and system prompt (`prompts.JEV_CLAUSE`). Every earlier configuration and prompt is unchanged. Summary modes cannot enable it.
+- **Action:** `{"action": "review_context", "revision": N, "entry_ids": [...], "update": "..."}`, or `"update_entry_id"` in place of `"update"`.
+  - **Validation:** the revision must exist; the ids must be in that revision, with no duplicates and within `max_entries`; exactly one non-empty update within `max_update_chars`; and within `max_reviews` per run.
+  - **Rejections** return a notice and make no Jev call.
+- **Request:**
+  - **Where it runs:** the host runtime, never the sandbox, calls `POST {jev.base_url}` with the pinned `jev.model`.
+  - **State and questions:** the state is the update, with one `noul` question per entry, batched up to `batch_size`. Each question carries the fixed question `jev-review/1` with criteria, plus the exact entry text from the referenced revision.
+  - **Never sent:** no other content (future stages, evaluator truth, audit history).
+- **Advice:**
+  - **Observation:** one probability per submitted entry ("no answer" when missing or malformed), plus coverage and any service problem.
+  - **No effect on context:** the action changes no entry; only the usual runtime append of the step's action and observation happens.
+  - **Failures:** a failed or malformed call leaves the run able to continue.
+- **Accounting:**
+  - **Ledger:** every Jev attempt is a ledger entry (kind `jev`, provider `typesafe`), reserved before dispatch and settled from reported usage at the dated `[typesafe."<model>"]` price.
+  - **Retries:** only the configured `jev.retries` happen (429, 529, 5xx, timeouts), with no hidden SDK retries.
+  - **Evidence per run:** `jev/NNNN.json` (request body without headers, response, latency, usage, cost); `summary.json → jev` (reviews, attempts, errors, retries, TypeSafe tokens kept apart from Anthropic tokens, cost, latency, and per-review answers with later accepted edits by entry id); and `cost.by_provider`.
+- **Credentials:** `TYPESAFE_API_KEY` is read from the host environment only, and never logged, saved or passed to the sandbox.
+- **Status line:** `limits.status_shows_revision` adds the current context revision number to `<runtime_status>`, for both arms of a comparison.
+- **Diagnostic:** `clm-lib jev-diagnostic` runs labelled (update, entry) cases through the same request builder. It reports flags and misses at a reporting threshold fixed in the case file; that threshold is never an editing policy.
+- **Limitation:** sandboxed helper code cannot call Jev. Advice is available only as a separate action whose result is used in a later step.

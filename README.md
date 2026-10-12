@@ -82,6 +82,8 @@ The answer has four fields: `root_cause`, `required_value`, `remedy` and `eviden
 
 **Multi-round incident** (`rounds-dev-*`, `rounds-eval-*`; `src/clm_lib/rounds.py`): 10–12 evidence rounds per instance. The answer lists incidents and unresolved follow-ups, scored by `rounds-score/1`. Modes `clm_direct` and `clm_helpers` give the same CLM capabilities, with reusable context-management helpers asked against or permitted; `helper_audit.py` classifies helper evidence.
 
+**Optional Jev context review** (`[jev]` in the config, or the `<clm mode>+jev` condition; SPEC §19): CLM runs can call a host-mediated `review_context` action. It asks TypeSafe Jev whether an update requires reconsidering each listed context entry, and the advice is returned as probabilities; it never edits the context. It needs `TYPESAFE_API_KEY` in the host environment, and `clm-lib jev-diagnostic` runs labelled cases through the same question.
+
 **Request layouts and prompt caching** (`[request]` in the config; SPEC §17):
 - **`single-user/1`** (the default) is the original layout.
 - **`blocks/1`** sends text content blocks:
@@ -205,6 +207,8 @@ src/clm_lib/
   coding2.py    coding task with interacting, partially changing rules (invoice-gen/2) + evaluator
   rounds.py     multi-round incident task (incident-rounds-gen/1) + scorer
   helper_audit.py  helper-evidence tiers and direct-edit reuse findings
+  jev.py        optional TypeSafe Jev context-review client, fixed question, price
+  jev_diag.py   Jev component diagnostic on labelled cases
   invoice_ref2.py  standalone reference rules for invoice-gen/2
   prompts.py    frozen prompt text and request rendering
   report.py     markdown report from evidence

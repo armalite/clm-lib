@@ -45,6 +45,8 @@ class Limits:
     # after the hard-limit checks, and could itself push a request just over the hard limit, ending
     # the run without the spill or recovery handling. True re-checks after adding the notice.
     recheck_after_notice: bool = False
+    # Experiment 008: show the current context revision number in <runtime_status> (both arms).
+    status_shows_revision: bool = False
 
 
 @dataclass
@@ -78,6 +80,21 @@ class RequestConfig:
 
 
 @dataclass
+class JevConfig:
+    # Experiment 008: optional host-mediated context review by TypeSafe Jev (off by default).
+    # `enabled` sets the default per run; `compare --conditions mode:caching:jev` overrides it.
+    enabled: bool = False
+    model: str = "jev-1.13.0"  # pinned version (the alias jev-latest can move)
+    base_url: str = "https://api.typesafe.ai/v1/systemone"
+    timeout_s: float = 15.0
+    retries: int = 1  # runtime-level retries for 429/529/5xx/timeouts; every attempt recorded
+    max_reviews: int = 12  # review_context actions per run (each also uses a main-model call)
+    max_entries: int = 40  # entries per review
+    batch_size: int = 20  # questions per HTTP request
+    max_update_chars: int = 4000
+
+
+@dataclass
 class BudgetConfig:
     ceiling_usd: float = 10.0
     min_run_reserve_usd: float = 0.75
@@ -101,6 +118,7 @@ class Config:
     budget: BudgetConfig = field(default_factory=BudgetConfig)
     sandbox: SandboxConfig = field(default_factory=SandboxConfig)
     request: RequestConfig = field(default_factory=RequestConfig)
+    jev: JevConfig = field(default_factory=JevConfig)
     runs_dir: str = "runs"
 
     def to_dict(self) -> dict[str, Any]:
@@ -126,6 +144,7 @@ def load_config(path: Path | None) -> Config:
         "budget": BudgetConfig,
         "sandbox": SandboxConfig,
         "request": RequestConfig,
+        "jev": JevConfig,
     }
     kwargs: dict[str, Any] = {}
     for key, cls in sections.items():

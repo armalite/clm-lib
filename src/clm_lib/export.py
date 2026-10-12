@@ -247,6 +247,32 @@ def _metrics_row(run_id: str, role: str, src: Path, charged: float) -> dict[str,
         prompt_version=m.get("prompt_version"),
         fixture_sha256=m.get("fixture_sha256"),
     )
+    jev = m.get("jev") or {}
+    if jev.get("enabled"):  # experiment 008: Jev context review (separate provider tokens)
+        recs = jev.get("review_records", [])
+        row.update(
+            jev_enabled=True,
+            jev_reviews=jev["reviews"],
+            jev_reviews_rejected=jev["reviews_rejected"],
+            jev_attempts=jev["attempts"],
+            jev_errors=jev["errors"],
+            jev_retries=jev["retries"],
+            jev_input_tokens=jev["usage_typesafe_tokens"]["input_tokens"],
+            jev_output_tokens=jev["usage_typesafe_tokens"]["output_tokens"],
+            jev_cost_usd=jev["cost_usd"],
+            jev_latency_s=jev["latency_s"],
+            jev_entries_reviewed=sum(len(r.get("entry_ids", [])) for r in recs),
+            jev_flagged=sum(len(r.get("flagged", [])) for r in recs),
+            jev_flagged_then_changed=sum(len(r.get("flagged_then_changed", [])) for r in recs),
+            jev_unflagged_then_changed=sum(len(r.get("unflagged_then_changed", [])) for r in recs),
+            jev_models=json.dumps(sorted({x for r in recs for x in r.get("models", [])})),
+        )
+    elif "jev" in m:
+        row["jev_enabled"] = False
+    by_provider = (m.get("cost") or {}).get("by_provider")
+    if by_provider:
+        row["cost_anthropic_usd"] = by_provider["anthropic"]
+        row["cost_typesafe_usd"] = by_provider["typesafe"]
     rq = m.get("request") or {}
     u = m["usage_provider_reported"]
     row.update(
@@ -410,6 +436,12 @@ def export_experiment(
                 "missing": sum(1 for c in comp["cells"] if c["status"] == "missing"),
             }
         )
+
+    # Experiment 008: Jev component diagnostics (runs/jev-diagnostic/<name>/), copied immutably.
+    for name in spec.get("diagnostics", []):
+        src_dir = runs_root / "jev-diagnostic" / name
+        files = collect(src_dir)
+        log["derived"][f"diagnostic {name}"] = write_tree(art / "diagnostics" / name, files)
 
     if spec.get("source_patches"):
         files = {}

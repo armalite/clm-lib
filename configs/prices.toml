@@ -23,3 +23,12 @@ cache_write_5m = 1.25
 cache_write_1h = 2.00
 cache_read = 0.10
 output = 5.00
+
+# TypeSafe System One models (experiment 008). Charged per input token; output tokens are free.
+# Source: https://docs.typesafe.ai/models (retrieved 2026-10-12): "$42 per Btok, or $0.042 per
+# Mtok. Charged per input token. Output tokens are free."
+[typesafe."jev-1.13.0"]
+input = 0.042
+output = 0.0
+source = "https://docs.typesafe.ai/models"
+retrieved = "2026-10-12"

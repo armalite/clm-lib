@@ -308,6 +308,8 @@ def build_report(
         n, held = bound_checks(run_dir)
         rq = m.get("request") or {}
         mode = m["mode"]
+        if (m.get("jev") or {}).get("enabled"):
+            mode = f"{mode} + Jev review"
         if rq.get("layout", "single-user/1") != "single-user/1":
             mode = f"{mode} ({rq['layout']}, caching {rq.get('prompt_caching', 'off')})"
         label = m.get("label", "")
