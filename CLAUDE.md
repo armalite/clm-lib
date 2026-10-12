@@ -6,6 +6,7 @@ Recurring instructions for coding assistants working in this repository.
 
 - Read `SPEC.md`. It is the source of requirements and acceptance criteria. Record substantive departures in `docs/architecture.md` (implementation notes) instead of silently changing the objective.
 - Preserve existing files and follow any further repository instructions.
+- When resuming work, first read the local handoff `docs/HANDOFF.md` (gitignored; it may be absent on other machines) and the current experiment's `protocol.md` in `../clm-lib-test-results/experiments/<id>/`.
 
 ## Never
 
