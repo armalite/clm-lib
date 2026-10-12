@@ -376,8 +376,8 @@ def _jev_advisor(cfg: Config) -> tuple[Any, Any]:
     if not key:
         raise SystemExit(
             "Jev requested but TYPESAFE_API_KEY is not set in this process's environment. "
-            "Add it to your private credential file (for example ~/.config/clm-lib/api.env) and "
-            "source that file in the same shell as the live command."
+            "Export it into the environment of the process that runs the live command (a plain "
+            "assignment in a sourced file is not passed to child processes)."
         )
     price = load_jev_price(_resolve(cfg.budget.prices), cfg.jev.model)
     if price is None:

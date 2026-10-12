@@ -408,11 +408,12 @@ The summary baseline's policy is selected by `[baseline] policy`, and recorded i
 
 - **Opt-in:** `[jev] enabled` (default false), or the per-run condition `<clm mode>+jev`, adds the `review_context` action to a CLM run's action schema and system prompt (`prompts.JEV_CLAUSE`). Every earlier configuration and prompt is unchanged. Summary modes cannot enable it.
 - **Action:** `{"action": "review_context", "revision": N, "entry_ids": [...], "update": "..."}`, or `"update_entry_id"` in place of `"update"`.
-  - **Validation:** the revision must exist; the ids must be in that revision, with no duplicates and within `max_entries`; exactly one non-empty update within `max_update_chars`; and within `max_reviews` per run.
+  - **Validation:** the revision must be the **current** context revision (the one the runtime status shows); a stale or unknown revision is rejected. The ids and any `update_entry_id` must be in that revision, with no duplicates and within `max_entries`; exactly one non-empty update within `max_update_chars`; and within `max_reviews` per run.
+  - **Boundary:** entries the agent has deleted remain in host-side history but are never sent to Jev. Validation runs before any ledger reservation or Jev request. (Earlier unreleased drafts accepted any existing revision; this was found in an offline check on 2026-10-12, before any experiment-008 run, and fixed.)
   - **Rejections** return a notice and make no Jev call.
 - **Request:**
   - **Where it runs:** the host runtime, never the sandbox, calls `POST {jev.base_url}` with the pinned `jev.model`.
-  - **State and questions:** the state is the update, with one `noul` question per entry, batched up to `batch_size`. Each question carries the fixed question `jev-review/1` with criteria, plus the exact entry text from the referenced revision.
+  - **State and questions:** the state is the update, with one `noul` question per entry, batched up to `batch_size`. Each question carries the fixed question `jev-review/1` with criteria, plus the exact entry text from the current revision.
   - **Never sent:** no other content (future stages, evaluator truth, audit history).
 - **Advice:**
   - **Observation:** one probability per submitted entry ("no answer" when missing or malformed), plus coverage and any service problem.

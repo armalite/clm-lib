@@ -72,9 +72,13 @@ def revisions(run_dir: Path) -> list[dict[str, Any]]:
 
 # ------------------------------------------------------------- historical behaviour, opt-in
 def test_historical_configs_and_prompts_are_unchanged() -> None:
-    for p in [*sorted((REPO / "configs").glob("exp*.toml")), REPO / "configs" / "default.toml"]:
+    historical = [p for p in sorted((REPO / "configs").glob("exp*.toml")) if p.stem != "exp008"]
+    for p in [*historical, REPO / "configs" / "default.toml"]:
         c = load_config(p)
         assert c.jev.enabled is False and c.limits.status_shows_revision is False, p.name
+    # Experiment 008 shows the revision to both arms; Jev is switched on per run, never by default.
+    c = load_config(REPO / "configs" / "exp008.toml")
+    assert c.jev.enabled is False and c.limits.status_shows_revision is True
     kw: dict[str, Any] = dict(
         exec_timeout=30, output_cap=6000, pressure_pct=70, tail=4, max_entries=200, max_body=24000
     )
@@ -188,7 +192,7 @@ def test_update_by_entry_reference_and_review_limit(tmp_path: Path) -> None:
     }
     runner, _ = make(
         tmp_path,
-        [execute("print('NEW FACT')"), ref, ref, FINAL],
+        [execute("print('NEW FACT')"), ref, {**ref, "revision": 2}, FINAL],
         cfg,
         adv,
         FakeExecutor(outputs=["NEW FACT"]),
@@ -196,6 +200,7 @@ def test_update_by_entry_reference_and_review_limit(tmp_path: Path) -> None:
     res = runner.run(generate("dev"), "clm_helpers")
     assert "NEW FACT" in adv.calls[0]["state"]["update"] and len(adv.calls) == 1
     assert res.metrics["jev"]["reviews"] == 1 and res.metrics["jev"]["reviews_rejected"] == 1
+    assert "review limit reached" in res.metrics["jev"]["review_records"][1]["error"]
 
 
 def test_service_failures_and_malformed_answers_leave_the_agent_working(tmp_path: Path) -> None:
@@ -218,6 +223,98 @@ def test_service_failures_and_malformed_answers_leave_the_agent_working(tmp_path
         "error:http_529",
         "ok",
     ]
+
+
+class DeleteObsExecutor(FakeExecutor):
+    """Code containing DELETE removes s1.obs from context.json (an accepted model edit)."""
+
+    def run(self, code: str, workspace: Path, fixtures: Path) -> Any:
+        if "DELETE" in code:
+            d = json.loads((workspace / "context.json").read_text())
+            d["entries"] = [e for e in d["entries"] if e["id"] != "s1.obs"]
+            (workspace / "context.json").write_text(json.dumps(d))
+        return super().run(code, workspace, fixtures)
+
+
+def shown_revision(user: str) -> int:
+    line = next(x for x in user.splitlines() if x.startswith("context revision "))
+    return int(line.split()[-1])
+
+
+SECRET = "DELETED-OBSERVATION-TEXT"
+# Step 1 (rev 1) records SECRET only as s1.obs; step 2 deletes s1.obs (rev 2) and the runtime
+# appends the step (rev 3), the revision the model is shown at step 3.
+BEFORE_REVIEW: list[Any] = [execute("print(1)"), execute("DELETE")]
+
+
+def deleting_executor() -> FakeExecutor:
+    return DeleteObsExecutor(outputs=[SECRET, "ok"])
+
+
+@pytest.mark.parametrize(
+    ("action", "reason"),
+    [
+        (review(["s1.obs"], 1), "revision 1 is no longer current"),
+        (
+            {
+                "action": "review_context",
+                "revision": 1,
+                "entry_ids": ["s1.act"],
+                "update_entry_id": "s1.obs",
+            },
+            "revision 1 is no longer current",
+        ),
+        (review(["s1.obs"], 3), "not in revision 3"),
+        (
+            {
+                "action": "review_context",
+                "revision": 3,
+                "entry_ids": ["s1.act"],
+                "update_entry_id": "s1.obs",
+            },
+            "update_entry_id 's1.obs' is not in revision 3",
+        ),
+    ],
+)
+def test_deleted_entries_never_reach_jev(
+    tmp_path: Path, action: dict[str, Any], reason: str
+) -> None:
+    """Candidates and update_entry_id resolve only from the current revision, so an entry the
+    agent deleted cannot be sent to Jev by naming an older revision or by its id."""
+    adv = FakeAdvisor(lambda u, e: 0.5)
+    runner, prov = make(
+        tmp_path, [*BEFORE_REVIEW, action, FINAL], cfg_jev(), adv, deleting_executor()
+    )
+    res = runner.run(generate("dev"), "clm_helpers")
+    rev1 = next(r for r in revisions(res.run_dir) if r["number"] == 1)
+    assert SECRET in {e["id"]: e["body"] for e in rev1["entries"]}["s1.obs"]  # it existed
+    assert shown_revision(prov.requests[2].user) == 3
+    assert "s1.obs" not in working_ids(prov.requests[2].user)
+    assert res.status == "completed" and adv.calls == []  # no Jev request
+    led = json.loads((tmp_path / "ledger.json").read_text())
+    assert [e["kind"] for e in led["entries"]].count("jev") == 0  # no paid reservation
+    j = res.metrics["jev"]
+    assert j["reviews_rejected"] == 1 and j["reviews"] == 0 and j["attempts"] == 0
+    obs = revisions(res.run_dir)[-1]["entries"][-1]["body"]
+    assert obs.startswith("Context review not performed") and reason in obs
+    assert SECRET not in obs and not (res.run_dir / "jev").exists()
+
+
+def test_current_revision_review_uses_the_revision_shown_to_the_model(tmp_path: Path) -> None:
+    adv = FakeAdvisor(lambda u, e: 0.8)
+    script = [*BEFORE_REVIEW, review(["s1.act", "s2.obs"], 3), FINAL]
+    runner, prov = make(tmp_path, script, cfg_jev(), adv, deleting_executor())
+    res = runner.run(generate("dev"), "clm_helpers")
+    assert [shown_revision(r.user) for r in prov.requests] == [0, 1, 3, 4]
+    assert res.status == "completed" and len(adv.calls) == 1
+    current = next(r for r in revisions(res.run_dir) if r["number"] == 3)["entries"]
+    by_id = {e["id"]: e["body"] for e in current}
+    sent = [q["instructions"]["entry"] for q in adv.calls[0]["questions"].values()]
+    assert sent == [by_id["s1.act"], by_id["s2.obs"]] and SECRET not in json.dumps(adv.calls)
+    rec = res.metrics["jev"]["review_records"][0]
+    assert rec["status"] == "ok" and rec["revision"] == 3
+    obs = revisions(res.run_dir)[-1]["entries"][-1]["body"]
+    assert "revision 3;" in obs and "s2.obs: 0.80" in obs
 
 
 def test_requests_hold_only_agent_visible_text(tmp_path: Path) -> None:

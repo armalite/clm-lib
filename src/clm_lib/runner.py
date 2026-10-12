@@ -1321,11 +1321,15 @@ class _Run:
         j = self.cfg.jev
         if self.c.jev_reviews >= j.max_reviews:
             return f"review limit reached ({j.max_reviews} per task)"
+        # Only the active context may be reviewed: entries the agent has deleted stay out of
+        # Jev requests even though older revisions remain in the host's history.
         number = action["revision"]
-        rev = next((r for r in self.store.revisions if r.number == number), None)
-        if rev is None:
+        rev = self.store.current
+        if number != rev.number:
+            known = any(r.number == number for r in self.store.revisions)
             return (
-                f"revision {number} does not exist (current revision {self.store.current.number})"
+                f"revision {number} {'is no longer current' if known else 'does not exist'}; "
+                f"reviews use only the current context revision ({rev.number})"
             )
         ids: list[str] = action["entry_ids"]
         if len(ids) > j.max_entries:

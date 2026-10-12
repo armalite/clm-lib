@@ -4,12 +4,18 @@
  "provenance": {
   "source_repo": "https://github.com/armalite/clm-lib",
   "base_commit": "2938da5",
-  "status": "implemented; not run (no TypeSafe API key in the 2026-10-12 session)",
+  "status": "diagnostic and four-run pilot complete; larger evaluation not authorised",
   "diagnostic_cases": "experiments/008-jev-context-review/diagnostic-cases-v1.json (sha256 68860b7579fdeb7bd08f9ff60c9159802394bd0a9322a02f00600d1d3ff9d843)",
   "question_version": "jev-review/1",
   "jev_model": "jev-1.13.0",
   "prompt_version": "2026-10-12.1",
-  "budget": "ledger ceiling set explicitly to USD 56.993902 (spend USD 46.993902 + USD 10) for this session; no paid call made"
+  "budget": "ledger ceiling set explicitly to USD 56.993902 (spend USD 46.993902 + USD 10) for the initial experiment-008 work (smoke, diagnostics, pilot), not changed afterwards",
+  "implementation_commit": "0884608",
+  "pilot_tree_state": "HEAD a1f3dd5 plus uncommitted changes (review-revision boundary fix in runner._validate_review, regression tests, generic CLI key message, SPEC/architecture notes); patch saved by compare as artifacts/comparisons/20261012T110017/20261012T110017.patch",
+  "generator_version": "incident-rounds-gen/1",
+  "scorer": "rounds-score/1",
+  "request_layout": "blocks/1, caching on, 5m, run-tag/1",
+  "jev_price": "USD 0.042 per million input tokens, output free (docs.typesafe.ai/models, retrieved 2026-10-12)"
  },
  "settings": {
   "config": "configs/exp008.toml",
@@ -24,11 +30,45 @@
   "pilot_repetitions": 1
  },
  "phases": {
-  "diagnostic": "Jev component diagnostic on the frozen labelled cases (not run)",
-  "pilot": "2 development instances x 2 conditions (not run)",
-  "evaluation": "planned only; needs fresh instances and separate authorisation"
+  "diagnostic": "Jev component diagnostic on the frozen labelled cases (runs/jev-diagnostic/20261012T105948-frozen)",
+  "pilot": "2 development instances x 2 conditions, comparison 20261012T110017",
+  "evaluation": "planned only; needs fresh instances and separate authorisation",
+  "smoke": "dev-split diagnostic as an API smoke check (runs/jev-diagnostic/20261012T105929-dev)"
  },
- "runs": [],
- "comparisons": [],
- "diagnostics": []
+ "runs": [
+  {
+   "run_id": "20261012T110017-clm_helpers-cacheon-rounds-dev-1-2871",
+   "role": "calibration",
+   "phase": "pilot",
+   "note": "pilot pair 0 position 0: A on rounds-dev-1"
+  },
+  {
+   "run_id": "20261012T110232-clm_helpers-cacheon-jev-rounds-dev-1-6023",
+   "role": "calibration",
+   "phase": "pilot",
+   "note": "pilot pair 0 position 1: B on rounds-dev-1"
+  },
+  {
+   "run_id": "20261012T110447-clm_helpers-cacheon-jev-rounds-dev-2-64f9",
+   "role": "calibration",
+   "phase": "pilot",
+   "note": "pilot pair 1 position 0: B on rounds-dev-2"
+  },
+  {
+   "run_id": "20261012T110709-clm_helpers-cacheon-rounds-dev-2-d3af",
+   "role": "calibration",
+   "phase": "pilot",
+   "note": "pilot pair 1 position 1: A on rounds-dev-2"
+  }
+ ],
+ "comparisons": [
+  "20261012T110017"
+ ],
+ "diagnostics": [
+  "20261012T105929-dev",
+  "20261012T105948-frozen"
+ ],
+ "comparison_phases": {
+  "20261012T110017": "pilot"
+ }
 }
