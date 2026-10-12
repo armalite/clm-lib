@@ -1,0 +1,279 @@
+{
+ "version": "jev-diag/2",
+ "question_version": "jev-review/1",
+ "payload_version": "round-files/1",
+ "labelled": "2026-10-13, before any Jev answer to these cases was obtained",
+ "source": "updates are the exact round-files/1 payloads of rounds-diag-1 and rounds-diag-2 (instances reserved for diagnostics and the smoke run; never used in the pilot or evaluation); entries are written in the forms seen in experiment 007/008 agent contexts (rolling notes, per-round notes, step actions with thoughts, runtime receipts)",
+ "reporting_threshold": 0.5,
+ "label_meaning": {
+  "affected": "the update requires reconsidering a current assertion or planned action in the entry (not necessarily that the entry is wrong or should be deleted)",
+  "unaffected": "it does not",
+  "ambiguous": "reasonable readers could disagree; reported separately and not counted as hits or errors"
+ },
+ "cases": [
+  {
+   "id": "u-01",
+   "split": "frozen",
+   "update_id": "U1",
+   "update_source": "rounds-diag-1 round 3 (round-files/1)",
+   "update": "round-03/board.md:3: - Thread A opened: database connection pool exhausted confirmed as the cause (code DB_POOL_EXHAUSTED) in notify-worker; impact also on ledger-svc. Status: ongoing.\nround-03/board.md:4: - Thread B opened: errors in inventory-svc. Suspected cause: a data volume running out of space (DISK_PRESSURE). Status: ongoing.\nround-03/changes.md:3: - CHG-122 APPLIED: retry budget for idempotent GETs set to 1",
+   "entry": "R1-R2 notes: notify-worker errors rising; my guess is a retry storm from CHG-112 (retry budget, round-01/changes.md:3). Next: compare notify-worker error rate before and after CHG-112.",
+   "label": "affected",
+   "kind": "explicit_replacement",
+   "justification": "The board confirms DB_POOL_EXHAUSTED as thread A's cause in notify-worker, which replaces the entry's guessed cause and the next step built on it."
+  },
+  {
+   "id": "u-02",
+   "split": "frozen",
+   "update_id": "U1",
+   "update_source": "rounds-diag-1 round 3 (round-files/1)",
+   "update": "round-03/board.md:3: - Thread A opened: database connection pool exhausted confirmed as the cause (code DB_POOL_EXHAUSTED) in notify-worker; impact also on ledger-svc. Status: ongoing.\nround-03/board.md:4: - Thread B opened: errors in inventory-svc. Suspected cause: a data volume running out of space (DISK_PRESSURE). Status: ongoing.\nround-03/changes.md:3: - CHG-122 APPLIED: retry budget for idempotent GETs set to 1",
+   "entry": "CHG-118 TLS session ticket rotation set to hourly (round-02/changes.md:3); no errors linked to it so far.",
+   "label": "unaffected",
+   "kind": "unrelated",
+   "justification": "Nothing in round 3 concerns TLS ticket rotation."
+  },
+  {
+   "id": "u-03",
+   "split": "frozen",
+   "update_id": "U1",
+   "update_source": "rounds-diag-1 round 3 (round-files/1)",
+   "update": "round-03/board.md:3: - Thread A opened: database connection pool exhausted confirmed as the cause (code DB_POOL_EXHAUSTED) in notify-worker; impact also on ledger-svc. Status: ongoing.\nround-03/board.md:4: - Thread B opened: errors in inventory-svc. Suspected cause: a data volume running out of space (DISK_PRESSURE). Status: ongoing.\nround-03/changes.md:3: - CHG-122 APPLIED: retry budget for idempotent GETs set to 1",
+   "entry": "context.json edit accepted at step 4: removed s2.act, s2.obs; added n1. Working context now 2 entries, 412 chars.",
+   "label": "unaffected",
+   "kind": "runtime_receipt",
+   "justification": "A runtime receipt of an earlier edit; it asserts nothing the update changes."
+  },
+  {
+   "id": "u-04",
+   "split": "frozen",
+   "update_id": "U2",
+   "update_source": "rounds-diag-1 round 5 (round-files/1)",
+   "update": "round-05/board.md:3: - Thread A status: mitigated (errors reduced after the applied change; monitoring).\nround-05/changes.md:3: - CHG-143 APPLIED: mitigation for thread A deployed to notify-worker",
+   "entry": "Thread A (notify-worker, ledger-svc): cause DB_POOL_EXHAUSTED (round-03/board.md:3); status ongoing. Thread B (inventory-svc): suspected DISK_PRESSURE (round-03/board.md:4), ongoing. Open follow-ups: VENDOR_TICKET, DATA_BACKFILL.",
+   "label": "affected",
+   "kind": "partial_change",
+   "justification": "Thread A's status changes from ongoing to mitigated; the rest of the rolling note stays valid."
+  },
+  {
+   "id": "u-05",
+   "split": "frozen",
+   "update_id": "U2",
+   "update_source": "rounds-diag-1 round 5 (round-files/1)",
+   "update": "round-05/board.md:3: - Thread A status: mitigated (errors reduced after the applied change; monitoring).\nround-05/changes.md:3: - CHG-143 APPLIED: mitigation for thread A deployed to notify-worker",
+   "entry": "Thread B: inventory-svc errors; suspected DISK_PRESSURE per round-03/board.md:4; status ongoing.",
+   "label": "unaffected",
+   "kind": "partial_unchanged",
+   "justification": "Round 5 changes only thread A; thread B's cause and status are unchanged."
+  },
+  {
+   "id": "u-06",
+   "split": "frozen",
+   "update_id": "U2",
+   "update_source": "rounds-diag-1 round 5 (round-files/1)",
+   "update": "round-05/board.md:3: - Thread A status: mitigated (errors reduced after the applied change; monitoring).\nround-05/changes.md:3: - CHG-143 APPLIED: mitigation for thread A deployed to notify-worker",
+   "entry": "Plan: keep watching notify-worker; if no mitigation change appears by round 6, record thread A as still ongoing in the answer.",
+   "label": "affected",
+   "kind": "planned_action",
+   "justification": "A mitigation was deployed (CHG-143) and the board marks thread A mitigated, which changes the plan's premise."
+  },
+  {
+   "id": "u-07",
+   "split": "frozen",
+   "update_id": "U3",
+   "update_source": "rounds-diag-1 round 7 (round-files/1)",
+   "update": "round-07/board.md:3: - Thread B root cause revised: process memory growing until restarts (MEMORY_LEAK); this supersedes the earlier suspicion of DISK_PRESSURE.",
+   "entry": "Thread B (inventory-svc): suspected DISK_PRESSURE (round-03/board.md:4); status ongoing.",
+   "label": "affected",
+   "kind": "explicit_replacement",
+   "justification": "The board revises thread B's cause to MEMORY_LEAK, superseding DISK_PRESSURE."
+  },
+  {
+   "id": "u-08",
+   "split": "frozen",
+   "update_id": "U3",
+   "update_source": "rounds-diag-1 round 7 (round-files/1)",
+   "update": "round-07/board.md:3: - Thread B root cause revised: process memory growing until restarts (MEMORY_LEAK); this supersedes the earlier suspicion of DISK_PRESSURE.",
+   "entry": "[step 15] execute\nthought: check inventory-svc logs for disk-full or volume errors to confirm thread B's DISK_PRESSURE.\ncode:\nimport re\nfor l in open('/task/fixtures/round-06/logs/inventory-svc.log'):\n    if re.search('disk|volume|ENOSPC', l): print(l.strip())",
+   "label": "affected",
+   "kind": "plan_in_action_thought",
+   "justification": "The step's stated plan is to confirm DISK_PRESSURE, which the update supersedes."
+  },
+  {
+   "id": "u-09",
+   "split": "frozen",
+   "update_id": "U3",
+   "update_source": "rounds-diag-1 round 7 (round-files/1)",
+   "update": "round-07/board.md:3: - Thread B root cause revised: process memory growing until restarts (MEMORY_LEAK); this supersedes the earlier suspicion of DISK_PRESSURE.",
+   "entry": "History: at round 3 the board suspected DISK_PRESSURE for thread B (round-03/board.md:4).",
+   "label": "unaffected",
+   "kind": "historical",
+   "justification": "A correct historical statement; the revision does not make it wrong."
+  },
+  {
+   "id": "u-10",
+   "split": "frozen",
+   "update_id": "U4",
+   "update_source": "rounds-diag-1 round 8 (round-files/1)",
+   "update": "round-08/board.md:3: - Thread A status: resolved (no recurrence for two hours).\nround-08/board.md:4: - Thread D opened: cache miss storm after mass expiry alerts (CACHE_STAMPEDE) on notify-worker. Status: ongoing.\nround-08/board.md:5: - Follow-up CLOSED VENDOR_TICKET.\nround-08/board.md:6: - Follow-up OPEN CAPACITY_REVIEW: capacity review of the affected tier.\nround-08/changes.md:3: - CHG-160 PROPOSED: raise HPA max replicas for search tier (not applied)",
+   "entry": "Thread A: DB_POOL_EXHAUSTED in notify-worker and ledger-svc; mitigated at round 5 (round-05/board.md:3) via CHG-143.",
+   "label": "affected",
+   "kind": "status_supersede",
+   "justification": "Thread A is now resolved, superseding 'mitigated'."
+  },
+  {
+   "id": "u-11",
+   "split": "frozen",
+   "update_id": "U4",
+   "update_source": "rounds-diag-1 round 8 (round-files/1)",
+   "update": "round-08/board.md:3: - Thread A status: resolved (no recurrence for two hours).\nround-08/board.md:4: - Thread D opened: cache miss storm after mass expiry alerts (CACHE_STAMPEDE) on notify-worker. Status: ongoing.\nround-08/board.md:5: - Follow-up CLOSED VENDOR_TICKET.\nround-08/board.md:6: - Follow-up OPEN CAPACITY_REVIEW: capacity review of the affected tier.\nround-08/changes.md:3: - CHG-160 PROPOSED: raise HPA max replicas for search tier (not applied)",
+   "entry": "Open follow-ups: VENDOR_TICKET (round-04/board.md:3), DATA_BACKFILL (round-04/board.md:4), RUNBOOK_UPDATE (round-06/board.md:3).",
+   "label": "affected",
+   "kind": "follow_up_list",
+   "justification": "VENDOR_TICKET is closed and CAPACITY_REVIEW opened, so the list of open follow-ups changes."
+  },
+  {
+   "id": "u-12",
+   "split": "frozen",
+   "update_id": "U4",
+   "update_source": "rounds-diag-1 round 8 (round-files/1)",
+   "update": "round-08/board.md:3: - Thread A status: resolved (no recurrence for two hours).\nround-08/board.md:4: - Thread D opened: cache miss storm after mass expiry alerts (CACHE_STAMPEDE) on notify-worker. Status: ongoing.\nround-08/board.md:5: - Follow-up CLOSED VENDOR_TICKET.\nround-08/board.md:6: - Follow-up OPEN CAPACITY_REVIEW: capacity review of the affected tier.\nround-08/changes.md:3: - CHG-160 PROPOSED: raise HPA max replicas for search tier (not applied)",
+   "entry": "CHG-129 reduced /v1/health log sampling to 1% (round-04/changes.md:3); cosmetic, ignore.",
+   "label": "unaffected",
+   "kind": "unrelated",
+   "justification": "Nothing in round 8 concerns log sampling."
+  },
+  {
+   "id": "u-13",
+   "split": "frozen",
+   "update_id": "U5",
+   "update_source": "rounds-diag-1 round 10 (round-files/1)",
+   "update": "round-10/board.md:3: - Thread B status: mitigated (workaround in place; permanent fix pending).\nround-10/board.md:4: - Thread C note: failing pods still restarting; investigation continues.\nround-10/board.md:5: - Thread D closed: false alarm (synthetic monitor misconfigured); not an incident.\nround-10/changes.md:3: - CHG-170 APPLIED: log sampling for /v1/health reduced to 1%",
+   "entry": "Thread D (notify-worker): CACHE_STAMPEDE alerts, ongoing (round-08/board.md:4). Include in the final incident list.",
+   "label": "affected",
+   "kind": "false_alarm_closed",
+   "justification": "Thread D is closed as a false alarm, which contradicts both its status and the plan to report it."
+  },
+  {
+   "id": "u-14",
+   "split": "frozen",
+   "update_id": "U5",
+   "update_source": "rounds-diag-1 round 10 (round-files/1)",
+   "update": "round-10/board.md:3: - Thread B status: mitigated (workaround in place; permanent fix pending).\nround-10/board.md:4: - Thread C note: failing pods still restarting; investigation continues.\nround-10/board.md:5: - Thread D closed: false alarm (synthetic monitor misconfigured); not an incident.\nround-10/changes.md:3: - CHG-170 APPLIED: log sampling for /v1/health reduced to 1%",
+   "entry": "Thread B (inventory-svc, checkout-api): cause MEMORY_LEAK (round-07/board.md:3); status ongoing.",
+   "label": "affected",
+   "kind": "status_supersede",
+   "justification": "Thread B's status changes to mitigated; its cause and services are unchanged."
+  },
+  {
+   "id": "u-15",
+   "split": "frozen",
+   "update_id": "U5",
+   "update_source": "rounds-diag-1 round 10 (round-files/1)",
+   "update": "round-10/board.md:3: - Thread B status: mitigated (workaround in place; permanent fix pending).\nround-10/board.md:4: - Thread C note: failing pods still restarting; investigation continues.\nround-10/board.md:5: - Thread D closed: false alarm (synthetic monitor misconfigured); not an incident.\nround-10/changes.md:3: - CHG-170 APPLIED: log sampling for /v1/health reduced to 1%",
+   "entry": "Thread C (shipping-svc): pods failing, cause not yet identified (round-09/board.md:4); status ongoing.",
+   "label": "unaffected",
+   "kind": "partial_unchanged",
+   "justification": "The round-10 note for thread C says investigation continues; nothing the entry asserts changes."
+  },
+  {
+   "id": "u-16",
+   "split": "frozen",
+   "update_id": "U6",
+   "update_source": "rounds-diag-1 round 9 (round-files/1)",
+   "update": "round-09/board.md:3: - Thread B update: affected services now also include checkout-api; cause and status unchanged.\nround-09/board.md:4: - Thread C opened: request failures on some shipping-svc pods; cause not yet identified. Status: ongoing.",
+   "entry": "R2: CHG-120 rolled out build 5.26.1 to shipping-svc with db.pool_max=-4 (round-02/changes.md:4). No shipping-svc errors seen yet; next: watch shipping-svc.",
+   "label": "affected",
+   "kind": "early_fact_connection",
+   "justification": "The update reports shipping-svc pod failures, contradicting 'no shipping-svc errors seen yet' and triggering the entry's watch."
+  },
+  {
+   "id": "u-17",
+   "split": "frozen",
+   "update_id": "U6",
+   "update_source": "rounds-diag-1 round 9 (round-files/1)",
+   "update": "round-09/board.md:3: - Thread B update: affected services now also include checkout-api; cause and status unchanged.\nround-09/board.md:4: - Thread C opened: request failures on some shipping-svc pods; cause not yet identified. Status: ongoing.",
+   "entry": "Thread B: MEMORY_LEAK (round-07/board.md:3) in inventory-svc; status ongoing.",
+   "label": "affected",
+   "kind": "partial_change",
+   "justification": "Thread B's affected services now also include checkout-api; the entry lists only inventory-svc."
+  },
+  {
+   "id": "u-18",
+   "split": "frozen",
+   "update_id": "U6",
+   "update_source": "rounds-diag-1 round 9 (round-files/1)",
+   "update": "round-09/board.md:3: - Thread B update: affected services now also include checkout-api; cause and status unchanged.\nround-09/board.md:4: - Thread C opened: request failures on some shipping-svc pods; cause not yet identified. Status: ongoing.",
+   "entry": "Thread A resolved at round 8 (round-08/board.md:3); cause DB_POOL_EXHAUSTED; services notify-worker, ledger-svc.",
+   "label": "unaffected",
+   "kind": "unrelated",
+   "justification": "Round 9 does not mention thread A."
+  },
+  {
+   "id": "u-19",
+   "split": "frozen",
+   "update_id": "U7",
+   "update_source": "rounds-diag-2 round 5 (round-files/1)",
+   "update": "round-05/board.md:3: - Thread B update: affected services now also include ledger-svc; cause and status unchanged.\nround-05/board.md:4: - Thread D closed: false alarm (synthetic monitor misconfigured); not an incident.\nround-05/board.md:5: - Follow-up OPEN CAPACITY_REVIEW: capacity review of the affected tier.\nround-05/changes.md:3: - CHG-136 PROPOSED: raise HPA max replicas for search tier (not applied)",
+   "entry": "Thread D: DNS_RESOLUTION alerts on pricing-svc (round-02/board.md:4), ongoing; keep as a separate incident.",
+   "label": "affected",
+   "kind": "false_alarm_closed",
+   "justification": "Thread D is closed as a false alarm, contradicting its status and the plan to keep it."
+  },
+  {
+   "id": "u-20",
+   "split": "frozen",
+   "update_id": "U7",
+   "update_source": "rounds-diag-2 round 5 (round-files/1)",
+   "update": "round-05/board.md:3: - Thread B update: affected services now also include ledger-svc; cause and status unchanged.\nround-05/board.md:4: - Thread D closed: false alarm (synthetic monitor misconfigured); not an incident.\nround-05/board.md:5: - Follow-up OPEN CAPACITY_REVIEW: capacity review of the affected tier.\nround-05/changes.md:3: - CHG-136 PROPOSED: raise HPA max replicas for search tier (not applied)",
+   "entry": "Thread A (pricing-svc, search-api): CERT_EXPIRED; mitigated at round 4 (round-04/board.md:3) via CHG-136 APPLIED.",
+   "label": "unaffected",
+   "kind": "partial_unchanged",
+   "justification": "Round 5 says nothing about thread A."
+  },
+  {
+   "id": "u-21",
+   "split": "frozen",
+   "update_id": "U7",
+   "update_source": "rounds-diag-2 round 5 (round-files/1)",
+   "update": "round-05/board.md:3: - Thread B update: affected services now also include ledger-svc; cause and status unchanged.\nround-05/board.md:4: - Thread D closed: false alarm (synthetic monitor misconfigured); not an incident.\nround-05/board.md:5: - Follow-up OPEN CAPACITY_REVIEW: capacity review of the affected tier.\nround-05/changes.md:3: - CHG-136 PROPOSED: raise HPA max replicas for search tier (not applied)",
+   "entry": "Note: CHG-136 is the applied mitigation for thread A (round-04/changes.md:4).",
+   "label": "ambiguous",
+   "kind": "proposed_vs_applied",
+   "justification": "Round 5 lists a CHG-136 PROPOSED replica change (not applied), reusing the same id; whether that requires reconsidering the entry is a matter of judgment."
+  },
+  {
+   "id": "u-22",
+   "split": "frozen",
+   "update_id": "U8",
+   "update_source": "rounds-diag-2 round 7 (round-files/1)",
+   "update": "round-07/board.md:3: - Thread A status: resolved (no recurrence for two hours).\nround-07/board.md:4: - Thread B root cause revised: a data volume running out of space (DISK_PRESSURE); this supersedes the earlier suspicion of CACHE_STAMPEDE.\nround-07/board.md:5: - Thread C opened: request failures on some notify-worker pods; cause not yet identified. Status: ongoing.",
+   "entry": "Summary so far: A CERT_EXPIRED pricing-svc+search-api, mitigated; B CACHE_STAMPEDE suspected, inventory-svc+ledger-svc, ongoing; D false alarm (closed r5). Follow-ups open: VENDOR_TICKET, CAPACITY_REVIEW, ALERT_TUNING, POSTMORTEM_DRAFT.",
+   "label": "affected",
+   "kind": "multi_fact",
+   "justification": "Thread A becomes resolved and thread B's cause is revised; the follow-up part is unchanged."
+  },
+  {
+   "id": "u-23",
+   "split": "frozen",
+   "update_id": "U8",
+   "update_source": "rounds-diag-2 round 7 (round-files/1)",
+   "update": "round-07/board.md:3: - Thread A status: resolved (no recurrence for two hours).\nround-07/board.md:4: - Thread B root cause revised: a data volume running out of space (DISK_PRESSURE); this supersedes the earlier suspicion of CACHE_STAMPEDE.\nround-07/board.md:5: - Thread C opened: request failures on some notify-worker pods; cause not yet identified. Status: ongoing.",
+   "entry": "Thread B affected services: inventory-svc (round-03/board.md:3) and ledger-svc (round-05/board.md:3).",
+   "label": "unaffected",
+   "kind": "partial_unchanged",
+   "justification": "The cause revision does not change thread B's services."
+  },
+  {
+   "id": "u-24",
+   "split": "frozen",
+   "update_id": "U8",
+   "update_source": "rounds-diag-2 round 7 (round-files/1)",
+   "update": "round-07/board.md:3: - Thread A status: resolved (no recurrence for two hours).\nround-07/board.md:4: - Thread B root cause revised: a data volume running out of space (DISK_PRESSURE); this supersedes the earlier suspicion of CACHE_STAMPEDE.\nround-07/board.md:5: - Thread C opened: request failures on some notify-worker pods; cause not yet identified. Status: ongoing.",
+   "entry": "Open question: CHG-113 set db.pool_max=0 for notify-worker in round 1 (round-01/changes.md:3); no notify-worker errors linked to it yet.",
+   "label": "ambiguous",
+   "kind": "early_fact_question",
+   "justification": "Thread C opens on notify-worker with cause unknown. It does not contradict the entry, but it bears on the open question; readers could disagree."
+  }
+ ]
+}

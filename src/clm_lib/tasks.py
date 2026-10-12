@@ -99,6 +99,14 @@ INSTANCES: dict[str, InstanceSpec] = {
         for split, n, seed0 in (("dev", 2, 7100), ("eval", 4, 7200))
         for i in range(1, n + 1)
     },
+    # Experiment 009: separate instances for diagnostic case text and the integration smoke run
+    # (never used for pilot or evaluation comparisons).
+    **{
+        f"rounds-diag-{i}": InstanceSpec(
+            f"rounds-diag-{i}", 7300 + i, "incident_rounds", "rounds-diag"
+        )
+        for i in range(1, 3)
+    },
 }
 HELDOUT = ("heldout-1", "heldout-2", "heldout-3")
 STAGED_EVAL = ("staged-eval-1", "staged-eval-2", "staged-eval-3")

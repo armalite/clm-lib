@@ -14,6 +14,7 @@
 | 006: prompt-caching comparison | On the experiment-004 coding task, with a shared block layout and explicit 5-minute cache breakpoints, all 48 runs were strictly successful. With caching on, CLM was about 35% cheaper than the baseline (27% with caching off) and about 20% faster either way. | [006](https://github.com/armalite/clm-lib-test-results/tree/main/experiments/006-prompt-caching-comparison) |
 | 007: reusable context-management helpers | On a 10–12-round incident task, CLM did not create helpers when merely allowed (initial calibration). With the strategy instructed (revised phase, 24 runs), strict success was baseline 4/8, direct editing 6/8, reusable functions 7/8; both CLM strategies were about a third cheaper and a quarter faster than the baseline in every block, with no clear difference between them. Two CLM-only runtime defects were found and fixed. | [007](https://github.com/armalite/clm-lib-test-results/tree/main/experiments/007-reusable-context-helpers) |
 | 008: optional Jev context review | Opt-in, host-mediated `review_context` action (current revision only). Diagnostic: 10/10 affected and 1/12 unaffected labelled entries flagged. Pilot (4 runs): all succeeded; the agent never used the optional action, so no effect is shown. Larger evaluation not run. | [008](https://github.com/armalite/clm-lib-test-results/tree/main/experiments/008-jev-context-review) |
+| 009: update-triggered Jev review (strategy 1) | Both arms see the same round update and review instruction; only the assisted arm gets Jev per-entry advice before the next call. Diagnostic: 12/13 affected and 1/9 unaffected flagged. Pilot (4 runs): all succeeded; cheaper and faster on means in the assisted arm, from two pairs with pacing differences, so no effect is shown. Strategies 2 and 3 are planned only. | [009](https://github.com/armalite/clm-lib-test-results/tree/main/experiments/009-jev-update-review) |
 
 The previous, longer version of this file is archived verbatim in the results repository as [`notes/clm-lib-results-log-2026-10-04.md`](https://github.com/armalite/clm-lib-test-results/blob/main/notes/clm-lib-results-log-2026-10-04.md). The draft blog notes moved there too, to [`notes/blog-notes.md`](https://github.com/armalite/clm-lib-test-results/blob/main/notes/blog-notes.md).
 
@@ -26,7 +27,7 @@ The active ledger is `runs/ledger.json` in this repository (gitignored). Totals 
 - for the 007 initial phase, to USD 61.140;
 - for the 007 revised phase, to USD 63.713 (each later change: spend at the change + USD 30).
 
-It was never reset. On 2026-10-12 the ceiling was set explicitly to USD 56.994 (spend + USD 10, for experiment 008). Experiment 008 then spent USD 1.415 (Anthropic 1.4147, TypeSafe 0.0004), leaving USD 48.409 spent. Live commands now need a config whose ceiling is not below USD 56.994, such as `configs/exp008.toml`. Historical snapshots are exported to the results repository's `ledger-snapshots/`.
+It was never reset. On 2026-10-12 the ceiling was set explicitly to USD 56.994 (spend + USD 10, for experiment 008). Experiment 008 then spent USD 1.415 (Anthropic 1.4147, TypeSafe 0.0004), leaving USD 48.409 spent. On 2026-10-13 the ceiling was set explicitly to USD 58.409 (spend + USD 10 new, for experiment 009; 008's unused allowance did not carry over). Experiment 009 then spent USD 1.801 (Anthropic 1.7983, TypeSafe 0.0028), leaving USD 50.210 spent. Live commands now need a config whose ceiling is not below USD 58.409, such as `configs/exp009.toml`. Historical snapshots are exported to the results repository's `ledger-snapshots/`.
 
 ## Live accounting checks
 
@@ -111,7 +112,7 @@ Live phases: **still not run**. `ANTHROPIC_API_KEY` is still unset in the agent 
 - the spill fix;
 - schedule balance.
 
-With ruff, format and mypy clean, **132 passed**. The revised 007 phase adds the `clm_reuse` condition, phase labels in exports, helper categories and adherence, and the `recheck_after_notice` fix. With these, **138 passed**. Experiment 008 adds `tests/test_jev.py`, including the review-revision boundary tests; with it, **160 passed**.
+With ruff, format and mypy clean, **132 passed**. The revised 007 phase adds the `clm_reuse` condition, phase labels in exports, helper categories and adherence, and the `recheck_after_notice` fix. With these, **138 passed**. Experiment 008 adds `tests/test_jev.py`, including the review-revision boundary tests; with it, **160 passed**. Experiment 009 adds `tests/test_update_review.py`; with it, **171 passed**.
 
 ## Request layouts and prompt caching (2026-10-05)
 

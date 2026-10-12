@@ -310,6 +310,9 @@ def build_report(
         mode = m["mode"]
         if (m.get("jev") or {}).get("enabled"):
             mode = f"{mode} + Jev review"
+        upd = (m.get("update_review") or {}).get("mode", "off")
+        if upd != "off":
+            mode = f"{mode} + update review{' with Jev advice' if upd == 'jev' else ''}"
         if rq.get("layout", "single-user/1") != "single-user/1":
             mode = f"{mode} ({rq['layout']}, caching {rq.get('prompt_caching', 'off')})"
         label = m.get("label", "")

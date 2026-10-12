@@ -14,7 +14,9 @@ from .context import Entry
 # 2026-10-05.2 adds the revised experiment-007 clause (clm_reuse); all other texts unchanged.
 # 2026-10-12.1 adds the optional experiment-008 Jev review notice (JEV_CLAUSE); all other texts
 # unchanged.
-PROMPT_VERSION = "2026-10-12.1"
+# 2026-10-13.1 adds the experiment-009 update-review clauses (UPDATE_REVIEW_CLAUSE for both arms,
+# UPDATE_REVIEW_JEV_CLAUSE for the assisted arm); all other texts unchanged.
+PROMPT_VERSION = "2026-10-13.1"
 
 PROTOCOL = """You are {agent_role} working through a strict JSON protocol.
 
@@ -178,6 +180,25 @@ CONTEXT REVIEW ADVICE (optional, this run):
   {max_reviews} reviews per task); if the service fails you get a notice instead of advice.
 """
 
+
+# Experiment 009 (strategy 1, update-review/1): identical in both arms of the comparison.
+UPDATE_REVIEW_CLAUSE = """
+UPDATE REVIEW (this run):
+- When a new round is released, the observation also shows that round's incident-board and
+  change-log lines verbatim, with their file:line references (logs are not included; read them
+  from the files as usual), and the context revision that was current at the release.
+- At each such update, consider whether it affects your existing working context. You may leave
+  the context unchanged, edit part of an entry, keep facts as history, consolidate or remove
+  entries, or use your own helpers. No edit is required.
+"""
+
+# Experiment 009, assisted arm only: explains the advice that accompanies each update.
+UPDATE_REVIEW_JEV_CLAUSE = """- With each update the runtime also asks a fast classifier (Jev), for every entry of that context
+  revision, for the probability that the update requires reconsidering a current assertion or
+  planned action in the entry. The advice is probabilistic and can be wrong, and it never edits
+  your context. A low probability is not a reason to delete an entry, and a high one does not mean
+  the entry is wrong. You decide whether and how to edit.
+"""
 
 SUMMARY_SYSTEM_TOKEN_TAIL_ROUNDS = """You compress an agent's working transcript. The agent is
 investigating a multi-service production incident whose evidence arrives in hourly rounds, and will

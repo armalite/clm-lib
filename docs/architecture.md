@@ -246,6 +246,16 @@ Ground truth exists only in memory until the run ends, then goes to `evaluator/`
 - **Exports:** they add `jev_*` metrics columns and `cost_anthropic_usd` / `cost_typesafe_usd`, and copy `diagnostics: [...]` from `runs/jev-diagnostic/` to `artifacts/diagnostics/` (immutable). Reports label runs "+ Jev review".
 - **Tests:** `tests/test_jev.py`.
 
+## Update-triggered context review (experiment 009, strategy 1)
+
+- **Hook:** `_Run.advance_step` appends `update_review(released)` to the release observation when the run's mode is `control` or `jev`. The payload comes from `update_review.build_payload` (mechanical: board then change-log lines with `file:line` prefixes; no logs).
+- **Advice:** in the assisted arm the candidates are `store.current.entries`, the revision shown in that step's request, read **before** the advance step's own entries are appended. Scoring goes through `_jev_score`, shared with the §19 action, so the experiment-008 output text and accounting are unchanged. The advice block uses the shared `_advice_lines`.
+- **Same point in both arms:** the update block and its position are the same in both arms; the advice is appended after it. No extra model call is made, so cache prefixes are unaffected apart from the appended text.
+- **Evidence:** `update_review_summary()` relates each update to the accepted edits before the next update (from `edit_log`), in both arms, so control-arm edits after updates are directly comparable.
+- **Conditions:** `CONDITION_FLAGS` in `cli.py` maps `+jev`, `+upd` and `+upd-jev` to the 008 action and update-review modes. `conditions_need_jev` decides whether an advisor is built.
+- **Tests:** `tests/test_update_review.py`.
+- **Planned, not implemented:** Claude-initiated review (strategy 2) and proposed-edit checks (strategy 3). Their designs live in the results repository's roadmap.
+
 ## Design choices
 
 - **JSON-lines transcript with escaping** instead of nonce delimiters: it's simple and can't be forged.

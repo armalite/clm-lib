@@ -269,6 +269,32 @@ def _metrics_row(run_id: str, role: str, src: Path, charged: float) -> dict[str,
         )
     elif "jev" in m:
         row["jev_enabled"] = False
+    ur = m.get("update_review") or {}
+    if ur.get("mode", "off") != "off":  # experiment 009: update-triggered context review
+        recs = ur.get("records", [])
+        row.update(
+            update_review=ur["mode"],
+            ur_payload_version=ur["payload_version"],
+            ur_updates=ur["updates"],
+            ur_updates_with_payload=ur["updates_with_payload"],
+            ur_updates_advised=ur["updates_advised"],
+            ur_updates_advice_failed=ur["updates_advice_failed"],
+            ur_entries_scored=ur["entries_scored"],
+            ur_appended_chars=ur["appended_chars"],
+            ur_advice_chars=ur["advice_chars"],
+            ur_jev_attempts=ur["jev_attempts"],
+            ur_jev_input_tokens=ur["jev_input_tokens"],
+            ur_jev_cost_usd=ur["jev_cost_usd"],
+            ur_jev_latency_s=ur["jev_latency_s"],
+            ur_candidates=sum(len(r["candidate_ids"]) for r in recs),
+            ur_candidates_changed=sum(len(r["candidates_changed"]) for r in recs),
+            ur_flagged=sum(len(r["flagged"]) for r in recs),
+            ur_flagged_then_changed=sum(len(r["flagged_then_changed"]) for r in recs),
+            ur_flagged_not_changed=sum(len(r["flagged_not_changed"]) for r in recs),
+            ur_unflagged_then_changed=sum(len(r["unflagged_then_changed"]) for r in recs),
+            ur_updates_followed_by_edit=sum(1 for r in recs if r["later_accepted_edits"]),
+            ur_models=json.dumps(sorted({x for r in recs for x in r.get("models", [])})),
+        )
     by_provider = (m.get("cost") or {}).get("by_provider")
     if by_provider:
         row["cost_anthropic_usd"] = by_provider["anthropic"]

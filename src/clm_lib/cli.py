@@ -389,7 +389,9 @@ def _jev_advisor(cfg: Config) -> tuple[Any, Any]:
 def _live_runner(cfg: Config, max_usd: float | None, need_jev: bool = False) -> Runner:
     ledger = _ledger(cfg, max_usd)
     prov, price, ex = _live_preflight(cfg, ledger)
-    jev, jev_price = _jev_advisor(cfg) if (need_jev or cfg.jev.enabled) else (None, None)
+    ur = cfg.update_review
+    wanted = need_jev or cfg.jev.enabled or (ur.enabled and ur.advice)
+    jev, jev_price = _jev_advisor(cfg) if wanted else (None, None)
     return Runner(
         cfg,
         prov,
@@ -406,7 +408,8 @@ def _live_runner(cfg: Config, max_usd: float | None, need_jev: bool = False) -> 
 def cmd_run(args: argparse.Namespace) -> int:
     cfg = _config(args)
     jev = None if args.jev == "config" else args.jev == "on"
-    runner = _live_runner(cfg, args.max_usd, need_jev=bool(jev))
+    upd = None if args.update_review == "config" else args.update_review
+    runner = _live_runner(cfg, args.max_usd, need_jev=bool(jev) or upd == "jev")
     caching = None if args.caching == "config" else args.caching == "on"
     res = runner.run(
         generate(args.task),
@@ -414,6 +417,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         label=args.label or "single run",
         caching=caching,
         jev=jev,
+        update_review=upd,
     )
     _print_result(res)
     return 0
@@ -491,15 +495,35 @@ ORDERS_3 = ((0, 1, 2), (1, 2, 0), (2, 0, 1), (2, 1, 0), (0, 2, 1), (1, 0, 2))
 CONDITION_MODES = ("summary", "clm", "clm_direct", "clm_helpers", "clm_reuse")
 
 
+# Per-run condition flags after "+": (experiment-008 review action, experiment-009 update review).
+CONDITION_FLAGS: dict[str, tuple[bool, str]] = {
+    "": (False, "off"),
+    "jev": (True, "off"),
+    "upd": (False, "control"),
+    "upd-jev": (False, "jev"),
+}
+
+
+def conditions_need_jev(text: str | None) -> bool:
+    return any(
+        CONDITION_FLAGS.get(p.split(":")[0].partition("+")[2], (False, "off"))
+        in ((True, "off"), (False, "jev"))
+        for p in (text or "").split(",")
+    )
+
+
 def parse_conditions(text: str) -> list[tuple[str, bool]]:
     """``summary:off,summary:on,clm:off,clm:on`` -> [(mode, caching), ...]. A mode may carry
-    ``+jev`` (experiment 008: Jev context review on), e.g. ``clm_helpers+jev:on``."""
+    ``+jev`` (experiment 008: Jev context review on), e.g. ``clm_helpers+jev:on``, or
+    ``+upd`` / ``+upd-jev`` (experiment 009: update-triggered review, without or with Jev)."""
     out = []
     for part in text.split(","):
         mode, _, cache = part.strip().partition(":")
         base, _, flag = mode.partition("+")
-        if flag not in ("", "jev"):
-            raise ValueError(f"bad condition {part!r}; only '+jev' may follow a mode")
+        if flag not in CONDITION_FLAGS:
+            raise ValueError(
+                f"bad condition {part!r}; only '+jev', '+upd' or '+upd-jev' may follow a mode"
+            )
         if base not in CONDITION_MODES or cache not in ("on", "off"):
             raise ValueError(
                 f"bad condition {part!r}; expected <{'|'.join(CONDITION_MODES)}>:<on|off>"
@@ -615,9 +639,10 @@ def run_matrix(
             task, rep, mode = cell["task"], cell["rep"], cell["mode"]
             caching = None if "caching" not in cell else cell["caching"] == "on"
             jev = None
-            if "caching" in cell:  # condition schedules: +jev is explicit, otherwise off
+            upd = None
+            if "caching" in cell:  # condition schedules: flags are explicit, otherwise off
                 mode, _, flag = mode.partition("+")
-                jev = flag == "jev"
+                jev, upd = CONDITION_FLAGS[flag]
             cell["pair"] = pair
             if not stopped and runner.ledger.remaining_usd < cfg.budget.min_run_reserve_usd:
                 stopped = (
@@ -633,6 +658,7 @@ def run_matrix(
                     label=f"compare {stamp} pair {pair} rep {rep}",
                     caching=caching,
                     jev=jev,
+                    update_review=upd,
                 )
                 _print_result(res)
                 m = res.metrics
@@ -666,7 +692,7 @@ def run_matrix(
 
 def cmd_compare(args: argparse.Namespace) -> int:
     cfg = _config(args)
-    runner = _live_runner(cfg, args.max_usd, need_jev="+jev" in (args.conditions or ""))
+    runner = _live_runner(cfg, args.max_usd, need_jev=conditions_need_jev(args.conditions))
     tasks = args.tasks.split(",") if args.tasks else list(HELDOUT)
     stamp = f"{datetime.now(UTC):%Y%m%dT%H%M%S}"
     out = _runs_dir(cfg) / "comparisons" / f"{stamp}.json"
@@ -787,6 +813,12 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("config", "on", "off"),
         default="config",
         help="experiment 008 Jev context review for this run (default: jev.enabled)",
+    )
+    r.add_argument(
+        "--update-review",
+        choices=("config", "off", "control", "jev"),
+        default="config",
+        help="experiment 009 update-triggered review for this run (default: [update_review])",
     )
     r.set_defaults(func=cmd_run)
 

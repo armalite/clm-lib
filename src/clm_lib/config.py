@@ -95,6 +95,21 @@ class JevConfig:
 
 
 @dataclass
+class UpdateReviewConfig:
+    # Experiment 009 (strategy 1): update-triggered context review, off by default. When a new
+    # round is released, the runtime shows that round's update payload and asks the model to
+    # consider its existing context; with advice on, Jev scores the current entries first.
+    # `enabled`/`advice` set the per-run default; `compare --conditions <mode>+upd[-jev]:on`
+    # overrides them. Jev client settings (model, timeout, retries, batch size) come from [jev].
+    enabled: bool = False
+    advice: bool = False  # True: Jev advice on the current entries accompanies each update
+    payload: str = "round-files/1"  # the only payload version (see SPEC section 20)
+    max_payload_chars: int = 4000  # longer payloads are cut at a line boundary (both arms)
+    max_candidates: int = 60  # entries scored per update; any beyond are listed as not assessed
+    max_batch_chars: int = 60000  # entry characters per Jev request (with batch_size from [jev])
+
+
+@dataclass
 class BudgetConfig:
     ceiling_usd: float = 10.0
     min_run_reserve_usd: float = 0.75
@@ -119,6 +134,7 @@ class Config:
     sandbox: SandboxConfig = field(default_factory=SandboxConfig)
     request: RequestConfig = field(default_factory=RequestConfig)
     jev: JevConfig = field(default_factory=JevConfig)
+    update_review: UpdateReviewConfig = field(default_factory=UpdateReviewConfig)
     runs_dir: str = "runs"
 
     def to_dict(self) -> dict[str, Any]:
@@ -145,6 +161,7 @@ def load_config(path: Path | None) -> Config:
         "sandbox": SandboxConfig,
         "request": RequestConfig,
         "jev": JevConfig,
+        "update_review": UpdateReviewConfig,
     }
     kwargs: dict[str, Any] = {}
     for key, cls in sections.items():

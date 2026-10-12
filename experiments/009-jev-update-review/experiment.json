@@ -1,0 +1,81 @@
+{
+ "id": "009-jev-update-review",
+ "title": "Update-triggered Jev context review (strategy 1): does affected-entry advice help Claude review its context when new evidence arrives?",
+ "provenance": {
+  "source_repo": "https://github.com/armalite/clm-lib",
+  "base_commit": "3733c9c",
+  "tree_state": "HEAD 3733c9c plus uncommitted experiment-009 changes (update_review.py, runner update_review/update_review_summary, [update_review] config, prompt clauses 2026-10-13.1, +upd/+upd-jev conditions, ur_* export columns, rounds-diag split, exp009 config, tests); patch saved by compare as artifacts/comparisons/<stamp>/<stamp>.patch",
+  "generator_version": "incident-rounds-gen/1",
+  "scorer": "rounds-score/1",
+  "payload_version": "round-files/1",
+  "question_version": "jev-review/1",
+  "jev_model": "jev-1.13.0",
+  "prompt_version": "2026-10-13.1",
+  "request_layout": "blocks/1, caching on, 5m, run-tag/1",
+  "diagnostic_cases": "experiments/009-jev-update-review/diagnostic-cases-v1.json (jev-diag/2, sha256 6874c0693b0ac736cbcf1949ef8a77655e4766aa9cb139586db16ba8f69fae5d)",
+  "jev_price": "USD 0.042 per million input tokens, output free (docs.typesafe.ai/models, retrieved 2026-10-12)",
+  "budget": "ledger ceiling set explicitly from USD 56.993902 to USD 58.408962 (spend USD 48.408962 + USD 10 new) for the initial experiment-009 work (smoke, diagnostics, pilot); the unused experiment-008 allowance does not carry over"
+ },
+ "settings": {
+  "config": "configs/exp009.toml",
+  "conditions": [
+   "clm_helpers+upd:on",
+   "clm_helpers+upd-jev:on"
+  ],
+  "pilot_tasks": [
+   "rounds-dev-1",
+   "rounds-dev-2"
+  ],
+  "pilot_repetitions": 1,
+  "smoke_task": "rounds-diag-2"
+ },
+ "phases": {
+  "smoke": "one assisted run on rounds-diag-2 verifying the in-loop live path; excluded from comparisons",
+  "diagnostic": "fresh jev-diag/2 cases on round-files/1 payloads (runs/jev-diagnostic/20261012T115847-frozen)",
+  "reference": "experiment 008's frozen diagnostic rerun unchanged as a model-stability check; already-observed cases, not new evidence (runs/jev-diagnostic/20261012T115851-frozen)",
+  "pilot": "2 development instances x 2 conditions, comparison 20261012T115926",
+  "evaluation": "planned only; needs fresh instances and separate authorisation"
+ },
+ "runs": [
+  {
+   "run_id": "20261012T115543-clm_helpers-cacheon-updjev-rounds-diag-2-f112",
+   "role": "smoke",
+   "phase": "smoke",
+   "note": "assisted arm on rounds-diag-2: live in-loop plumbing check, excluded from comparisons"
+  },
+  {
+   "run_id": "20261012T115926-clm_helpers-cacheon-upd-rounds-dev-1-68c7",
+   "role": "calibration",
+   "phase": "pilot",
+   "note": "pilot pair 0 position 0: A (control) on rounds-dev-1"
+  },
+  {
+   "run_id": "20261012T120202-clm_helpers-cacheon-updjev-rounds-dev-1-284f",
+   "role": "calibration",
+   "phase": "pilot",
+   "note": "pilot pair 0 position 1: B (Jev advice) on rounds-dev-1"
+  },
+  {
+   "run_id": "20261012T120354-clm_helpers-cacheon-updjev-rounds-dev-2-f1f3",
+   "role": "calibration",
+   "phase": "pilot",
+   "note": "pilot pair 1 position 0: B (Jev advice) on rounds-dev-2"
+  },
+  {
+   "run_id": "20261012T120608-clm_helpers-cacheon-upd-rounds-dev-2-fe3f",
+   "role": "calibration",
+   "phase": "pilot",
+   "note": "pilot pair 1 position 1: A (control) on rounds-dev-2"
+  }
+ ],
+ "comparisons": [
+  "20261012T115926"
+ ],
+ "comparison_phases": {
+  "20261012T115926": "pilot"
+ },
+ "diagnostics": [
+  "20261012T115847-frozen",
+  "20261012T115851-frozen"
+ ]
+}

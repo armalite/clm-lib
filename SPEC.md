@@ -1,6 +1,6 @@
 # clm-lib: Technical Specification
 
-Version: 2.0 | 5 October 2026
+Version: 2.1 | 13 October 2026
 
 Repository: `clm-lib` | Python package: `clm_lib` | CLI: `clm-lib`
 
@@ -13,6 +13,7 @@ Version history:
 - 1.5: adds a selectable, versioned summary-baseline policy (§14) for experiment 003. The original policy stays the default.
 - 1.6: adds a coding task family with changing requirements and a sandboxed evaluator (§15), and an explicit, recorded ledger-ceiling change.
 - 2.0: adds an optional, host-mediated context-review action backed by TypeSafe Jev (§19), off by default.
+- 2.1: adds update-triggered context review with optional Jev advice (§20), off by default. Other Jev-assistance strategies on the roadmap (Claude-initiated review, proposed-edit checks) are planned only and are not specified or supported.
 - 1.9: adds a multi-round incident task family, two CLM capability variants (direct editing only; reusable helpers allowed), a separate summary-call allowance, helper-evidence tiers and a three-condition schedule (§18).
 - 1.8: adds a versioned request layout (`blocks/1`), optional provider prompt caching with explicit breakpoints, per-run cache isolation, cache-aware accounting evidence, and a four-condition comparison schedule (§17).
 - 1.7: adds a second coding generator with interacting, partially changing rules, an evaluator with richer categories, exact type checks and stage snapshots (§16), a balanced comparison order, and per-task scorer metadata in comparisons and exports.
@@ -427,3 +428,29 @@ The summary baseline's policy is selected by `[baseline] policy`, and recorded i
 - **Status line:** `limits.status_shows_revision` adds the current context revision number to `<runtime_status>`, for both arms of a comparison.
 - **Diagnostic:** `clm-lib jev-diagnostic` runs labelled (update, entry) cases through the same request builder. It reports flags and misses at a reporting threshold fixed in the case file; that threshold is never an editing policy.
 - **Limitation:** sandboxed helper code cannot call Jev. Advice is available only as a separate action whose result is used in a later step.
+
+## 20. Update-triggered context review (experiment 009, strategy 1)
+
+- **Opt-in:** `[update_review] enabled` and `advice` (both default false), or the per-run conditions `<clm mode>+upd` (control) and `<clm mode>+upd-jev` (assisted). It is available to CLM modes on `rounds` tasks only. It is exclusive with the §19 action, which stays off. Every earlier configuration, prompt text and release observation is unchanged.
+- **Trigger:** each release of rounds 2…n through `advance`.
+- **Payload (`round-files/1`, `update_review.build_payload`):**
+  - **Content:** the released round's `board.md` lines, then its `changes.md` lines, verbatim, each prefixed `round-NN/<file>:<line>:`.
+  - **Processing:** blank and `#` heading lines are dropped. A payload over `max_payload_chars` is cut at a line boundary with a marker.
+  - **Never included:** logs. No other processing is applied.
+- **Presentation (both arms):**
+  - **The release observation** keeps its historical text and gains an `UPDATE (round-files/1; context revision R was current at this release)` block with the payload and "Consider whether this update affects your working context." An empty payload is reported as "No incident-board or change-log lines were released this round."
+  - **The system prompt** gains `UPDATE_REVIEW_CLAUSE`; the assisted arm also gains `UPDATE_REVIEW_JEV_CLAUSE` (prompt version `2026-10-13.1`).
+- **Advice (assisted arm):**
+  - **When:** before the next main-model call, on the host, inside the advance step. It costs no extra model turn.
+  - **Candidates:** every entry of the current revision (the context shown in that step's request), in order. At most `max_candidates` are scored, and any beyond are listed as "not assessed".
+  - **Questions:** one `noul` question per candidate (`jev-review/1`), with the payload as `state.update`. Batches hold up to `[jev] batch_size` questions and `max_batch_chars` entry characters.
+  - **Observation:** the advice is appended in the §19 format. Failures give "no answer" plus a service notice, and the run continues.
+  - **Unchanged:** no context entry is changed, and no edit is approved or rejected.
+  - **Not called:** for an empty payload or an empty context.
+- **Accounting and evidence:**
+  - **Ledger:** Jev attempts use the §19 ledger path (kind `jev`), and `summary.json → jev.source` is `update_review`.
+  - **`summary.json → update_review`:**
+    - **Per update:** step, stage, revision, the payload and its SHA-256, sources, candidate and not-assessed ids, status, answers, models, errors, attempts, Jev tokens, cost and latency, appended and advice characters.
+    - **Later accepted edits:** before the next update, with candidates changed, flagged then changed, flagged not changed, and unflagged then changed. These are temporal association only.
+  - **Exports:** `ur_*` columns.
+- **Diagnostic instances:** `rounds-diag-1..2` (seeds 7301–7302) are reserved for diagnostic case text and smoke runs.

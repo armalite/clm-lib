@@ -72,7 +72,8 @@ def revisions(run_dir: Path) -> list[dict[str, Any]]:
 
 # ------------------------------------------------------------- historical behaviour, opt-in
 def test_historical_configs_and_prompts_are_unchanged() -> None:
-    historical = [p for p in sorted((REPO / "configs").glob("exp*.toml")) if p.stem != "exp008"]
+    # Configs written before experiment 008 (later experiments set their own flags).
+    historical = [p for p in sorted((REPO / "configs").glob("exp*.toml")) if p.stem < "exp008"]
     for p in [*historical, REPO / "configs" / "default.toml"]:
         c = load_config(p)
         assert c.jev.enabled is False and c.limits.status_shows_revision is False, p.name

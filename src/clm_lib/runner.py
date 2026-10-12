@@ -18,6 +18,7 @@ and counts, never removed content.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import secrets
@@ -47,6 +48,8 @@ from .prompts import (
     PROMPT_VERSION,
     SUMMARY_SYSTEM_TOKEN_TAIL_CODING,
     SUMMARY_SYSTEM_TOKEN_TAIL_ROUNDS,
+    UPDATE_REVIEW_CLAUSE,
+    UPDATE_REVIEW_JEV_CLAUSE,
     render_entries,
     render_user,
     render_user_blocks,
@@ -71,6 +74,7 @@ from .tasks import (
     scorer_version_for,
 )
 from .tracing import RunTrace, now_iso, sha256_text, snapshot_files
+from .update_review import PAYLOAD_VERSION, build_payload
 
 MODES = ("summary", "clm", "guided", "clm_direct", "clm_helpers", "clm_reuse")
 # Experiment 007 CLM conditions: the same capabilities, with a direct-editing-only clause or a
@@ -276,9 +280,12 @@ class Runner:
         label: str = "",
         caching: bool | None = None,
         jev: bool | None = None,
+        update_review: str | None = None,
     ) -> RunResult:
         """``caching`` overrides ``request.prompt_caching`` for this run (four-condition runs);
-        ``jev`` overrides ``jev.enabled`` (experiment 008; CLM modes only)."""
+        ``jev`` overrides ``jev.enabled`` (experiment 008; CLM modes only). ``update_review``
+        ("off", "control" or "jev") overrides ``[update_review]`` (experiment 009; CLM modes and
+        rounds tasks only)."""
         if mode not in MODES:
             raise ValueError(f"mode must be one of {MODES}")
         req = self.cfg.request
@@ -293,9 +300,45 @@ class Runner:
             raise ValueError("Jev context review is available to CLM modes only")
         if jev_on and self.jev is None:
             raise ValueError("Jev context review requested but no Jev advisor is configured")
-        tag = "-jev" if jev_on else ""
+        ur = self.cfg.update_review
+        upd = update_review or (("jev" if ur.advice else "control") if ur.enabled else "off")
+        if upd not in ("off", "control", "jev"):
+            raise ValueError(f"update_review must be off, control or jev, not {upd!r}")
+        if upd != "off":
+            if mode not in CLM_MODES or task.kind != "rounds":
+                raise ValueError("update review is available to CLM modes on rounds tasks only")
+            if jev_on:
+                raise ValueError("update review and the optional review action are exclusive")
+            if upd == "jev" and self.jev is None:
+                raise ValueError("update review advice requested but no Jev advisor is configured")
+        tag = "-jev" if jev_on else {"off": "", "control": "-upd", "jev": "-updjev"}[upd]
         run_id = f"{stamp}-{mode}{cond}{tag}-{task.spec.name}-{secrets.token_hex(2)}"
-        return _Run(self, task, mode, run_id, label, on, jev_on).execute()
+        return _Run(self, task, mode, run_id, label, on, jev_on, upd).execute()
+
+
+def _advice_lines(
+    number: int,
+    source: str,
+    answers: dict[str, float | None],
+    models: set[str],
+    errors: list[str],
+) -> list[str]:
+    """The advice observation (experiments 008 and 009): every scored entry, in order."""
+    answered = sum(1 for v in answers.values() if v is not None)
+    lines = [
+        f"Context review advice ({QUESTION_VERSION}; Jev {', '.join(sorted(models)) or 'unavailable'}; "
+        f"revision {number}; update: {source}). Probability that the update requires "
+        "reconsidering a current assertion or planned action in each entry. Advisory only: "
+        "your context is unchanged.",
+    ]
+    lines += [
+        f"  {eid}: {p:.2f}" if p is not None else f"  {eid}: no answer"
+        for eid, p in answers.items()
+    ]
+    lines.append(f"Coverage: {answered} of {len(answers)} entries answered.")
+    if errors:
+        lines.append(f"Service problem: {errors[-1]}")
+    return lines
 
 
 class _Run:
@@ -308,9 +351,12 @@ class _Run:
         label: str,
         caching: bool = False,
         jev_on: bool = False,
+        update_review: str = "off",
     ) -> None:
         self.r = runner
         self.jev_on = jev_on
+        self.upd = update_review  # experiment 009: "off", "control" or "jev"
+        self.updates: list[dict[str, Any]] = []
         self.reviews: list[dict[str, Any]] = []
         self.edit_log: list[dict[str, Any]] = []
         self.jev_seq = 0
@@ -374,6 +420,10 @@ class _Run:
         )
         if self.jev_on:
             self.system += JEV_CLAUSE.format(max_reviews=self.cfg.jev.max_reviews)
+        if self.upd != "off":
+            self.system += UPDATE_REVIEW_CLAUSE
+            if self.upd == "jev":
+                self.system += UPDATE_REVIEW_JEV_CLAUSE
         # Request layout, caching and run isolation (SPEC section 17).
         rq = self.cfg.request
         self.layout = rq.layout
@@ -1296,6 +1346,8 @@ class _Run:
             self.trace.event(
                 "stage_released", step=self.step, stage=self.stage, files=sorted(released)
             )
+            if self.upd != "off":
+                obs += self.update_review(released)
         else:
             obs = f"No further evidence: all {self.task.n_stages} stages are already released."
             self.trace.event("advance_noop", step=self.step)
@@ -1424,6 +1476,24 @@ class _Run:
             return resp, None
         return None, last
 
+    def _jev_score(
+        self, update: str, batches: list[list[ReviewItem]]
+    ) -> tuple[dict[str, float | None], set[str], list[str]]:
+        """One Jev request per batch (with bounded retries); missing answers are None."""
+        answers: dict[str, float | None] = {}
+        models: set[str] = set()
+        errors: list[str] = []
+        for batch in batches:
+            body = build_request(update, batch, self.cfg.jev.model)
+            resp, err = self._jev_attempts(body)
+            for i, item in enumerate(batch):
+                answers[item.entry_id] = resp.probabilities.get(f"e{i}") if resp else None
+            if resp:
+                models.add(resp.model)
+            if err:
+                errors.append(err)
+        return answers, models, errors
+
     def review_step(self, action: dict[str, Any]) -> None:
         """Advice only: the context is never changed here (the runtime appends the step's
         action and observation, as for every step)."""
@@ -1443,34 +1513,10 @@ class _Run:
             items, update, source, number = checked
             self.c.jev_reviews += 1
             j = self.cfg.jev
-            answers: dict[str, float | None] = {}
-            models: set[str] = set()
-            errors: list[str] = []
-            for start in range(0, len(items), j.batch_size):
-                batch = items[start : start + j.batch_size]
-                body = build_request(update, batch, j.model)
-                resp, err = self._jev_attempts(body)
-                for i, item in enumerate(batch):
-                    answers[item.entry_id] = resp.probabilities.get(f"e{i}") if resp else None
-                if resp:
-                    models.add(resp.model)
-                if err:
-                    errors.append(err)
+            batches = [items[i : i + j.batch_size] for i in range(0, len(items), j.batch_size)]
+            answers, models, errors = self._jev_score(update, batches)
             answered = sum(1 for v in answers.values() if v is not None)
-            lines = [
-                f"Context review advice ({QUESTION_VERSION}; Jev {', '.join(sorted(models)) or 'unavailable'}; "
-                f"revision {number}; update: {source}). Probability that the update requires "
-                "reconsidering a current assertion or planned action in each entry. Advisory only: "
-                "your context is unchanged.",
-            ]
-            lines += [
-                f"  {eid}: {p:.2f}" if p is not None else f"  {eid}: no answer"
-                for eid, p in answers.items()
-            ]
-            lines.append(f"Coverage: {answered} of {len(answers)} entries answered.")
-            if errors:
-                lines.append(f"Service problem: {errors[-1]}")
-            obs = "\n".join(lines)
+            obs = "\n".join(_advice_lines(number, source, answers, models, errors))
             record.update(
                 status="ok" if answered else "failed",
                 revision=number,
@@ -1498,6 +1544,139 @@ class _Run:
         )
         self._save_revision()
 
+    # ------------------------------------------- update-triggered context review (exp 009)
+    def update_review(self, released: dict[str, str]) -> str:
+        """Text appended to the release observation (identical update text in both arms). The
+        candidates are every entry of the current revision, i.e. the context the model saw in
+        this step's request; the advance step's own entries are appended afterwards. With
+        advice, Jev scores the candidates here, before the next model call, and nothing in the
+        context changes."""
+        ur = self.cfg.update_review
+        payload, sources, truncated = build_payload(released, ur.max_payload_chars)
+        rev = self.store.current
+        candidates = list(rev.entries[: ur.max_candidates])
+        not_assessed = [e.id for e in rev.entries[ur.max_candidates :]]
+        rec: dict[str, Any] = {
+            "step": self.step,
+            "stage": self.stage,
+            "revision": rev.number,
+            "payload_version": PAYLOAD_VERSION,
+            "payload_sources": sources,
+            "payload": payload,
+            "payload_sha256": hashlib.sha256(payload.encode()).hexdigest(),
+            "payload_chars": len(payload),
+            "payload_truncated": truncated,
+            "candidate_ids": [e.id for e in candidates],
+            "not_assessed_ids": not_assessed,
+            "advice": self.upd == "jev",
+        }
+        head = (
+            f"\n\nUPDATE ({PAYLOAD_VERSION}; context revision {rev.number} was current at this "
+            "release). Incident-board and change-log lines released this round, verbatim:\n"
+        )
+        if not payload:
+            rec["status"] = "no_update"
+            text = (
+                f"\n\nUPDATE ({PAYLOAD_VERSION}; context revision {rev.number} was current at "
+                "this release). No incident-board or change-log lines were released this round."
+            )
+        else:
+            text = head + payload + "\nConsider whether this update affects your working context."
+            rec["status"] = "shown"
+        if self.upd == "jev" and payload:
+            if not candidates:
+                rec["status"] = "no_entries"
+                text += "\nContext review advice: no current entries to assess."
+            else:
+                j = self.cfg.jev
+                before = dict(self.jev_usage)
+                attempts0 = self.c.jev_attempts
+                batches: list[list[ReviewItem]] = [[]]
+                size = 0
+                for e in candidates:
+                    if batches[-1] and (
+                        len(batches[-1]) >= j.batch_size or size + len(e.body) > ur.max_batch_chars
+                    ):
+                        batches.append([])
+                        size = 0
+                    batches[-1].append(ReviewItem(e.id, e.body))
+                    size += len(e.body)
+                answers, models, errors = self._jev_score(payload, batches)
+                lines = _advice_lines(
+                    rev.number, "the board and change-log lines above", answers, models, errors
+                )
+                if not_assessed:
+                    lines.append(
+                        f"Not assessed (over the {ur.max_candidates}-entry limit): {not_assessed}"
+                    )
+                advice = "\n".join(lines)
+                text += "\n" + advice
+                answered = sum(1 for v in answers.values() if v is not None)
+                rec.update(
+                    status="advised" if answered else "advice_failed",
+                    batches=[len(b) for b in batches],
+                    answers=answers,
+                    models=sorted(models),
+                    errors=errors,
+                    attempts=self.c.jev_attempts - attempts0,
+                    jev_input_tokens=self.jev_usage["input_tokens"] - before["input_tokens"],
+                    jev_cost_usd=round(self.jev_usage["cost_usd"] - before["cost_usd"], 8),
+                    jev_latency_s=round(self.jev_usage["latency_s"] - before["latency_s"], 4),
+                    advice_chars=len(advice) + 1,
+                )
+        rec["appended_chars"] = len(text)
+        self.updates.append(rec)
+        self.trace.event("update_review", **rec)
+        return text
+
+    def update_review_summary(self) -> dict[str, Any]:
+        """Per update: what was shown and scored, and the accepted edits before the next update.
+        "Followed by an edit" is temporal association only, not attribution to the advice."""
+        recs = []
+        for i, r in enumerate(self.updates):
+            nxt = self.updates[i + 1]["step"] if i + 1 < len(self.updates) else 10**9
+            later = [e for e in self.edit_log if r["step"] < e["step"] < nxt]
+            changed = {x for e in later for x in (*e["removed"], *e["rewritten"])}
+            ans = r.get("answers") or {}
+            flagged = [k for k, v in ans.items() if v is not None and v >= 0.5]
+            recs.append(
+                {
+                    **r,
+                    "reporting_threshold": 0.5,
+                    "flagged": flagged,
+                    "later_accepted_edits": [
+                        {k: e[k] for k in ("step", "before_revision", "after_revision")}
+                        for e in later
+                    ],
+                    "candidates_changed": sorted(x for x in r["candidate_ids"] if x in changed),
+                    "flagged_then_changed": sorted(k for k in flagged if k in changed),
+                    "flagged_not_changed": sorted(k for k in flagged if k not in changed),
+                    "unflagged_then_changed": sorted(
+                        k for k, v in ans.items() if (v is None or v < 0.5) and k in changed
+                    ),
+                }
+            )
+        shown = [r for r in self.updates if r["status"] != "no_update"]
+        advised = [r for r in self.updates if r["status"] == "advised"]
+        return {
+            "mode": self.upd,
+            "payload_version": PAYLOAD_VERSION if self.upd != "off" else None,
+            "question_version": QUESTION_VERSION if self.upd == "jev" else None,
+            "model_requested": self.cfg.jev.model if self.upd == "jev" else None,
+            "updates": len(self.updates),
+            "updates_with_payload": len(shown),
+            "updates_advised": len(advised),
+            "updates_advice_failed": sum(1 for r in self.updates if r["status"] == "advice_failed"),
+            "entries_scored": sum(len(r.get("answers") or {}) for r in advised),
+            "appended_chars": sum(r["appended_chars"] for r in self.updates),
+            "advice_chars": sum(r.get("advice_chars", 0) for r in self.updates),
+            "jev_attempts": sum(r.get("attempts", 0) for r in self.updates),
+            "jev_input_tokens": sum(r.get("jev_input_tokens", 0) for r in self.updates),
+            "jev_cost_usd": round(sum(r.get("jev_cost_usd", 0.0) for r in self.updates), 8),
+            "jev_latency_s": round(sum(r.get("jev_latency_s", 0.0) for r in self.updates), 4),
+            "records": recs,
+        }
+
     def jev_summary(self) -> dict[str, Any]:
         """Reviews, usage, and which flagged entries were later changed by accepted edits.
         "Followed by an edit" is temporal association only, not attribution to the advice."""
@@ -1523,6 +1702,13 @@ class _Run:
             )
         return {
             "enabled": self.jev_on,
+            # Run-wide Jev usage (attempts, errors, tokens, cost): from the optional
+            # review_context action (008) or from update-triggered review (009).
+            "source": "review_context"
+            if self.jev_on
+            else "update_review"
+            if self.upd == "jev"
+            else None,
             "question_version": QUESTION_VERSION if self.jev_on else None,
             "model_requested": self.cfg.jev.model if self.jev_on else None,
             "reviews": len(self.reviews) - self.c.jev_reviews_rejected,
@@ -1802,6 +1988,7 @@ class _Run:
             "peak_request_tokens_est": self.peak_req_est,
             "peak_request_input_tokens_reported": self.peak_req_reported,
             "jev": self.jev_summary(),
+            "update_review": self.update_review_summary(),
             "request": self.request_summary(),
             "peak_working_context_chars": self.peak_ctx_chars,
             "context_revisions": len(self.store.revisions) - 1,
