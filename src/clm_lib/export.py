@@ -24,6 +24,7 @@ Ownership:
         metrics.json, metrics.csv            generated per-run metrics
         SHA256SUMS                           generated: evidence + generated files only
         artifacts/runs/<role>/<run_id>/      immutable run evidence (own SHA256SUMS)
+        artifacts/runs/<group>/<role>/<id>/  the same, for runs given an optional group
         artifacts/fixtures/<task>/           immutable task files (own SHA256SUMS)
         artifacts/comparisons/<stamp>/       immutable comparison records (own SHA256SUMS)
         artifacts/source/                    immutable provenance patches (own SHA256SUMS)
@@ -43,6 +44,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import stat
 from pathlib import Path
 from typing import Any
@@ -322,6 +324,23 @@ def _metrics_row(run_id: str, role: str, src: Path, charged: float) -> dict[str,
             ir_observation_requests_carried=sum(r["observation_requests_carried"] for r in recs),
             ir_models=json.dumps(sorted({x for r in recs for x in r.get("models", [])})),
         )
+        if ir.get("required"):  # 010 v2: required pre-edit review
+            out = ir["authorisation_outcomes"]
+            row.update(
+                ir_version=ir["version"],
+                ir_reviews_update=ir["reviews_update"],
+                ir_reviews_compaction=ir["reviews_compaction"],
+                ir_reviews_not_applicable=ir["reviews_not_applicable"],
+                ir_edits_blocked=ir["edits_blocked"],
+                ir_edits_authorised=ir["accepted_edits_authorised"],
+                ir_edits_recovery_exempt=ir["accepted_edits_recovery_exempt"],
+                ir_edits_unauthorised=ir["accepted_edits_unauthorised"],
+                ir_auth_consumed=out.get("consumed", 0),
+                ir_auth_expired=out.get("expired", 0),
+                ir_auth_replaced=out.get("replaced", 0),
+                ir_auth_invalidated=out.get("invalidated", 0),
+                ir_auth_unused=out.get("unused", 0),
+            )
     by_provider = (m.get("cost") or {}).get("by_provider")
     if by_provider:
         row["cost_anthropic_usd"] = by_provider["anthropic"]
@@ -416,16 +435,22 @@ def export_experiment(
         rid, role = r["run_id"], r["role"]
         if role not in ROLES:
             raise ValueError(f"unknown role {role!r} for {rid}")
+        # Optional artifact group (e.g. a protocol version): artifacts/runs/<group>/<role>/<id>.
+        group = r.get("group")
+        if group is not None and not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,30}", group):
+            raise ValueError(f"bad artifact group {group!r} for {rid}")
+        rel = f"{group}/{role}" if group else role
         src = runs_root / rid
         files = collect(src, skip_top=frozenset({"fixtures"}))
-        status = write_tree(art / "runs" / role / rid, files)
+        status = write_tree(art / "runs" / rel / rid, files)
         log["runs"][rid] = status
         meta: dict[str, Any] = {
             "run_id": rid,
             "role": role,
+            **({"group": group} if group else {}),
             **({"phase": r["phase"]} if r.get("phase") else {}),
             "note": r.get("note", ""),
-            "artifact_path": f"artifacts/runs/{role}/{rid}",
+            "artifact_path": f"artifacts/runs/{rel}/{rid}",
             "sha256sums_sha256": _sha(sums_text(files).encode()),
             "files": len(files),
             "ledger_charged_usd": round(charged.get(rid, 0.0), 6),
@@ -703,6 +728,9 @@ Write-ups, findings and historical protocols live here.
   - `guided`: prompted demonstrations;
   - `calibration`: development runs;
   - `smoke` and `access-failure`: connectivity checks.
+- `artifacts/runs/<group>/<role>/<run_id>/`: the same, for runs that the run selection places in
+  an optional `group` (for example a protocol version, as in experiment 010 v2), so versions of
+  one experiment never share a folder.
 
   Inside a run folder:
   - `run.json`: configuration;

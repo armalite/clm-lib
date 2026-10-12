@@ -264,6 +264,11 @@ Ground truth exists only in memory until the run ends, then goes to `evaluator/`
 - **Conditions:** `CONDITION_FLAGS` maps `+rev` and `+rev-jev`.
 - **Tests:** `tests/test_initiated_review.py`.
 - **Outcome so far:** experiment 010's calibration found that Claude did not use the action (see the results repository). The implementation stays available for revised protocols.
+- **Required pre-edit review (010 v2):** `_begin_review_v2` handles a review and issues `edit_auth`, whose `bodies` are the reviewed revision's entries. `execute_step` passes `_authorise_edit` to `ContextStore.read_back`, so the check happens after validation and before commit, in one execution. `_settle_edit_auth` consumes the authorisation on an accepted edit and records blocked edits. `advance_step` expires it, and `_end_edit_auth` logs every outcome.
+  - **Why binding by bodies:** binding to entry bodies rather than the revision number keeps authorisations valid across the runtime's own appends, which add entries but never change existing ones (only a spill does).
+  - **The recovery exemption:** it exists because the over-limit rule demands a shrinking edit in the same step.
+  - **Tests:** `tests/test_pre_edit_review.py`.
+- **Export groups:** `export_experiment` places runs with a `group` under `artifacts/runs/<group>/<role>/`. 010 uses `group: "v2"` to keep protocol versions apart.
 
 ## Design choices
 

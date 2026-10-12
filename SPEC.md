@@ -1,6 +1,6 @@
 # clm-lib: Technical Specification
 
-Version: 2.2 | 13 October 2026
+Version: 2.3 | 13 October 2026
 
 Repository: `clm-lib` | Python package: `clm_lib` | CLI: `clm-lib`
 
@@ -14,7 +14,8 @@ Version history:
 - 1.6: adds a coding task family with changing requirements and a sandboxed evaluator (§15), and an explicit, recorded ledger-ceiling change.
 - 2.0: adds an optional, host-mediated context-review action backed by TypeSafe Jev (§19), off by default.
 - 2.1: adds update-triggered context review with optional Jev advice (§20), off by default. Other Jev-assistance strategies on the roadmap (Claude-initiated review, proposed-edit checks) are planned only and are not specified or supported.
-- 2.2: adds Claude-initiated context review with optional Jev advice (§21), off by default. Proposed-edit checks, result screening and the changing-requirements workload remain planned only and are not specified or supported.
+- 2.2: adds Claude-initiated context review with optional Jev advice (§21), off by default.
+- 2.3: adds §21's required pre-edit review variant (`initiated-review/2`), off by default, and an optional artifact group in run selections. Proposed-edit checks, result screening and the changing-requirements workload remain planned only and are not specified or supported.
 - 1.9: adds a multi-round incident task family, two CLM capability variants (direct editing only; reusable helpers allowed), a separate summary-call allowance, helper-evidence tiers and a three-condition schedule (§18).
 - 1.8: adds a versioned request layout (`blocks/1`), optional provider prompt caching with explicit breakpoints, per-run cache isolation, cache-aware accounting evidence, and a four-condition comparison schedule (§17).
 - 1.7: adds a second coding generator with interacting, partially changing rules, an evaluator with richer categories, exact type checks and stage snapshots (§16), a balanced comparison order, and per-task scorer metadata in comparisons and exports.
@@ -475,3 +476,23 @@ The summary baseline's policy is selected by `[baseline] policy`, and recorded i
     - **Totals:** reviews, rejections, reviews before the last stage, advised and failed reviews, entries listed and scored, observation and advice characters, and Jev attempts, tokens, cost and latency.
     - **Per review:** step, stage, revision, the new information, candidate, excluded and not-assessed ids, answers, and accepted edits until the next review. It also records `edited_next_step`; candidates changed; flagged then changed, flagged not changed, and unflagged then changed (temporal association only); and `observation_requests_carried`, the number of later requests whose context still held the review observation.
   - **Also:** `initiated_review` events, `jev.source = initiated_review`, and `ir_*` export columns.
+- **Required pre-edit review (`initiated-review/2`, experiment 010 v2):** `[initiated_review] required` (default false), or the conditions `<clm mode>+pre` (review, no Jev) and `<clm mode>+pre-jev` (review with Jev).
+  - **The action:** `begin_review` takes `purpose`, which is `update` (with 1–`max_info_chars` of `new_information`) or `compaction` (no new information).
+  - **Prompt clauses:** `INITIATED_REVIEW_V2_CLAUSE` and `INITIATED_REVIEW_V2_JEV_CLAUSE` (prompt version `2026-10-13.3`).
+  - **What a valid review issues:** one edit authorisation, bound to the bodies of every entry of the reviewed revision.
+  - **How an authorisation ends:**
+    - **consumed** by the first accepted, content-changing edit;
+    - **replaced** by a new valid review;
+    - **expired** at the next stage release;
+    - **invalidated** if a reviewed entry's body changed;
+    - **unused** at the end of the run.
+  - **What does not end it:** runtime appends of later steps' entries.
+  - **The gate:** `ContextStore.read_back(authorise=...)` checks every valid, content-changing `context.json` candidate before commit. Without a valid authorisation the candidate is rejected through the normal rejection path, keeping the previous revision and saving the rejected bytes. Unchanged writes need no authorisation. Model code runs once, and its other effects are not rolled back.
+  - **Recovery exemption:** while an over-limit recovery request is active, an edit needs no authorisation, and is counted as `recovery_exempt`.
+  - **Jev (with `+pre-jev`):** it scores candidates only for `update` reviews. A `compaction` review records `not_applicable`, makes no call, and still issues the authorisation.
+  - **The status line** shows the authorisation state.
+  - **Evidence:**
+    - **`summary.json → initiated_review`:** `required`, `version`, reviews by purpose, `reviews_not_applicable`, `edits_blocked` with steps, accepted edits that were authorised, recovery-exempt or unauthorised, and the `authorisations` with their outcome counts.
+    - **Per review:** `authorisation_outcome` and `authorised_edit_step`.
+    - **Also:** `edit_log` entries carry `authorised_by_review_step`, and the v2 export columns are `ir_version` through `ir_auth_unused`.
+- **Export groups:** a run in `experiment.json` may carry `"group": "<name>"` (lowercase letters, digits and dashes). It is then exported to `artifacts/runs/<group>/<role>/<run_id>/`, so protocol versions of one experiment never share a folder. Runs without a group are exported as before.

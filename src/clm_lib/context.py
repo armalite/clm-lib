@@ -18,6 +18,7 @@ import json
 import os
 import re
 import stat
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -221,8 +222,16 @@ class ContextStore:
         os.replace(tmp, target)
         return text
 
-    def read_back(self, workspace: Path, mirrored_text: str, step: int) -> EditOutcome:
-        """Validate the workspace file after execution and accept it if valid."""
+    def read_back(
+        self,
+        workspace: Path,
+        mirrored_text: str,
+        step: int,
+        authorise: Callable[[tuple[Entry, ...]], str | None] | None = None,
+    ) -> EditOutcome:
+        """Validate the workspace file after execution and accept it if valid. ``authorise``
+        (experiment 010 v2) is asked about a valid, content-changing candidate before it is
+        committed; a returned message rejects it like any invalid candidate."""
         before = self.current
         try:
             raw = read_workspace_file(workspace, CONTEXT_FILENAME, self.limits.max_file_bytes)
@@ -236,6 +245,10 @@ class ContextStore:
             return EditOutcome("rejected", str(exc), before=before)
         if content_hash(entries) == before.sha256:
             return EditOutcome("unchanged_write", before=before)
+        if authorise is not None:
+            refused = authorise(entries)
+            if refused:
+                return EditOutcome("rejected", refused, before=before)
         after = self.commit(entries, "model_edit", step)
         return EditOutcome("accepted", before=before, after=after)
 

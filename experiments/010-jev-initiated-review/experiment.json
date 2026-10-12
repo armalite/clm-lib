@@ -14,7 +14,8 @@
   "request_layout": "blocks/1, caching on, 5m, run-tag/1",
   "jev_price": "USD 0.042 per million input tokens, output free (docs.typesafe.ai/models, retrieved 2026-10-12)",
   "budget": "ledger ceiling set explicitly from USD 70.210028 to USD 89.687573 (settled spend USD 59.687573 + USD 30 authorised for 010); replaces earlier unused allowances",
-  "status": "stopped at the calibration readiness gate: Claude initiated no reviews in either condition"
+  "status": "v1 stopped at its calibration gate (no reviews); v2 stopped at its calibration gate (no applicable Jev reviews)",
+  "v2": "protocol v2 (required pre-edit review) implemented on HEAD e99c91e plus uncommitted v2 changes; patch artifacts/comparisons/20261012T213922/20261012T213922.patch; ceiling set from USD 89.687573 to 91.209294 (settled spend 61.209294 + 30)"
  },
  "settings": {
   "config": "configs/exp010.toml",
@@ -26,11 +27,27 @@
    "rounds-dev-1",
    "rounds-dev-2"
   ],
-  "calibration_repetitions": 1
+  "calibration_repetitions": 1,
+  "v2": {
+   "config": "configs/exp010v2.toml",
+   "conditions": [
+    "clm_helpers:on",
+    "clm_helpers+pre:on",
+    "clm_helpers+pre-jev:on"
+   ],
+   "calibration_tasks": [
+    "rounds-dev-1",
+    "rounds-dev-2"
+   ],
+   "review_version": "initiated-review/2",
+   "prompt_version": "2026-10-13.3"
+  }
  },
  "phases": {
   "calibration": "2 development instances x 2 conditions, comparison 20261012T204507: readiness gate FAILED (0 reviews initiated in all 4 runs)",
-  "evaluation": "not run: the readiness gate failed; no fresh instances were registered"
+  "evaluation": "not run: the readiness gate failed; no fresh instances were registered",
+  "v2-calibration": "protocol v2 (required pre-edit review): 2 development instances x 3 conditions, comparison 20261012T213922; readiness gate FAILED (0 applicable Jev reviews: all 48 accepted reviews in B/C were declared compaction)",
+  "v2-evaluation": "not run: the v2 readiness gate failed; rounds-eval-9..12 not registered"
  },
  "runs": [
   {
@@ -56,12 +73,56 @@
    "role": "calibration",
    "phase": "calibration",
    "note": "calibration block 1 position 1: A (control: initiated-review protocol) on rounds-dev-2"
+  },
+  {
+   "run_id": "20261012T213922-clm_helpers-cacheon-rounds-dev-1-e281",
+   "role": "calibration",
+   "phase": "v2-calibration",
+   "group": "v2",
+   "note": "protocol v2 calibration block 0 position 0: A (ordinary CLM) on rounds-dev-1"
+  },
+  {
+   "run_id": "20261012T214136-clm_helpers-cacheon-pre-rounds-dev-1-e65c",
+   "role": "calibration",
+   "phase": "v2-calibration",
+   "group": "v2",
+   "note": "protocol v2 calibration block 0 position 1: B (required pre-edit review, no Jev) on rounds-dev-1"
+  },
+  {
+   "run_id": "20261012T214420-clm_helpers-cacheon-prejev-rounds-dev-1-be06",
+   "role": "calibration",
+   "phase": "v2-calibration",
+   "group": "v2",
+   "note": "protocol v2 calibration block 0 position 2: C (required pre-edit review with Jev) on rounds-dev-1"
+  },
+  {
+   "run_id": "20261012T214717-clm_helpers-cacheon-pre-rounds-dev-2-7605",
+   "role": "calibration",
+   "phase": "v2-calibration",
+   "group": "v2",
+   "note": "protocol v2 calibration block 1 position 0: B (required pre-edit review, no Jev) on rounds-dev-2"
+  },
+  {
+   "run_id": "20261012T215102-clm_helpers-cacheon-prejev-rounds-dev-2-fcf2",
+   "role": "calibration",
+   "phase": "v2-calibration",
+   "group": "v2",
+   "note": "protocol v2 calibration block 1 position 1: C (required pre-edit review with Jev) on rounds-dev-2"
+  },
+  {
+   "run_id": "20261012T215429-clm_helpers-cacheon-rounds-dev-2-a775",
+   "role": "calibration",
+   "phase": "v2-calibration",
+   "group": "v2",
+   "note": "protocol v2 calibration block 1 position 2: A (ordinary CLM) on rounds-dev-2"
   }
  ],
  "comparisons": [
-  "20261012T204507"
+  "20261012T204507",
+  "20261012T213922"
  ],
  "comparison_phases": {
-  "20261012T204507": "calibration"
+  "20261012T204507": "calibration",
+  "20261012T213922": "v2-calibration"
  }
 }
