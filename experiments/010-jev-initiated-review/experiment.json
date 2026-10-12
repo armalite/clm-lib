@@ -1,0 +1,67 @@
+{
+ "id": "010-jev-initiated-review",
+ "title": "Claude-initiated context review: when Claude starts a review, does Jev's advice improve the resulting agent performance?",
+ "provenance": {
+  "source_repo": "https://github.com/armalite/clm-lib",
+  "base_commit": "0247b1c",
+  "tree_state": "HEAD 0247b1c plus uncommitted 009-evaluation changes and the experiment-010 implementation; patches saved by compare as artifacts/comparisons/<stamp>/<stamp>.patch",
+  "generator_version": "incident-rounds-gen/1",
+  "scorer": "rounds-score/1",
+  "review_version": "initiated-review/1",
+  "question_version": "jev-review/1",
+  "jev_model": "jev-1.13.0",
+  "prompt_version": "2026-10-13.2",
+  "request_layout": "blocks/1, caching on, 5m, run-tag/1",
+  "jev_price": "USD 0.042 per million input tokens, output free (docs.typesafe.ai/models, retrieved 2026-10-12)",
+  "budget": "ledger ceiling set explicitly from USD 70.210028 to USD 89.687573 (settled spend USD 59.687573 + USD 30 authorised for 010); replaces earlier unused allowances",
+  "status": "stopped at the calibration readiness gate: Claude initiated no reviews in either condition"
+ },
+ "settings": {
+  "config": "configs/exp010.toml",
+  "conditions": [
+   "clm_helpers+rev:on",
+   "clm_helpers+rev-jev:on"
+  ],
+  "calibration_tasks": [
+   "rounds-dev-1",
+   "rounds-dev-2"
+  ],
+  "calibration_repetitions": 1
+ },
+ "phases": {
+  "calibration": "2 development instances x 2 conditions, comparison 20261012T204507: readiness gate FAILED (0 reviews initiated in all 4 runs)",
+  "evaluation": "not run: the readiness gate failed; no fresh instances were registered"
+ },
+ "runs": [
+  {
+   "run_id": "20261012T204507-clm_helpers-cacheon-rev-rounds-dev-1-ded2",
+   "role": "calibration",
+   "phase": "calibration",
+   "note": "calibration block 0 position 0: A (control: initiated-review protocol) on rounds-dev-1"
+  },
+  {
+   "run_id": "20261012T204745-clm_helpers-cacheon-revjev-rounds-dev-1-d831",
+   "role": "calibration",
+   "phase": "calibration",
+   "note": "calibration block 0 position 1: B (initiated review with Jev advice) on rounds-dev-1"
+  },
+  {
+   "run_id": "20261012T205002-clm_helpers-cacheon-revjev-rounds-dev-2-54c2",
+   "role": "calibration",
+   "phase": "calibration",
+   "note": "calibration block 1 position 0: B (initiated review with Jev advice) on rounds-dev-2"
+  },
+  {
+   "run_id": "20261012T205241-clm_helpers-cacheon-rev-rounds-dev-2-fa6c",
+   "role": "calibration",
+   "phase": "calibration",
+   "note": "calibration block 1 position 1: A (control: initiated-review protocol) on rounds-dev-2"
+  }
+ ],
+ "comparisons": [
+  "20261012T204507"
+ ],
+ "comparison_phases": {
+  "20261012T204507": "calibration"
+ }
+}

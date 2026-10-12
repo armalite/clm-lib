@@ -14,7 +14,9 @@
   "request_layout": "blocks/1, caching on, 5m, run-tag/1",
   "diagnostic_cases": "experiments/009-jev-update-review/diagnostic-cases-v1.json (jev-diag/2, sha256 6874c0693b0ac736cbcf1949ef8a77655e4766aa9cb139586db16ba8f69fae5d)",
   "jev_price": "USD 0.042 per million input tokens, output free (docs.typesafe.ai/models, retrieved 2026-10-12)",
-  "budget": "ledger ceiling set explicitly from USD 56.993902 to USD 58.408962 (spend USD 48.408962 + USD 10 new) for the initial experiment-009 work (smoke, diagnostics, pilot); the unused experiment-008 allowance does not carry over"
+  "budget": "ledger ceiling set explicitly from USD 56.993902 to USD 58.408962 (spend USD 48.408962 + USD 10 new) for the initial experiment-009 work (smoke, diagnostics, pilot); the unused experiment-008 allowance does not carry over",
+  "evaluation_tree_state": "HEAD 0247b1c plus uncommitted tasks.py (rounds-eval-5..8 registration) and exp009.toml (ceiling only); patch artifacts/comparisons/20261012T124415/20261012T124415.patch (sha256 5bafc10e4d49f331f383f36b56f9ffec0cb49524319401cdc0c25651c65239a3)",
+  "evaluation_budget": "ceiling set explicitly from USD 58.408962 to USD 70.210028 (settled spend USD 50.210028 + USD 20 authorised for the evaluation); replaces the unused pilot allowance"
  },
  "settings": {
   "config": "configs/exp009.toml",
@@ -27,14 +29,21 @@
    "rounds-dev-2"
   ],
   "pilot_repetitions": 1,
-  "smoke_task": "rounds-diag-2"
+  "smoke_task": "rounds-diag-2",
+  "evaluation_tasks": [
+   "rounds-eval-5",
+   "rounds-eval-6",
+   "rounds-eval-7",
+   "rounds-eval-8"
+  ],
+  "evaluation_repetitions": 3
  },
  "phases": {
   "smoke": "one assisted run on rounds-diag-2 verifying the in-loop live path; excluded from comparisons",
   "diagnostic": "fresh jev-diag/2 cases on round-files/1 payloads (runs/jev-diagnostic/20261012T115847-frozen)",
   "reference": "experiment 008's frozen diagnostic rerun unchanged as a model-stability check; already-observed cases, not new evidence (runs/jev-diagnostic/20261012T115851-frozen)",
   "pilot": "2 development instances x 2 conditions, comparison 20261012T115926",
-  "evaluation": "planned only; needs fresh instances and separate authorisation"
+  "evaluation": "4 fresh instances (rounds-eval-5..8) x 3 repetitions x 2 conditions = 24 runs, comparison 20261012T124415; frozen in protocol section 'Evaluation freeze'"
  },
  "runs": [
   {
@@ -66,13 +75,159 @@
    "role": "calibration",
    "phase": "pilot",
    "note": "pilot pair 1 position 1: A (control) on rounds-dev-2"
+  },
+  {
+   "run_id": "20261012T124415-clm_helpers-cacheon-upd-rounds-eval-5-9a6e",
+   "role": "evaluation",
+   "phase": "evaluation",
+   "note": "evaluation block 0 position 0: A (control) on rounds-eval-5 rep 1"
+  },
+  {
+   "run_id": "20261012T124710-clm_helpers-cacheon-updjev-rounds-eval-5-686c",
+   "role": "evaluation",
+   "phase": "evaluation",
+   "note": "evaluation block 0 position 1: B (Jev advice) on rounds-eval-5 rep 1"
+  },
+  {
+   "run_id": "20261012T124952-clm_helpers-cacheon-updjev-rounds-eval-6-f9c6",
+   "role": "evaluation",
+   "phase": "evaluation",
+   "note": "evaluation block 1 position 0: B (Jev advice) on rounds-eval-6 rep 1"
+  },
+  {
+   "run_id": "20261012T125229-clm_helpers-cacheon-upd-rounds-eval-6-d2c5",
+   "role": "evaluation",
+   "phase": "evaluation",
+   "note": "evaluation block 1 position 1: A (control) on rounds-eval-6 rep 1"
+  },
+  {
+   "run_id": "20261012T125446-clm_helpers-cacheon-upd-rounds-eval-7-2f52",
+   "role": "evaluation",
+   "phase": "evaluation",
+   "note": "evaluation block 2 position 0: A (control) on rounds-eval-7 rep 1"
+  },
+  {
+   "run_id": "20261012T125729-clm_helpers-cacheon-updjev-rounds-eval-7-d17c",
+   "role": "evaluation",
+   "phase": "evaluation",
+   "note": "evaluation block 2 position 1: B (Jev advice) on rounds-eval-7 rep 1"
+  },
+  {
+   "run_id": "20261012T125953-clm_helpers-cacheon-updjev-rounds-eval-8-4a2e",
+   "role": "evaluation",
+   "phase": "evaluation",
+   "note": "evaluation block 3 position 0: B (Jev advice) on rounds-eval-8 rep 1"
+  },
+  {
+   "run_id": "20261012T130307-clm_helpers-cacheon-upd-rounds-eval-8-f759",
+   "role": "evaluation",
+   "phase": "evaluation",
+   "note": "evaluation block 3 position 1: A (control) on rounds-eval-8 rep 1"
+  },
+  {
+   "run_id": "20261012T130453-clm_helpers-cacheon-updjev-rounds-eval-5-80cb",
+   "role": "evaluation",
+   "phase": "evaluation",
+   "note": "evaluation block 4 position 0: B (Jev advice) on rounds-eval-5 rep 2"
+  },
+  {
+   "run_id": "20261012T130749-clm_helpers-cacheon-upd-rounds-eval-5-0583",
+   "role": "evaluation",
+   "phase": "evaluation",
+   "note": "evaluation block 4 position 1: A (control) on rounds-eval-5 rep 2"
+  },
+  {
+   "run_id": "20261012T131038-clm_helpers-cacheon-upd-rounds-eval-6-5f5f",
+   "role": "evaluation",
+   "phase": "evaluation",
+   "note": "evaluation block 5 position 0: A (control) on rounds-eval-6 rep 2"
+  },
+  {
+   "run_id": "20261012T131302-clm_helpers-cacheon-updjev-rounds-eval-6-0570",
+   "role": "evaluation",
+   "phase": "evaluation",
+   "note": "evaluation block 5 position 1: B (Jev advice) on rounds-eval-6 rep 2"
+  },
+  {
+   "run_id": "20261012T131525-clm_helpers-cacheon-updjev-rounds-eval-7-09f6",
+   "role": "evaluation",
+   "phase": "evaluation",
+   "note": "evaluation block 6 position 0: B (Jev advice) on rounds-eval-7 rep 2"
+  },
+  {
+   "run_id": "20261012T131749-clm_helpers-cacheon-upd-rounds-eval-7-f059",
+   "role": "evaluation",
+   "phase": "evaluation",
+   "note": "evaluation block 6 position 1: A (control) on rounds-eval-7 rep 2"
+  },
+  {
+   "run_id": "20261012T132026-clm_helpers-cacheon-upd-rounds-eval-8-7a09",
+   "role": "evaluation",
+   "phase": "evaluation",
+   "note": "evaluation block 7 position 0: A (control) on rounds-eval-8 rep 2"
+  },
+  {
+   "run_id": "20261012T132252-clm_helpers-cacheon-updjev-rounds-eval-8-a64b",
+   "role": "evaluation",
+   "phase": "evaluation",
+   "note": "evaluation block 7 position 1: B (Jev advice) on rounds-eval-8 rep 2"
+  },
+  {
+   "run_id": "20261012T132537-clm_helpers-cacheon-upd-rounds-eval-5-3352",
+   "role": "evaluation",
+   "phase": "evaluation",
+   "note": "evaluation block 8 position 0: A (control) on rounds-eval-5 rep 3"
+  },
+  {
+   "run_id": "20261012T132803-clm_helpers-cacheon-updjev-rounds-eval-5-d294",
+   "role": "evaluation",
+   "phase": "evaluation",
+   "note": "evaluation block 8 position 1: B (Jev advice) on rounds-eval-5 rep 3"
+  },
+  {
+   "run_id": "20261012T133043-clm_helpers-cacheon-updjev-rounds-eval-6-9293",
+   "role": "evaluation",
+   "phase": "evaluation",
+   "note": "evaluation block 9 position 0: B (Jev advice) on rounds-eval-6 rep 3"
+  },
+  {
+   "run_id": "20261012T133309-clm_helpers-cacheon-upd-rounds-eval-6-7814",
+   "role": "evaluation",
+   "phase": "evaluation",
+   "note": "evaluation block 9 position 1: A (control) on rounds-eval-6 rep 3"
+  },
+  {
+   "run_id": "20261012T133533-clm_helpers-cacheon-upd-rounds-eval-7-0b42",
+   "role": "evaluation",
+   "phase": "evaluation",
+   "note": "evaluation block 10 position 0: A (control) on rounds-eval-7 rep 3"
+  },
+  {
+   "run_id": "20261012T133742-clm_helpers-cacheon-updjev-rounds-eval-7-015f",
+   "role": "evaluation",
+   "phase": "evaluation",
+   "note": "evaluation block 10 position 1: B (Jev advice) on rounds-eval-7 rep 3"
+  },
+  {
+   "run_id": "20261012T134021-clm_helpers-cacheon-updjev-rounds-eval-8-d48b",
+   "role": "evaluation",
+   "phase": "evaluation",
+   "note": "evaluation block 11 position 0: B (Jev advice) on rounds-eval-8 rep 3"
+  },
+  {
+   "run_id": "20261012T134247-clm_helpers-cacheon-upd-rounds-eval-8-4859",
+   "role": "evaluation",
+   "phase": "evaluation",
+   "note": "evaluation block 11 position 1: A (control) on rounds-eval-8 rep 3"
   }
  ],
  "comparisons": [
-  "20261012T115926"
+  "20261012T115926",
+  "20261012T124415"
  ],
  "comparison_phases": {
-  "20261012T115926": "pilot"
+  "20261012T115926": "pilot",
+  "20261012T124415": "evaluation"
  },
  "diagnostics": [
   "20261012T115847-frozen",

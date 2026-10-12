@@ -256,6 +256,15 @@ Ground truth exists only in memory until the run ends, then goes to `evaluator/`
 - **Tests:** `tests/test_update_review.py`.
 - **Planned, not implemented:** Claude-initiated review (strategy 2) and proposed-edit checks (strategy 3). Their designs live in the results repository's roadmap.
 
+## Claude-initiated context review (experiment 010)
+
+- **Action:** `begin_review` is added by `with_begin_review_action` and accepted by `parse_action(allow_begin_review=True)` only when the run's mode is `control` or `jev`. `_Run.begin_review_step` handles it on the host.
+- **Candidates:** `store.current` filtered by `candidate_roles`. The assisted arm scores them through `_jev_score`, with batches from `_entry_batches`, which is shared with 009's update review and behaves identically. The observation, including any advice, is appended through the normal runtime append, so the advice reaches the next request before any edit Claude makes in response.
+- **Residence:** `_requests_carrying` counts later requests whose context, the latest revision before each step, still contains the review observation. It measures how long advice stays in context.
+- **Conditions:** `CONDITION_FLAGS` maps `+rev` and `+rev-jev`.
+- **Tests:** `tests/test_initiated_review.py`.
+- **Outcome so far:** experiment 010's calibration found that Claude did not use the action (see the results repository). The implementation stays available for revised protocols.
+
 ## Design choices
 
 - **JSON-lines transcript with escaping** instead of nonce delimiters: it's simple and can't be forged.

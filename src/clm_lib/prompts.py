@@ -16,7 +16,9 @@ from .context import Entry
 # unchanged.
 # 2026-10-13.1 adds the experiment-009 update-review clauses (UPDATE_REVIEW_CLAUSE for both arms,
 # UPDATE_REVIEW_JEV_CLAUSE for the assisted arm); all other texts unchanged.
-PROMPT_VERSION = "2026-10-13.1"
+# 2026-10-13.2 adds the experiment-010 initiated-review clauses (INITIATED_REVIEW_CLAUSE for both
+# arms, INITIATED_REVIEW_JEV_CLAUSE for the assisted arm); all other texts unchanged.
+PROMPT_VERSION = "2026-10-13.2"
 
 PROTOCOL = """You are {agent_role} working through a strict JSON protocol.
 
@@ -198,6 +200,27 @@ UPDATE_REVIEW_JEV_CLAUSE = """- With each update the runtime also asks a fast cl
   planned action in the entry. The advice is probabilistic and can be wrong, and it never edits
   your context. A low probability is not a reason to delete an entry, and a high one does not mean
   the entry is wrong. You decide whether and how to edit.
+"""
+
+# Experiment 010 (initiated-review/1): identical in both arms of the comparison.
+INITIATED_REVIEW_CLAUSE = """
+CONTEXT REVIEW (this run):
+- When you judge that new information may have made parts of your working context out of date,
+  you can start a context review: reply {"action": "begin_review", "new_information": "<the new
+  information, quoted or summarised>"}. Routine edits (for example removing step entries you no
+  longer need) do not need a review.
+- The runtime replies with the context revision and the entries to review (your notes and
+  observations). In your next step, decide whether and how to edit context.json; you may also
+  leave it unchanged. A review uses one model call. You can edit context.json at any time without
+  a review.
+"""
+
+# Experiment 010, assisted arm only.
+INITIATED_REVIEW_JEV_CLAUSE = """- In this run, each review also asks a fast classifier (Jev), for each listed entry, for the
+  probability that the new information requires reconsidering a current assertion or planned
+  action in it. The advice is probabilistic and can be wrong, and it never edits your context. A
+  low probability is not a reason to delete an entry, and a high one does not mean the entry is
+  wrong. You decide whether and how to edit.
 """
 
 SUMMARY_SYSTEM_TOKEN_TAIL_ROUNDS = """You compress an agent's working transcript. The agent is

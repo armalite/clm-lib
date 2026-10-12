@@ -44,6 +44,8 @@ from .context import (
 from .executor import DockerExecutor, ExecResult, Executor, ExecutorUnavailable
 from .jev import QUESTION_VERSION, JevError, ReviewItem, build_request
 from .prompts import (
+    INITIATED_REVIEW_CLAUSE,
+    INITIATED_REVIEW_JEV_CLAUSE,
     JEV_CLAUSE,
     PROMPT_VERSION,
     SUMMARY_SYSTEM_TOKEN_TAIL_CODING,
@@ -170,12 +172,21 @@ def with_review_action(schema: dict[str, Any]) -> dict[str, Any]:
     return {**schema, "properties": props}
 
 
+def with_begin_review_action(schema: dict[str, Any]) -> dict[str, Any]:
+    """Experiment 010: the action schema plus the begin_review action (both arms)."""
+    props = dict(schema["properties"])
+    props["action"] = {**props["action"], "enum": [*props["action"]["enum"], "begin_review"]}
+    props["new_information"] = {"type": "string"}
+    return {**schema, "properties": props}
+
+
 def parse_action(
     text: str,
     max_code_chars: int,
     allow_advance: bool = False,
     answer_fields: tuple[str, ...] = INCIDENT_FIELDS,
     allow_review: bool = False,
+    allow_begin_review: bool = False,
 ) -> tuple[dict[str, Any] | None, str]:
     """Return (action, error). Only a whole-response JSON object is accepted."""
     raw = text.strip()
@@ -190,6 +201,10 @@ def parse_action(
         return None, "response JSON must be an object"
     kind = obj.get("action")
     if kind == "advance" and allow_advance:
+        return obj, ""
+    if kind == "begin_review" and allow_begin_review:
+        if not isinstance(obj.get("new_information"), str):
+            return None, "begin_review needs a string 'new_information'"
         return obj, ""
     if kind == "review_context" and allow_review:
         ids = obj.get("entry_ids")
@@ -281,11 +296,13 @@ class Runner:
         caching: bool | None = None,
         jev: bool | None = None,
         update_review: str | None = None,
+        initiated_review: str | None = None,
     ) -> RunResult:
         """``caching`` overrides ``request.prompt_caching`` for this run (four-condition runs);
         ``jev`` overrides ``jev.enabled`` (experiment 008; CLM modes only). ``update_review``
         ("off", "control" or "jev") overrides ``[update_review]`` (experiment 009; CLM modes and
-        rounds tasks only)."""
+        rounds tasks only). ``initiated_review`` ("off", "control" or "jev") overrides
+        ``[initiated_review]`` (experiment 010; CLM modes only)."""
         if mode not in MODES:
             raise ValueError(f"mode must be one of {MODES}")
         req = self.cfg.request
@@ -311,9 +328,43 @@ class Runner:
                 raise ValueError("update review and the optional review action are exclusive")
             if upd == "jev" and self.jev is None:
                 raise ValueError("update review advice requested but no Jev advisor is configured")
-        tag = "-jev" if jev_on else {"off": "", "control": "-upd", "jev": "-updjev"}[upd]
+        ir = self.cfg.initiated_review
+        irev = initiated_review or (("jev" if ir.advice else "control") if ir.enabled else "off")
+        if irev not in ("off", "control", "jev"):
+            raise ValueError(f"initiated_review must be off, control or jev, not {irev!r}")
+        if irev != "off":
+            if mode not in CLM_MODES:
+                raise ValueError("initiated review is available to CLM modes only")
+            if jev_on or upd != "off":
+                raise ValueError(
+                    "initiated review, update review and the optional review action are exclusive"
+                )
+            if irev == "jev" and self.jev is None:
+                raise ValueError(
+                    "initiated review advice requested but no Jev advisor is configured"
+                )
+        tag = (
+            "-jev"
+            if jev_on
+            else {"off": "", "control": "-upd", "jev": "-updjev"}[upd]
+            + {"off": "", "control": "-rev", "jev": "-revjev"}[irev]
+        )
         run_id = f"{stamp}-{mode}{cond}{tag}-{task.spec.name}-{secrets.token_hex(2)}"
-        return _Run(self, task, mode, run_id, label, on, jev_on, upd).execute()
+        return _Run(self, task, mode, run_id, label, on, jev_on, upd, irev).execute()
+
+
+def _entry_batches(entries: list[Entry], batch_size: int, max_chars: int) -> list[list[ReviewItem]]:
+    """Jev request batches (experiments 009 and 010): at most batch_size questions and max_chars
+    entry characters per request, in context order."""
+    batches: list[list[ReviewItem]] = [[]]
+    size = 0
+    for e in entries:
+        if batches[-1] and (len(batches[-1]) >= batch_size or size + len(e.body) > max_chars):
+            batches.append([])
+            size = 0
+        batches[-1].append(ReviewItem(e.id, e.body))
+        size += len(e.body)
+    return batches
 
 
 def _advice_lines(
@@ -352,11 +403,14 @@ class _Run:
         caching: bool = False,
         jev_on: bool = False,
         update_review: str = "off",
+        initiated_review: str = "off",
     ) -> None:
         self.r = runner
         self.jev_on = jev_on
         self.upd = update_review  # experiment 009: "off", "control" or "jev"
         self.updates: list[dict[str, Any]] = []
+        self.irev = initiated_review  # experiment 010: "off", "control" or "jev"
+        self.ireviews: list[dict[str, Any]] = []
         self.reviews: list[dict[str, Any]] = []
         self.edit_log: list[dict[str, Any]] = []
         self.jev_seq = 0
@@ -424,6 +478,10 @@ class _Run:
             self.system += UPDATE_REVIEW_CLAUSE
             if self.upd == "jev":
                 self.system += UPDATE_REVIEW_JEV_CLAUSE
+        if self.irev != "off":
+            self.system += INITIATED_REVIEW_CLAUSE
+            if self.irev == "jev":
+                self.system += INITIATED_REVIEW_JEV_CLAUSE
         # Request layout, caching and run isolation (SPEC section 17).
         rq = self.cfg.request
         self.layout = rq.layout
@@ -470,6 +528,9 @@ class _Run:
             lines.append(f"context revision {self.store.current.number}")
         if self.jev_on:
             lines.append(f"context reviews used {self.c.jev_reviews}/{self.cfg.jev.max_reviews}")
+        if self.irev != "off":
+            used = sum(1 for r in self.ireviews if r["status"] != "rejected")
+            lines.append(f"context reviews used {used}/{self.cfg.initiated_review.max_reviews}")
         if pressure and self.clm:
             lines.append(
                 "PRESSURE: the request is above the pressure threshold. Manage your "
@@ -1265,6 +1326,8 @@ class _Run:
         staged = self.task.staged
         if self.jev_on:
             schema = with_review_action(schema)
+        if self.irev != "off":
+            schema = with_begin_review_action(schema)
         while True:
             self.step += 1
             user, est, pressure, recovery = self.prepare_request()
@@ -1287,7 +1350,7 @@ class _Run:
             )
             self.timeline[-1]["uncached_input_tokens"] = resp.usage.input_tokens
             action, err = parse_action(
-                resp.text, self.lim.max_code_chars, staged, fields, self.jev_on
+                resp.text, self.lim.max_code_chars, staged, fields, self.jev_on, self.irev != "off"
             )
             if action is None:
                 self.trace.event(
@@ -1301,7 +1364,12 @@ class _Run:
                 repair = self.action_request(user, "repair", schema, note)
                 resp = self.call(repair, "repair", {"error": err})
                 action, err = parse_action(
-                    resp.text, self.lim.max_code_chars, staged, fields, self.jev_on
+                    resp.text,
+                    self.lim.max_code_chars,
+                    staged,
+                    fields,
+                    self.jev_on,
+                    self.irev != "off",
                 )
                 if action is None:
                     self.trace.event("invalid_action", step=self.step, error=err, after_repair=True)
@@ -1309,6 +1377,9 @@ class _Run:
             self.timeline[-1]["action"] = action["action"]
             if action["action"] == "advance":
                 self.advance_step(action)
+                continue
+            if action["action"] == "begin_review":
+                self.begin_review_step(action)
                 continue
             if action["action"] == "review_context":
                 self.review_step(action)
@@ -1591,16 +1662,7 @@ class _Run:
                 j = self.cfg.jev
                 before = dict(self.jev_usage)
                 attempts0 = self.c.jev_attempts
-                batches: list[list[ReviewItem]] = [[]]
-                size = 0
-                for e in candidates:
-                    if batches[-1] and (
-                        len(batches[-1]) >= j.batch_size or size + len(e.body) > ur.max_batch_chars
-                    ):
-                        batches.append([])
-                        size = 0
-                    batches[-1].append(ReviewItem(e.id, e.body))
-                    size += len(e.body)
+                batches = _entry_batches(candidates, j.batch_size, ur.max_batch_chars)
                 answers, models, errors = self._jev_score(payload, batches)
                 lines = _advice_lines(
                     rev.number, "the board and change-log lines above", answers, models, errors
@@ -1628,6 +1690,180 @@ class _Run:
         self.updates.append(rec)
         self.trace.event("update_review", **rec)
         return text
+
+    # ------------------------------------------------ Claude-initiated context review (exp 010)
+    def begin_review_step(self, action: dict[str, Any]) -> None:
+        """A review Claude started. Candidates come from the current revision by a structural
+        role rule; in the assisted arm Jev scores them here, before Claude's next turn. Nothing in
+        the context changes except the usual runtime append of this step's entries."""
+        ir = self.cfg.initiated_review
+        thought = str(action.get("thought", ""))[:1000]
+        info = action["new_information"]
+        rev = self.store.current
+        used = sum(1 for r in self.ireviews if r["status"] != "rejected")
+        rec: dict[str, Any] = {
+            "step": self.step,
+            "stage": self.stage,
+            "stages_total": self.task.n_stages,
+            "revision": rev.number,
+            "new_information": info[:4000],
+            "info_chars": len(info),
+            "advice": self.irev == "jev",
+        }
+        error = (
+            f"review limit reached ({ir.max_reviews} per task)"
+            if used >= ir.max_reviews
+            else "the new information is empty"
+            if not info.strip()
+            else f"the new information is {len(info)} chars; at most {ir.max_info_chars}"
+            if len(info) > ir.max_info_chars
+            else None
+        )
+        if error:
+            rec.update(status="rejected", error=error)
+            obs = f"Context review not started: {error}. Your context is unchanged."
+        else:
+            roles = set(ir.candidate_roles)
+            eligible = [e for e in rev.entries if e.role in roles]
+            excluded = [e.id for e in rev.entries if e.role not in roles]
+            candidates = eligible[: ir.max_candidates]
+            not_assessed = [e.id for e in eligible[ir.max_candidates :]]
+            rec.update(
+                candidate_ids=[e.id for e in candidates],
+                excluded_ids=excluded,
+                not_assessed_ids=not_assessed,
+            )
+            listed = ", ".join(e.id for e in candidates) or "none"
+            lines = [
+                f"Context review (initiated-review/1; context revision {rev.number}). New "
+                f"information (as you stated it): {info}",
+                f"Entries to review ({len(candidates)}): {listed}"
+                + (
+                    f" ({len(excluded)} runtime step or receipt entries not listed)"
+                    if excluded
+                    else ""
+                ),
+            ]
+            if not_assessed:
+                lines.append(
+                    f"Not listed (over the {ir.max_candidates}-entry limit): {not_assessed}"
+                )
+            lines.append(
+                "Review these entries against the new information and decide in your next step "
+                "whether and how to edit context.json; you may also leave it unchanged. Your "
+                "context is unchanged."
+            )
+            rec["status"] = "started"
+            if self.irev == "jev":
+                if not candidates:
+                    rec["status"] = "no_entries"
+                    lines.append("Context review advice: no entries to assess.")
+                else:
+                    before = dict(self.jev_usage)
+                    attempts0 = self.c.jev_attempts
+                    batches = _entry_batches(
+                        candidates, self.cfg.jev.batch_size, ir.max_batch_chars
+                    )
+                    answers, models, errors = self._jev_score(info, batches)
+                    advice = _advice_lines(
+                        rev.number, "the new information you stated", answers, models, errors
+                    )
+                    lines += advice
+                    answered = sum(1 for v in answers.values() if v is not None)
+                    rec.update(
+                        status="advised" if answered else "advice_failed",
+                        batches=[len(b) for b in batches],
+                        answers=answers,
+                        models=sorted(models),
+                        errors=errors,
+                        attempts=self.c.jev_attempts - attempts0,
+                        jev_input_tokens=self.jev_usage["input_tokens"] - before["input_tokens"],
+                        jev_cost_usd=round(self.jev_usage["cost_usd"] - before["cost_usd"], 8),
+                        jev_latency_s=round(self.jev_usage["latency_s"] - before["latency_s"], 4),
+                        advice_chars=len("\n".join(advice)) + 1,
+                    )
+            obs = "\n".join(lines)
+        rec["observation_chars"] = len(obs)
+        self.ireviews.append(rec)
+        self.trace.event("initiated_review", **rec)
+        req = {k: v for k, v in action.items() if k != "thought"}
+        self.store.append(
+            [
+                Entry(
+                    f"s{self.step}.act",
+                    "assistant",
+                    f"[step {self.step}] begin_review {json.dumps(req)[:2500]}\nthought: {thought}",
+                ),
+                Entry(f"s{self.step}.obs", "observation", obs),
+            ],
+            "runtime",
+            self.step,
+        )
+        self._save_revision()
+
+    def _requests_carrying(self, entry_id: str, after_step: int) -> int:
+        """How many later model requests still contained ``entry_id`` (advice residence)."""
+        n = 0
+        for t in range(after_step + 1, self.step + 1):
+            revs = [r for r in self.store.revisions if r.step < t]
+            if revs and any(e.id == entry_id for e in revs[-1].entries):
+                n += 1
+        return n
+
+    def initiated_review_summary(self) -> dict[str, Any]:
+        """Per review: what was listed and scored, and the accepted edits before the next review.
+        "Followed by an edit" is temporal association only, not attribution to the advice."""
+        recs = []
+        started = [r for r in self.ireviews if r["status"] != "rejected"]
+        for i, r in enumerate(started):
+            nxt = started[i + 1]["step"] if i + 1 < len(started) else 10**9
+            later = [e for e in self.edit_log if r["step"] < e["step"] < nxt]
+            changed = {x for e in later for x in (*e["removed"], *e["rewritten"])}
+            ans = r.get("answers") or {}
+            flagged = [k for k, v in ans.items() if v is not None and v >= 0.5]
+            recs.append(
+                {
+                    **r,
+                    "reporting_threshold": 0.5,
+                    "flagged": flagged,
+                    "later_accepted_edits": [
+                        {k: e[k] for k in ("step", "before_revision", "after_revision")}
+                        for e in later
+                    ],
+                    "edited_next_step": any(e["step"] == r["step"] + 1 for e in later),
+                    "candidates_changed": sorted(x for x in r["candidate_ids"] if x in changed),
+                    "flagged_then_changed": sorted(k for k in flagged if k in changed),
+                    "flagged_not_changed": sorted(k for k in flagged if k not in changed),
+                    "unflagged_then_changed": sorted(
+                        k for k, v in ans.items() if (v is None or v < 0.5) and k in changed
+                    ),
+                    "observation_requests_carried": self._requests_carrying(
+                        f"s{r['step']}.obs", r["step"]
+                    ),
+                }
+            )
+        rejected = [r for r in self.ireviews if r["status"] == "rejected"]
+        return {
+            "mode": self.irev,
+            "version": "initiated-review/1" if self.irev != "off" else None,
+            "question_version": QUESTION_VERSION if self.irev == "jev" else None,
+            "model_requested": self.cfg.jev.model if self.irev == "jev" else None,
+            "reviews": len(started),
+            "reviews_rejected": len(rejected),
+            "rejections": [{k: r[k] for k in ("step", "error")} for r in rejected],
+            "reviews_before_last_stage": sum(1 for r in started if r["stage"] < r["stages_total"]),
+            "reviews_advised": sum(1 for r in started if r["status"] == "advised"),
+            "reviews_advice_failed": sum(1 for r in started if r["status"] == "advice_failed"),
+            "entries_listed": sum(len(r["candidate_ids"]) for r in started),
+            "entries_scored": sum(len(r.get("answers") or {}) for r in started),
+            "observation_chars": sum(r["observation_chars"] for r in self.ireviews),
+            "advice_chars": sum(r.get("advice_chars", 0) for r in started),
+            "jev_attempts": sum(r.get("attempts", 0) for r in started),
+            "jev_input_tokens": sum(r.get("jev_input_tokens", 0) for r in started),
+            "jev_cost_usd": round(sum(r.get("jev_cost_usd", 0.0) for r in started), 8),
+            "jev_latency_s": round(sum(r.get("jev_latency_s", 0.0) for r in started), 4),
+            "records": recs,
+        }
 
     def update_review_summary(self) -> dict[str, Any]:
         """Per update: what was shown and scored, and the accepted edits before the next update.
@@ -1708,6 +1944,8 @@ class _Run:
             if self.jev_on
             else "update_review"
             if self.upd == "jev"
+            else "initiated_review"
+            if self.irev == "jev"
             else None,
             "question_version": QUESTION_VERSION if self.jev_on else None,
             "model_requested": self.cfg.jev.model if self.jev_on else None,
@@ -1989,6 +2227,7 @@ class _Run:
             "peak_request_input_tokens_reported": self.peak_req_reported,
             "jev": self.jev_summary(),
             "update_review": self.update_review_summary(),
+            "initiated_review": self.initiated_review_summary(),
             "request": self.request_summary(),
             "peak_working_context_chars": self.peak_ctx_chars,
             "context_revisions": len(self.store.revisions) - 1,

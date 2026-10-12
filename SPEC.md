@@ -1,6 +1,6 @@
 # clm-lib: Technical Specification
 
-Version: 2.1 | 13 October 2026
+Version: 2.2 | 13 October 2026
 
 Repository: `clm-lib` | Python package: `clm_lib` | CLI: `clm-lib`
 
@@ -14,6 +14,7 @@ Version history:
 - 1.6: adds a coding task family with changing requirements and a sandboxed evaluator (§15), and an explicit, recorded ledger-ceiling change.
 - 2.0: adds an optional, host-mediated context-review action backed by TypeSafe Jev (§19), off by default.
 - 2.1: adds update-triggered context review with optional Jev advice (§20), off by default. Other Jev-assistance strategies on the roadmap (Claude-initiated review, proposed-edit checks) are planned only and are not specified or supported.
+- 2.2: adds Claude-initiated context review with optional Jev advice (§21), off by default. Proposed-edit checks, result screening and the changing-requirements workload remain planned only and are not specified or supported.
 - 1.9: adds a multi-round incident task family, two CLM capability variants (direct editing only; reusable helpers allowed), a separate summary-call allowance, helper-evidence tiers and a three-condition schedule (§18).
 - 1.8: adds a versioned request layout (`blocks/1`), optional provider prompt caching with explicit breakpoints, per-run cache isolation, cache-aware accounting evidence, and a four-condition comparison schedule (§17).
 - 1.7: adds a second coding generator with interacting, partially changing rules, an evaluator with richer categories, exact type checks and stage snapshots (§16), a balanced comparison order, and per-task scorer metadata in comparisons and exports.
@@ -454,3 +455,23 @@ The summary baseline's policy is selected by `[baseline] policy`, and recorded i
     - **Later accepted edits:** before the next update, with candidates changed, flagged then changed, flagged not changed, and unflagged then changed. These are temporal association only.
   - **Exports:** `ur_*` columns.
 - **Diagnostic instances:** `rounds-diag-1..2` (seeds 7301–7302) are reserved for diagnostic case text and smoke runs.
+
+## 21. Claude-initiated context review (experiment 010)
+
+- **Opt-in:** `[initiated_review] enabled` and `advice` (both default false), or the per-run conditions `<clm mode>+rev` (control) and `<clm mode>+rev-jev` (assisted).
+  - **Scope:** CLM modes only. It is exclusive with §19 and §20.
+  - **Unchanged:** every earlier configuration, prompt text and action schema.
+- **Action:** both arms get `{"action": "begin_review", "new_information": "<text>"}` (with an optional `thought`), added to the action schema, plus `INITIATED_REVIEW_CLAUSE` (prompt version `2026-10-13.2`). The assisted arm also gets `INITIATED_REVIEW_JEV_CLAUSE`.
+- **Status line:** `context reviews used k/max_reviews`.
+- **No other path changes:** editing with `execute` remains possible at any time, and no review is triggered automatically.
+- **Validation:** at most `max_reviews` per run, and a non-empty `new_information` of at most `max_info_chars`. A rejection returns a notice, makes no Jev call, and does not consume the limit.
+- **Response (same step, no extra model call):**
+  - **Candidates:** the entries of the **current** revision whose role is in `candidate_roles` (default note, observation and summary; step actions and receipts excluded), in order, at most `max_candidates`, with any beyond listed.
+  - **The observation** states the revision, the new information as given, the candidate ids and the excluded count, and that the context is unchanged.
+  - **Assisted:** Jev scores the candidates with `jev-review/1`, with `state.update` = the new information, and the advice is appended in the §19 format. Failures give "no answer" plus a service notice.
+  - **Never:** no entry is changed, and no edit is approved or rejected.
+- **Evidence:**
+  - **`summary.json → initiated_review`:**
+    - **Totals:** reviews, rejections, reviews before the last stage, advised and failed reviews, entries listed and scored, observation and advice characters, and Jev attempts, tokens, cost and latency.
+    - **Per review:** step, stage, revision, the new information, candidate, excluded and not-assessed ids, answers, and accepted edits until the next review. It also records `edited_next_step`; candidates changed; flagged then changed, flagged not changed, and unflagged then changed (temporal association only); and `observation_requests_carried`, the number of later requests whose context still held the review observation.
+  - **Also:** `initiated_review` events, `jev.source = initiated_review`, and `ir_*` export columns.

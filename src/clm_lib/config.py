@@ -110,6 +110,23 @@ class UpdateReviewConfig:
 
 
 @dataclass
+class InitiatedReviewConfig:
+    # Experiment 010: Claude-initiated context review (off by default). Both arms get a
+    # begin_review action; with advice on, each review also returns Jev's per-entry advice for the
+    # current revision before Claude's next turn. `compare --conditions <mode>+rev[-jev]:on`
+    # overrides enabled/advice. Jev client settings (model, timeout, retries, batch) come from [jev].
+    enabled: bool = False
+    advice: bool = False
+    max_reviews: int = 12  # begin_review actions per run
+    max_info_chars: int = 2000  # length of the stated new information
+    max_candidates: int = 60  # entries scored per review; any beyond are listed as not assessed
+    max_batch_chars: int = 60000  # entry characters per Jev request
+    candidate_roles: list[str] = field(
+        default_factory=lambda: ["note", "observation", "summary"]
+    )  # structural rule: step actions ("assistant") and runtime receipts are not candidates
+
+
+@dataclass
 class BudgetConfig:
     ceiling_usd: float = 10.0
     min_run_reserve_usd: float = 0.75
@@ -135,6 +152,7 @@ class Config:
     request: RequestConfig = field(default_factory=RequestConfig)
     jev: JevConfig = field(default_factory=JevConfig)
     update_review: UpdateReviewConfig = field(default_factory=UpdateReviewConfig)
+    initiated_review: InitiatedReviewConfig = field(default_factory=InitiatedReviewConfig)
     runs_dir: str = "runs"
 
     def to_dict(self) -> dict[str, Any]:
@@ -162,6 +180,7 @@ def load_config(path: Path | None) -> Config:
         "request": RequestConfig,
         "jev": JevConfig,
         "update_review": UpdateReviewConfig,
+        "initiated_review": InitiatedReviewConfig,
     }
     kwargs: dict[str, Any] = {}
     for key, cls in sections.items():

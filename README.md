@@ -84,7 +84,9 @@ The answer has four fields: `root_cause`, `required_value`, `remedy` and `eviden
 
 **Optional Jev context review** (`[jev]` in the config, or the `<clm mode>+jev` condition; SPEC §19): CLM runs can call a host-mediated `review_context` action. It asks TypeSafe Jev whether an update requires reconsidering each listed context entry, and the advice is returned as probabilities; it never edits the context. It needs `TYPESAFE_API_KEY` in the host environment, and `clm-lib jev-diagnostic` runs labelled cases through the same question.
 
-**Update-triggered context review** (`[update_review]`, or the `<clm mode>+upd` / `<clm mode>+upd-jev` conditions; SPEC §20; rounds tasks only): at each round release, the observation also shows that round's board and change-log lines verbatim, with an instruction to consider the existing context. With `+upd-jev`, Jev scores every current context entry against that update before the next model call; the advice never edits the context. Claude-initiated review and proposed-edit checks are planned only (see the results repository's Jev-assistance roadmap).
+**Update-triggered context review** (`[update_review]`, or the `<clm mode>+upd` / `<clm mode>+upd-jev` conditions; SPEC §20; rounds tasks only): at each round release, the observation also shows that round's board and change-log lines verbatim, with an instruction to consider the existing context. With `+upd-jev`, Jev scores every current context entry against that update before the next model call; the advice never edits the context. Proposed-edit checks and result screening are planned only (see the results repository's Jev-assistance roadmap).
+
+**Claude-initiated context review** (`[initiated_review]`, or the `<clm mode>+rev` / `<clm mode>+rev-jev` conditions; SPEC §21): CLM runs get a `begin_review` action that returns the current revision's note and observation entries for review; with `+rev-jev`, the same review also returns Jev's per-entry advice before the next model call. It never edits the context.
 
 **Request layouts and prompt caching** (`[request]` in the config; SPEC §17):
 - **`single-user/1`** (the default) is the original layout.

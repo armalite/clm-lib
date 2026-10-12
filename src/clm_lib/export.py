@@ -295,6 +295,33 @@ def _metrics_row(run_id: str, role: str, src: Path, charged: float) -> dict[str,
             ur_updates_followed_by_edit=sum(1 for r in recs if r["later_accepted_edits"]),
             ur_models=json.dumps(sorted({x for r in recs for x in r.get("models", [])})),
         )
+    ir = m.get("initiated_review") or {}
+    if ir.get("mode", "off") != "off":  # experiment 010: Claude-initiated context review
+        recs = ir.get("records", [])
+        row.update(
+            initiated_review=ir["mode"],
+            ir_reviews=ir["reviews"],
+            ir_reviews_rejected=ir["reviews_rejected"],
+            ir_reviews_before_last_stage=ir["reviews_before_last_stage"],
+            ir_reviews_advised=ir["reviews_advised"],
+            ir_reviews_advice_failed=ir["reviews_advice_failed"],
+            ir_entries_listed=ir["entries_listed"],
+            ir_entries_scored=ir["entries_scored"],
+            ir_observation_chars=ir["observation_chars"],
+            ir_advice_chars=ir["advice_chars"],
+            ir_jev_attempts=ir["jev_attempts"],
+            ir_jev_input_tokens=ir["jev_input_tokens"],
+            ir_jev_cost_usd=ir["jev_cost_usd"],
+            ir_jev_latency_s=ir["jev_latency_s"],
+            ir_reviews_edited_next_step=sum(1 for r in recs if r["edited_next_step"]),
+            ir_candidates_changed=sum(len(r["candidates_changed"]) for r in recs),
+            ir_flagged=sum(len(r["flagged"]) for r in recs),
+            ir_flagged_then_changed=sum(len(r["flagged_then_changed"]) for r in recs),
+            ir_flagged_not_changed=sum(len(r["flagged_not_changed"]) for r in recs),
+            ir_unflagged_then_changed=sum(len(r["unflagged_then_changed"]) for r in recs),
+            ir_observation_requests_carried=sum(r["observation_requests_carried"] for r in recs),
+            ir_models=json.dumps(sorted({x for r in recs for x in r.get("models", [])})),
+        )
     by_provider = (m.get("cost") or {}).get("by_provider")
     if by_provider:
         row["cost_anthropic_usd"] = by_provider["anthropic"]
