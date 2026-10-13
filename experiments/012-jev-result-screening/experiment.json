@@ -1,6 +1,6 @@
 {
  "id": "012-jev-result-screening",
- "title": "Experiment 012: Jev screening of structured document-search results (component diagnostic, smoke, development pilot)",
+ "title": "Experiment 012: Jev screening of document-search results (v1 local handbook; v2 document service)",
  "provenance": {
   "source_repo": "https://github.com/armalite/clm-lib",
   "base_commit": "0e7e877",
@@ -15,7 +15,17 @@
   "cases": "experiments/012-jev-result-screening/screen-cases-v1.json in the results repository (jev-screen-diag/1, sha256 8f6c8099...)",
   "jev_price": "USD 0.042 per million input tokens, output free",
   "budget": "ledger ceiling set explicitly from USD 97.010420 to USD 88.293391 (settled spend USD 83.293391 + USD 5 for 012, both providers); replaces the unused 011 pilot allowance",
-  "status": "component gate passed; smoke verified the live path; development pilot complete (4/4 strict success) but screening was never exercised: Claude did not call search in either B run"
+  "status": "v1: component gate passed; smoke ok; development pilot complete but screening never exercised (agents read the mounted corpus). v2 (document service): compatibility diagnostic met its criteria; smoke ok; development pilot complete with screening exercised (12/12 searches screened in B), 4/4 correct, no needed passage omitted, most omitted passages fetched back.",
+  "v2": {
+   "tree_state": "HEAD c5cee7b plus the uncommitted 012 v2 implementation (docservice.py, runner search/fetch actions, prompts 2026-10-13.7, tests, configs/exp012v2.toml)",
+   "generator_version": "docsvc-gen/1",
+   "scorer": "handbook-checks/1",
+   "screen_version": "result-screen/1 (unchanged; recovery verb fetch)",
+   "prompt_version": "2026-10-13.7",
+   "cases": "experiments/012-jev-result-screening/screen-cases-v2-service.json (sha256 0d0f3de9...)",
+   "budget": "ledger ceiling set explicitly from USD 88.293391 to USD 93.815911 (settled spend USD 83.815911 + USD 10 for 012 v2, both providers); replaces the unused v1 allowance",
+   "config": "configs/exp012v2.toml"
+  }
  },
  "settings": {
   "config": "configs/exp012.toml",
@@ -29,13 +39,29 @@
    "handbook-dev-2"
   ],
   "repetitions": 1,
-  "smoke_task": "handbook-smoke-1"
+  "smoke_task": "handbook-smoke-1",
+  "v2": {
+   "config": "configs/exp012v2.toml",
+   "conditions": [
+    "clm_helpers:on",
+    "clm_helpers+scr:on"
+   ],
+   "tasks": [
+    "docsvc-dev-1",
+    "docsvc-dev-2"
+   ],
+   "repetitions": 1,
+   "smoke_task": "docsvc-smoke-1"
+  }
  },
  "phases": {
   "diagnostic-dev": "runs/jev-diagnostic/20261013T071821-screen-dev (12 cases; 5% omitted at the draft 0.3; threshold changed to 0.5 on these answers)",
   "diagnostic-frozen": "runs/jev-diagnostic/20261013T072006-screen-frozen (36 cases, run once; gate passed)",
   "pilot-smoke": "one B run on handbook-smoke-1; excluded from comparisons",
-  "pilot": "2 development instances x A/B, comparison 20261013T072241, run once"
+  "pilot": "2 development instances x A/B, comparison 20261013T072241, run once",
+  "v2-diagnostic-compatibility": "runs/jev-diagnostic/20261013T081130-screen-frozen (36 cases, 26 eligible, run once)",
+  "v2-smoke": "one B run on docsvc-smoke-1; excluded",
+  "v2-pilot": "2 fresh development instances x A/B, comparison 20261013T081314, run once"
  },
  "runs": [
   {
@@ -72,16 +98,54 @@
    "phase": "pilot",
    "group": "pilot",
    "note": "development pilot block 1 position 1: A (ordinary CLM, unscreened search results) on handbook-dev-2"
+  },
+  {
+   "run_id": "20261013T081206-clm_helpers-cacheon-scr-docsvc-smoke-1-e31d",
+   "role": "smoke",
+   "phase": "v2-smoke",
+   "group": "v2",
+   "note": "012 v2 live integration smoke: B on docsvc-smoke-1; excluded from all comparisons"
+  },
+  {
+   "run_id": "20261013T081315-clm_helpers-cacheon-docsvc-dev-1-03b1",
+   "role": "calibration",
+   "phase": "v2-pilot",
+   "group": "v2",
+   "note": "v2 development pilot block 0 position 0: A (ordinary CLM, document service, unscreened search results) on docsvc-dev-1"
+  },
+  {
+   "run_id": "20261013T081425-clm_helpers-cacheon-scr-docsvc-dev-1-6816",
+   "role": "calibration",
+   "phase": "v2-pilot",
+   "group": "v2",
+   "note": "v2 development pilot block 0 position 1: B (the same with result-screen/1) on docsvc-dev-1"
+  },
+  {
+   "run_id": "20261013T081541-clm_helpers-cacheon-scr-docsvc-dev-2-bf16",
+   "role": "calibration",
+   "phase": "v2-pilot",
+   "group": "v2",
+   "note": "v2 development pilot block 1 position 0: B (the same with result-screen/1) on docsvc-dev-2"
+  },
+  {
+   "run_id": "20261013T081701-clm_helpers-cacheon-docsvc-dev-2-2179",
+   "role": "calibration",
+   "phase": "v2-pilot",
+   "group": "v2",
+   "note": "v2 development pilot block 1 position 1: A (ordinary CLM, document service, unscreened search results) on docsvc-dev-2"
   }
  ],
  "comparisons": [
-  "20261013T072241"
+  "20261013T072241",
+  "20261013T081314"
  ],
  "comparison_phases": {
-  "20261013T072241": "pilot"
+  "20261013T072241": "pilot",
+  "20261013T081314": "v2-pilot"
  },
  "diagnostics": [
   "20261013T071821-screen-dev",
-  "20261013T072006-screen-frozen"
+  "20261013T072006-screen-frozen",
+  "20261013T081130-screen-frozen"
  ]
 }

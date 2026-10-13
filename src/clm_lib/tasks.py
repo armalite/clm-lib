@@ -120,6 +120,16 @@ INSTANCES: dict[str, InstanceSpec] = {
         )
         for i in range(1, 5)
     },
+    # Experiment 012 v2: the document-service workload (docservice.py, docsvc-gen/1): fresh
+    # development instances for the v2 pilot, one smoke instance and compatibility-diagnostic
+    # instances (never used for agent runs). No evaluation instances are defined.
+    "docsvc-dev-1": InstanceSpec("docsvc-dev-1", 9501, "docservice", "docsvc-dev"),
+    "docsvc-dev-2": InstanceSpec("docsvc-dev-2", 9502, "docservice", "docsvc-dev"),
+    "docsvc-smoke-1": InstanceSpec("docsvc-smoke-1", 9701, "docservice", "docsvc-smoke"),
+    **{
+        f"docsvc-diag-{i}": InstanceSpec(f"docsvc-diag-{i}", 9600 + i, "docservice", "docsvc-diag")
+        for i in range(1, 4)
+    },
     # Experiment 009: separate instances for diagnostic case text and the integration smoke run
     # (never used for pilot or evaluation comparisons).
     **{
@@ -933,6 +943,10 @@ def generate(name: str) -> TaskInstance:
         from .handbook import generate_handbook
 
         return generate_handbook(spec)
+    if spec.scenario == "docservice":
+        from .docservice import generate_docservice
+
+        return generate_docservice(spec)
     files, truth = _GENERATORS[spec.scenario](spec)
     return TaskInstance(spec=spec, prompt=task_prompt(files), files=files, truth=truth)
 

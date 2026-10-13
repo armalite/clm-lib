@@ -326,6 +326,12 @@ Ground truth exists only in memory until the run ends, then goes to `evaluator/`
 - **Structure-based eligibility:** blocks are recognised by the tool's markers and checked against the saved JSON. Runtime notices are parsed separately from passage text, so a re-parsed block never treats a notice as content (a defect found and fixed in offline tests before any live call).
 - **Deliberately not built:** screening of arbitrary command output, a larger output cap for B, automatic rereads, and any change to CLM editing.
 
+## Document service (experiment 012 v2)
+
+- **Where the corpus lives:** `docservice.DocService` holds the corpus in host memory and reuses the §24.1 tool's parser and ranking (`tools_namespace`), so v1 and v2 rank alike. It is built from `task.truth.corpus` when a `docservice` run starts. Only a hash of the corpus is recorded, in `evaluator/truth.json` at the end of the run.
+- **Where the actions run:** `_Run.service_step` runs `search` and `fetch` in the runtime, like other runtime actions (no sandbox call). It writes the saved originals that both conditions can read, and passes search text through `_screen_text`, the same recorder that §24.2's `_present_search` uses.
+- **The boundary is tested in the sandbox:** a whole-filesystem `grep` for corpus text from model code finds nothing (`tests/test_docservice.py`).
+
 ## Design choices
 
 - **JSON-lines transcript with escaping** instead of nonce delimiters: it's simple and can't be forged.

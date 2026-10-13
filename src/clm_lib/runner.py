@@ -68,6 +68,7 @@ from .prompts import (
     JEV_CLAUSE,
     PROMPT_VERSION,
     SEARCH_SCREEN_CLAUSE,
+    SEARCH_SCREEN_SERVICE_CLAUSE,
     SUMMARY_SYSTEM_TOKEN_TAIL_CODING,
     SUMMARY_SYSTEM_TOKEN_TAIL_ROUNDS,
     UPDATE_REVIEW_CLAUSE,
@@ -179,6 +180,19 @@ ROUNDS_ACTION_SCHEMA: dict[str, Any] = {
     "properties": {**STAGED_ACTION_SCHEMA["properties"], "answer": ROUNDS_ANSWER_SCHEMA},
 }
 CODING_FIELDS = ("summary",)
+# Experiment 012 v2 document-service task: the handbook answer contract plus the runtime's
+# search and fetch actions.
+SERVICE_ACTION_SCHEMA: dict[str, Any] = {
+    **ACTION_SCHEMA,
+    "properties": {
+        **ACTION_SCHEMA["properties"],
+        "action": {"type": "string", "enum": ["execute", "final", "search", "fetch"]},
+        "query": {"type": "string"},
+        "k": {"type": "integer"},
+        "ids": {"type": "array", "items": {"type": "string"}},
+        "answer": HANDBOOK_ANSWER_SCHEMA,
+    },
+}
 # Experiment 012 handbook task: unstaged actions with the handbook answer contract.
 HANDBOOK_ACTION_SCHEMA: dict[str, Any] = {
     **ACTION_SCHEMA,
@@ -227,6 +241,7 @@ def parse_action(
     begin_review_v2: bool = False,
     begin_review_v3: bool = False,
     allow_confirm: bool = False,
+    allow_service: bool = False,
 ) -> tuple[dict[str, Any] | None, str]:
     """Return (action, error). Only a whole-response JSON object is accepted."""
     raw = text.strip()
@@ -241,6 +256,23 @@ def parse_action(
         return None, "response JSON must be an object"
     kind = obj.get("action")
     if kind == "advance" and allow_advance:
+        return obj, ""
+    if kind == "search" and allow_service:
+        q, k = obj.get("query"), obj.get("k", 5)
+        if not isinstance(q, str) or not q.strip() or len(q) > 300:
+            return None, "search needs a non-empty string 'query' of at most 300 characters"
+        if not isinstance(k, int) or isinstance(k, bool) or not 1 <= k <= 8:
+            return None, "search 'k' must be an integer from 1 to 8"
+        return obj, ""
+    if kind == "fetch" and allow_service:
+        ids = obj.get("ids")
+        if (
+            not isinstance(ids, list)
+            or not ids
+            or len(ids) > 10
+            or not all(isinstance(i, str) for i in ids)
+        ):
+            return None, "fetch needs 'ids': a list of 1 to 10 passage or document ids"
         return obj, ""
     if kind == "confirm_edit" and allow_confirm:
         if not isinstance(obj.get("proposal"), str) or not obj["proposal"].strip():
@@ -434,7 +466,7 @@ class Runner:
         if rscr not in ("off", "jev"):
             raise ValueError(f"result_screen must be off or jev, not {rscr!r}")
         if rscr != "off":
-            if task.kind != "handbook":
+            if task.kind not in ("handbook", "docservice"):
                 raise ValueError(
                     "result screening applies to structured search results (handbook tasks) only"
                 )
@@ -538,6 +570,13 @@ class _Run:
         self.rscr = result_screen
         self.screen_log: list[dict[str, Any]] = []
         self.recovery_log: list[dict[str, Any]] = []
+        # Experiment 012 v2: the host-side document service (corpus in host memory only).
+        self.service: Any = None
+        self.service_log: list[dict[str, Any]] = []
+        if task.kind == "docservice":
+            from .docservice import DocService
+
+            self.service = DocService(task.truth.corpus)
         # Experiment 011 pilot: "off" (A), "control" (B: proposals) or "jev" (C: proposals + Jev).
         self.echk = edit_check
         self.proposal: dict[str, Any] | None = None  # the pending proposal, if any
@@ -637,7 +676,9 @@ class _Run:
             if self.irev == "jev":
                 self.system += INITIATED_REVIEW_JEV_CLAUSE
         if self.rscr == "jev":
-            self.system += SEARCH_SCREEN_CLAUSE
+            self.system += (
+                SEARCH_SCREEN_SERVICE_CLAUSE if task.kind == "docservice" else SEARCH_SCREEN_CLAUSE
+            )
         if self.echk != "off":
             self.system += EDIT_CHECK_CLAUSE
             if self.echk == "jev":
@@ -1511,10 +1552,13 @@ class _Run:
     def loop(self) -> tuple[str, str]:
         coding = self.task.kind == "coding"
         rounds = self.task.kind == "rounds"
-        handbook = self.task.kind == "handbook"
+        service = self.task.kind == "docservice"
+        handbook = self.task.kind == "handbook" or service
         schema = (
             CODING_ACTION_SCHEMA
             if coding
+            else SERVICE_ACTION_SCHEMA
+            if service
             else HANDBOOK_ACTION_SCHEMA
             if handbook
             else ROUNDS_ACTION_SCHEMA
@@ -1570,6 +1614,7 @@ class _Run:
                 self.ireq,
                 self.isrc == "latest-round",
                 self.echk != "off",
+                service,
             )
             if action is None:
                 self.trace.event(
@@ -1592,6 +1637,7 @@ class _Run:
                     self.ireq,
                     self.isrc == "latest-round",
                     self.echk != "off",
+                    service,
                 )
                 if action is None:
                     self.trace.event("invalid_action", step=self.step, error=err, after_repair=True)
@@ -1608,6 +1654,9 @@ class _Run:
                 continue
             if action["action"] == "confirm_edit":
                 self.confirm_step(action)
+                continue
+            if action["action"] in ("search", "fetch"):
+                self.service_step(action)
                 continue
             if action["action"] == "final":
                 if staged and self.stage < self.task.n_stages:
@@ -2552,10 +2601,25 @@ class _Run:
     def _present_search(self, res: ExecResult, thought: str, code: str) -> ExecResult:
         """Both conditions: search blocks cut by the output cap keep complete passages; with
         screening on, eligible blocks are screened. The observation is built from the result."""
+        out = self._screen_text(res.stdout, thought, "show")
+        reads = recovery_reads(out.text, code)
+        if reads["show_calls"] or reads["saved_reads"] or reads["doc_reads"]:
+            omitted = {i for r in self.screen_log for i in r.get("omitted", [])}
+            reads.update(step=self.step, omitted_recovered=sorted(omitted & set(reads["show_ids"])))
+            self.recovery_log.append(reads)
+        if out.text == res.stdout:
+            return res
+        whole = res.stdout_bytes <= len(res.stdout.encode())
+        return replace(
+            res, stdout=out.text, stdout_bytes=len(out.text.encode()) if whole else res.stdout_bytes
+        )
+
+    def _screen_text(self, text: str, thought: str, recover: str) -> Any:
+        """Present (both conditions) and, in B, screen the search blocks in ``text``; record."""
         call = self._jev_attempts if self.rscr == "jev" else None
         cfg = self.cfg.result_screen
         out = screen_stdout(
-            res.stdout,
+            text,
             self.task.prompt,
             thought,
             self.cfg.jev.model,
@@ -2563,6 +2627,7 @@ class _Run:
             self.ws,
             cfg.threshold,
             cfg.min_keep,
+            recover,
         )
         for rec in out.records:
             rec["step"] = self.step
@@ -2576,17 +2641,109 @@ class _Run:
             self.trace.event(
                 "search_result", **{k: v for k, v in rec.items() if k != "probabilities"}
             )
-        reads = recovery_reads(out.text, code)
-        if reads["show_calls"] or reads["saved_reads"] or reads["doc_reads"]:
+        return out
+
+    def service_step(self, action: dict[str, Any]) -> None:
+        """Experiment 012 v2: the runtime's document-service actions. Both conditions get the
+        same results; only search results pass through screening (in B). Fetches are never
+        screened. The observation is capped at the output cap with whole passages."""
+        from .docservice import MAX_K
+
+        svc = self.service
+        assert svc is not None
+        thought = str(action.get("thought", ""))[:1000]
+        cap = self.lim.output_cap_chars
+        kind = action["action"]
+        rec: dict[str, Any] = {"step": self.step, "action": kind}
+        if kind == "search":
+            q, k = action["query"].strip(), int(action.get("k", 5))
+            hits = svc.search(q, k)
+            n = sum(1 for r in self.service_log if r["action"] == "search") + 1
+            rid = f"SR-{n:03d}"
+            qs = q.replace('"', "'")[:200]
+            sd = self.ws / "search-results"
+            sd.mkdir(exist_ok=True)
+            path = f"/task/workspace/search-results/{rid}.txt"
+            (sd / f"{rid}.json").write_text(
+                json.dumps({"id": rid, "query": qs, "k": k, "passages": hits}), encoding="utf-8"
+            )
+            saved = [
+                f'# saved search result {rid}: query "{qs}", k={k}, {len(hits)} passages (original, unscreened)'
+            ]
+            for p in hits:
+                saved += ["--- " + svc.header(p)[4:], p["text"]]
+            (sd / f"{rid}.txt").write_text("\n".join(saved) + "\n", encoding="utf-8")
+            lines = [
+                f'<<search-result {rid} query="{qs}" k={k} returned={len(hits)} saved={path}>>'
+            ]
+            for p in hits:
+                lines += [svc.header(p), p["text"]]
+            lines.append(f"<<end search-result {rid}>>")
+            text = "\n".join(lines) + "\n"
+            if len(text) > cap:
+                text = text[:cap]  # cut like any capped output; presentation keeps whole passages
+            out = self._screen_text(text, thought, "fetch")
+            obs = out.text
+            rec.update(rid=rid, query=qs, k=k, returned=len(hits), max_k=MAX_K)
+        else:
+            got = svc.fetch(action["ids"])
             omitted = {i for r in self.screen_log for i in r.get("omitted", [])}
-            reads.update(step=self.step, omitted_recovered=sorted(omitted & set(reads["show_ids"])))
-            self.recovery_log.append(reads)
-        if out.text == res.stdout:
-            return res
-        whole = res.stdout_bytes <= len(res.stdout.encode())
-        return replace(
-            res, stdout=out.text, stdout_bytes=len(out.text.encode()) if whole else res.stdout_bytes
+            ids = [i for i, _ in got]
+            lines = ["<<passages (unscreened): " + ", ".join(ids) + ">>"]
+            shown = 0
+            for i, p in got:
+                block = (
+                    ["--- " + svc.header(p)[4:], p["text"]]
+                    if p
+                    else [f"--- {i}: no such passage or document"]
+                )
+                if len("\n".join(lines + block)) > cap - 200:
+                    break
+                lines += block
+                shown += 1
+            if shown < len(got):
+                lines.append(
+                    f"[output cap: {len(got) - shown} requested passages not shown; fetch fewer ids]"
+                )
+            lines.append("<<end passages>>")
+            obs = "\n".join(lines) + "\n"
+            rec.update(
+                ids=ids,
+                shown=shown,
+                missing=[i for i, p in got if p is None],
+                omitted_recovered=sorted(omitted & set(ids)),
+            )
+            if rec["omitted_recovered"]:
+                self.recovery_log.append(
+                    {
+                        "step": self.step,
+                        "fetch_ids": ids,
+                        "omitted_recovered": rec["omitted_recovered"],
+                        "show_calls": 0,
+                        "show_ids": [],
+                        "saved_reads": 0,
+                        "doc_reads": 0,
+                    }
+                )
+        rec["obs_chars"] = len(obs)
+        self.service_log.append(rec)
+        self.trace.event("service_" + kind, **rec)
+        params = {k: action[k] for k in ("query", "k", "ids") if k in action}
+        self.store.append(
+            [
+                Entry(
+                    f"s{self.step}.act",
+                    "assistant",
+                    f"[step {self.step}] {kind} {json.dumps(params, ensure_ascii=False)}\nthought: {thought}",
+                ),
+                Entry(f"s{self.step}.obs", "observation", obs),
+            ],
+            "runtime",
+            self.step,
         )
+        self._save_revision()
+        if self.clm:
+            self.store.mirror(self.ws)
 
     def result_screen_summary(self) -> dict[str, Any]:
         blocks = [r for r in self.screen_log if r.get("kind") == "block"]
@@ -2611,6 +2768,15 @@ class _Run:
             "chars_screened": sum(r["chars"] for r in screened),
             "chars_kept": sum(r["kept_chars"] for r in screened),
             "notice_chars": sum(r.get("notice_chars", 0) for r in blocks),
+            "service": {
+                "searches": sum(1 for r in self.service_log if r["action"] == "search"),
+                "fetches": sum(1 for r in self.service_log if r["action"] == "fetch"),
+                "fetched_ids": sum(len(r.get("ids", [])) for r in self.service_log),
+                "fetch_omitted_recovered": sorted(
+                    {i for r in self.service_log for i in r.get("omitted_recovered", [])}
+                ),
+                "log": self.service_log,
+            },
             "recovery": {
                 "steps": len(self.recovery_log),
                 "show_calls": sum(r["show_calls"] for r in self.recovery_log),
@@ -3146,7 +3312,7 @@ class _Run:
             score = self.evaluate_coding(completed=self.answer is not None)
         elif self.task.kind == "rounds":
             score = score_rounds(self.answer, truth, self.task.files)
-        elif self.task.kind == "handbook":
+        elif self.task.kind in ("handbook", "docservice"):
             score = score_handbook(self.answer, truth)
         else:
             score = (

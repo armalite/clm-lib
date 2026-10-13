@@ -271,13 +271,15 @@ def term_select(query: str, passages: list[dict[str, str]], min_keep: int = MIN_
     return sorted(kept)
 
 
-def notice_text(b: SearchBlock, kept: list[int], total_chars: int, kept_chars: int) -> str:
+def notice_text(
+    b: SearchBlock, kept: list[int], total_chars: int, kept_chars: int, recover: str = "show"
+) -> str:
     omitted = [p["id"] for i, p in enumerate(b.passages) if i not in kept]
     if not omitted:
         return f"[{SCREEN_VERSION}: all {len(kept)} passages kept]"
     return (
         f"[{SCREEN_VERSION}: kept {len(kept)} of {len(b.passages)} passages ({kept_chars:,} of "
-        f"{total_chars:,} chars); omitted {', '.join(omitted) or 'none'}; unscreened: show({omitted!r}) "
+        f"{total_chars:,} chars); omitted {', '.join(omitted) or 'none'}; unscreened: {recover}({omitted!r}) "
         f"or {b.saved}]"
     )
 
@@ -297,6 +299,7 @@ def screen_stdout(
     ws: Path,
     threshold: float = THRESHOLD,
     min_keep: int = MIN_KEEP,
+    recover: str = "show",
 ) -> ScreenOutcome:
     """Present (both conditions) and, with ``call``, screen (condition B) every search block.
     ``call(body) -> (response or None, error)`` is the runtime's recorded Jev attempt loop."""
@@ -338,7 +341,7 @@ def screen_stdout(
         kept, missing = select(b.passages, probs, threshold, min_keep)
         kp = [b.passages[i] for i in kept]
         kept_chars = sum(len(p["header"]) + 1 + len(p["text"]) + 1 for p in kp)
-        notice = notice_text(b, kept, b.chars, kept_chars)
+        notice = notice_text(b, kept, b.chars, kept_chars, recover)
         text = text[: b.start] + render_block(b, kp, notice) + text[b.end :]
         rec.update(
             screened=True,

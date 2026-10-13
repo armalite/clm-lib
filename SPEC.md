@@ -21,6 +21,7 @@ Version history:
 - 2.6: adds §22's evidence-complete v2 diagnostic (`jev-edit-diag/2` case files: evidence contract `edit-evidence/1`, questions `jev-edit-check/2`, verdict rule `edit-verdict/2`). It remains a component diagnostic; agent-side edit checking is not supported.
 - 2.7: adds the W2 changing-requirements workload (`export-gen/1`, scorer `export-checks/1`) and opt-in proposed-edit checking for CLM runs (`edit-check-pilot/1`, §23), off by default; the §22 diagnostics are unchanged.
 - 2.8: adds the handbook document-search workload (`handbook-gen/1`, scorer `handbook-checks/1`) and opt-in Jev screening of structured search results (`result-screen/1`, §24), off by default.
+- 2.9: adds §24.3, the experiment-012 v2 document-service workload (`docsvc-gen/1`): runtime `search` and `fetch` actions over a corpus held only in host memory, with `result-screen/1` unchanged except for the recovery verb in its notice and disclosure.
 - 1.9: adds a multi-round incident task family, two CLM capability variants (direct editing only; reusable helpers allowed), a separate summary-call allowance, helper-evidence tiers and a three-condition schedule (§18).
 - 1.8: adds a versioned request layout (`blocks/1`), optional provider prompt caching with explicit breakpoints, per-run cache isolation, cache-aware accounting evidence, and a four-condition comparison schedule (§17).
 - 1.7: adds a second coding generator with interacting, partially changing rules, an evaluator with richer categories, exact type checks and stage snapshots (§16), a balanced comparison order, and per-task scorer metadata in comparisons and exports.
@@ -643,4 +644,19 @@ The summary baseline's policy is selected by `[baseline] policy`, and recorded i
 - **Recovery accounting (both conditions):** `show()` calls and their ids (with any previously omitted ids recovered), saved-file reads, and direct document reads (code touching `fixtures/handbook`).
 - **Evidence:** `summary.json → result_screen` (blocks, eligible, screened, errors, provenance, cap repairs, passages and characters in, kept and omitted, missing answers, notice characters, recovery counts, block and recovery logs), and `rs_*` export columns.
 - **Component diagnostic:** `clm-lib jev-screen-diagnostic --cases <file> --split dev|frozen` (`jev_screen_diag.py`) applies the same request and selection to labelled cases (TypeSafe only). It reports support-passage recall, complete-support-set survival, the omitted share by label, the term-match reference selector and the gate.
+
+### 24.3 Document-service workload (`docsvc-gen/1`, experiment 012 v2)
+
+- **Instances:** `docsvc-dev-1` and `-dev-2` (v2 pilot), `docsvc-smoke-1` and `docsvc-diag-1..3` (compatibility diagnostic only). The task kind is `docservice`.
+- **The corpus** (`docservice.py`): 74 documents in host memory only, with 16 policy subjects (overlapping vocabulary), two FAQ documents and general documents. Sections carry subject-specific procedural sentences.
+  - **What reaches the sandbox:** the fixture mount holds only `SERVICE.md`. Nothing of the corpus is written to the mount or the workspace except returned results and saved copies of search results. This is the declared service boundary, identical in every condition.
+- **Questions and scorer:** as §24.1 (`handbook-checks/1`); answer documents are not named in the task.
+- **Actions** (`SERVICE_ACTION_SCHEMA`, `parse_action(allow_service=True)`, `_Run.service_step`):
+  - `{"action": "search", "query": str (≤ 300), "k": 1..8 (default 5)}` ranks passages with the §24.1 BM25 (`DocService`, host side). It writes `/task/workspace/search-results/SR-NNN.{json,txt}` (the runtime counts the ids) and returns the §24.1 structured block, capped at `limits.output_cap_chars` with whole passages only.
+  - `{"action": "fetch", "ids": [...]}` (≤ 10 passage or document ids; a document id returns all its sections) returns `<<passages (unscreened): ...>>`, capped with whole passages and a notice.
+  - Each action is one step, with an action entry and an observation entry appended by the runtime.
+- **Screening:**
+  - **What is screened:** only `search` observations, through `jev_screen.screen_stdout` with the recovery verb `fetch`. Its notice reads `unscreened: fetch([...]) or <saved path>`, and condition B's disclosure is `SEARCH_SCREEN_SERVICE_CLAUSE` (prompt version `2026-10-13.7`).
+  - **Never screened:** `execute` output in `docservice` tasks, fetches and saved-file reads.
+  - **Accounting:** `summary.json → result_screen.service` counts searches, fetches, fetched ids and omitted passages recovered by fetch.
 

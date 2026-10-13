@@ -27,7 +27,10 @@ from .context import Entry
 # conditions, EDIT_CHECK_JEV_CLAUSE for the Jev condition); all other texts unchanged.
 # 2026-10-13.6 adds the experiment-012 handbook task kind (AGENT_ROLE/FINAL_EXAMPLE entries) and
 # SEARCH_SCREEN_CLAUSE for the screening condition; all other texts unchanged.
-PROMPT_VERSION = "2026-10-13.6"
+# 2026-10-13.7 adds the experiment-012 v2 docservice task kind (AGENT_ROLE/FINAL_EXAMPLE) and
+# SEARCH_SCREEN_SERVICE_CLAUSE (the service version of the screening disclosure); all other
+# texts unchanged.
+PROMPT_VERSION = "2026-10-13.7"
 
 PROTOCOL = """You are {agent_role} working through a strict JSON protocol.
 
@@ -56,6 +59,7 @@ AGENT_ROLE = {
     "coding": "a software engineering agent",
     "rounds": "an investigation agent",
     "handbook": "a research agent",
+    "docservice": "a research agent",
 }
 FINAL_EXAMPLE = {
     "incident": (
@@ -68,6 +72,10 @@ FINAL_EXAMPLE = {
         '                                 "summary": "..."}}   (fields as specified in <task>)'
     ),
     "handbook": (
+        '  {"action": "final", "answer": {"answers": [{"question": "Q1", "value": "...",\n'
+        '                                              "citations": ["HB-07 §2", ...]}, ...]}}'
+    ),
+    "docservice": (
         '  {"action": "final", "answer": {"answers": [{"question": "Q1", "value": "...",\n'
         '                                              "citations": ["HB-07 §2", ...]}, ...]}}'
     ),
@@ -324,6 +332,17 @@ SEARCH RESULTS ARE SCREENED (this run):
 - Omitted passages are not lost: show(ids) and the saved result file named in the result header
   print them unscreened, and documents can be read directly. Screening can omit passages you
   need, and it never adds text.
+"""
+
+# Experiment 012 v2 (document service), screening condition only. The same disclosure as
+# SEARCH_SCREEN_CLAUSE, with the service's recovery route (fetch) in place of show().
+SEARCH_SCREEN_SERVICE_CLAUSE = """
+SEARCH RESULTS ARE SCREENED (this run):
+- A search result with 3 or more passages and at least 2,000 characters is screened by a fast
+  classifier (Jev) before it reaches you: passages it judges unrelated to your query are
+  omitted, and the result ends with a notice listing the omitted passage ids.
+- Omitted passages are not lost: the fetch action and the saved result file named in the result
+  header return them unscreened. Screening can omit passages you need, and it never adds text.
 """
 
 SUMMARY_SYSTEM_TOKEN_TAIL_ROUNDS = """You compress an agent's working transcript. The agent is

@@ -8,7 +8,9 @@ from clm_lib.tasks import HELDOUT, INSTANCES, TaskInstance, generate, score_answ
 
 # Experiment 001 task family; the staged family (experiment 002) is tested in test_staged.py.
 SINGLE = [
-    n for n in INSTANCES if not n.startswith(("staged-", "coding", "rounds-", "w2-", "handbook-"))
+    n
+    for n in INSTANCES
+    if not n.startswith(("staged-", "coding", "rounds-", "w2-", "handbook-", "docsvc-"))
 ]
 
 
