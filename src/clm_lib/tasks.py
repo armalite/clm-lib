@@ -107,6 +107,19 @@ INSTANCES: dict[str, InstanceSpec] = {
     "w2-dev-1": InstanceSpec("w2-dev-1", 8101, "export_w2", "w2-dev"),
     "w2-dev-2": InstanceSpec("w2-dev-2", 8102, "export_w2", "w2-dev"),
     "w2-smoke-1": InstanceSpec("w2-smoke-1", 8301, "export_w2", "w2-smoke"),
+    # Experiment 012: document-search question answering (handbook.py, handbook-gen/1). Two
+    # development instances for the pilot, one integration-smoke instance, and separate
+    # diagnostic instances for the component diagnostic (never used for agent runs). No
+    # held-out evaluation instances are defined yet.
+    "handbook-dev-1": InstanceSpec("handbook-dev-1", 9101, "handbook", "handbook-dev"),
+    "handbook-dev-2": InstanceSpec("handbook-dev-2", 9102, "handbook", "handbook-dev"),
+    "handbook-smoke-1": InstanceSpec("handbook-smoke-1", 9301, "handbook", "handbook-smoke"),
+    **{
+        f"handbook-diag-{i}": InstanceSpec(
+            f"handbook-diag-{i}", 9200 + i, "handbook", "handbook-diag"
+        )
+        for i in range(1, 5)
+    },
     # Experiment 009: separate instances for diagnostic case text and the integration smoke run
     # (never used for pilot or evaluation comparisons).
     **{
@@ -916,6 +929,10 @@ def generate(name: str) -> TaskInstance:
         from .w2 import generate_w2
 
         return generate_w2(spec)
+    if spec.scenario == "handbook":
+        from .handbook import generate_handbook
+
+        return generate_handbook(spec)
     files, truth = _GENERATORS[spec.scenario](spec)
     return TaskInstance(spec=spec, prompt=task_prompt(files), files=files, truth=truth)
 

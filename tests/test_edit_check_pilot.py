@@ -104,7 +104,7 @@ def test_condition_a_and_historical_configs_are_unchanged(tmp_path: Path) -> Non
 
 def test_conditions_parse_and_are_exclusive(tmp_path: Path) -> None:
     assert parse_conditions("clm_helpers:on,clm_helpers+chk:on,clm_helpers+chk-jev:on")
-    assert CONDITION_FLAGS["chk"][-1] == "control" and CONDITION_FLAGS["chk-jev"][-1] == "jev"
+    assert CONDITION_FLAGS["chk"][5] == "control" and CONDITION_FLAGS["chk-jev"][5] == "jev"
     assert conditions_need_jev("clm_helpers+chk-jev:on") and not conditions_need_jev(
         "clm_helpers+chk:on"
     )

@@ -92,6 +92,8 @@ The answer has four fields: `root_cause`, `required_value`, `remedy` and `eviden
 
 **Proposed-edit checking** (`[edit_check]`, or the `<clm mode>+chk` / `<clm mode>+chk-jev` conditions; SPEC §23; experiment 011's development pilot): an experimental workflow around CLM. A valid change to `context.json` is held as a proposal until Claude replies `confirm_edit` accept or withdraw, or writes again to revise. With `+chk-jev`, Jev checks each proposal with the frozen §22 v2 questions first; its scores are advice only. Ordinary CLM (no flag) applies edits directly, as before. The W2 changing-requirements coding workload (`w2-dev-1`, `w2-dev-2`; SPEC §23.1) is the pilot's task.
 
+**Search-result screening** (`[result_screen]`, or the `<clm mode>+scr` condition; SPEC §24; experiment 012): on the handbook document-search workload (`handbook-*` tasks), Jev scores each passage of an eligible structured `search` result before it enters the observation. Low-scoring passages are omitted, with a fixed notice naming them and the saved original. `show()` and direct document reads are never screened. `clm-lib jev-screen-diagnostic` runs the same policy on labelled cases.
+
 **Request layouts and prompt caching** (`[request]` in the config; SPEC §17):
 - **`single-user/1`** (the default) is the original layout.
 - **`blocks/1`** sends text content blocks:
@@ -220,6 +222,8 @@ src/clm_lib/
   update_review.py  experiment 009: the mechanical round update payload (round-files/1)
   jev_edit_check.py experiment 011: edit-check component diagnostic
   w2.py         experiment 011 pilot: W2 data-export task (export-gen/1) + scorer
+  handbook.py   experiment 012: handbook search task (handbook-gen/1), tools + scorer
+  jev_screen.py experiment 012: result-screen/1 (search-result screening); jev_screen_diag.py diagnostic
   invoice_ref2.py  standalone reference rules for invoice-gen/2
   prompts.py    frozen prompt text and request rendering
   report.py     markdown report from evidence

@@ -373,6 +373,30 @@ def _metrics_row(run_id: str, role: str, src: Path, charged: float) -> dict[str,
             ec_requirement_reads=ec["requirement_reads"],
             ec_test_runs=ec["test_runs"],
         )
+    rsc = m.get("result_screen")
+    if rsc is not None and (rsc["blocks"] or rsc["mode"] != "off"):  # experiment 012
+        rec = rsc["recovery"]
+        row.update(
+            rs_mode=rsc["mode"],
+            rs_blocks=rsc["blocks"],
+            rs_eligible=rsc["eligible"],
+            rs_screened=rsc["screened"],
+            rs_errors=rsc["errors"],
+            rs_skipped_provenance=rsc["skipped_provenance"],
+            rs_cap_repairs=rsc["cap_repairs"],
+            rs_passages_in=rsc["passages_in"],
+            rs_passages_omitted=rsc["passages_omitted"],
+            rs_missing_answers=rsc["missing_answers"],
+            rs_chars_in=rsc["chars_in"],
+            rs_chars_screened=rsc["chars_screened"],
+            rs_chars_kept=rsc["chars_kept"],
+            rs_notice_chars=rsc["notice_chars"],
+            rs_recovery_steps=rec["steps"],
+            rs_show_calls=rec["show_calls"],
+            rs_saved_reads=rec["saved_reads"],
+            rs_doc_reads=rec["doc_reads"],
+            rs_omitted_recovered=len(rec["omitted_recovered"]),
+        )
     by_provider = (m.get("cost") or {}).get("by_provider")
     if by_provider:
         row["cost_anthropic_usd"] = by_provider["anthropic"]

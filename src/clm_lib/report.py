@@ -182,8 +182,9 @@ def rescore(run_dir: Path) -> dict[str, Any] | None:
     if not truth_path.exists():
         return None
     t = _load(truth_path)
-    if t.get("kind") in ("coding", "rounds"):
-        # Coding checks are deterministic data; the recorded score is the current score.
+    if t.get("kind") in ("coding", "rounds", "handbook"):
+        # Coding, rounds and handbook checks are deterministic data; the recorded score is the
+        # current score.
         score: dict[str, Any] = _load(run_dir / "evaluator" / "score.json")
         return score
     if answer is None:

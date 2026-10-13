@@ -45,6 +45,7 @@ from .context import (
     unified_diff,
 )
 from .executor import DockerExecutor, ExecResult, Executor, ExecutorUnavailable
+from .handbook import HANDBOOK_ANSWER_SCHEMA, HANDBOOK_FIELDS, score_handbook
 from .jev import QUESTION_VERSION, JevError, ReviewItem, build_request
 from .jev_edit_check import (
     EVIDENCE_VERSION,
@@ -54,6 +55,7 @@ from .jev_edit_check import (
     build_edit_request_v2,
     questions_v2_sha256,
 )
+from .jev_screen import SCREEN_VERSION, recovery_reads, screen_stdout
 from .prompts import (
     EDIT_CHECK_CLAUSE,
     EDIT_CHECK_JEV_CLAUSE,
@@ -65,6 +67,7 @@ from .prompts import (
     INITIATED_REVIEW_V3_JEV_CLAUSE,
     JEV_CLAUSE,
     PROMPT_VERSION,
+    SEARCH_SCREEN_CLAUSE,
     SUMMARY_SYSTEM_TOKEN_TAIL_CODING,
     SUMMARY_SYSTEM_TOKEN_TAIL_ROUNDS,
     UPDATE_REVIEW_CLAUSE,
@@ -176,6 +179,11 @@ ROUNDS_ACTION_SCHEMA: dict[str, Any] = {
     "properties": {**STAGED_ACTION_SCHEMA["properties"], "answer": ROUNDS_ANSWER_SCHEMA},
 }
 CODING_FIELDS = ("summary",)
+# Experiment 012 handbook task: unstaged actions with the handbook answer contract.
+HANDBOOK_ACTION_SCHEMA: dict[str, Any] = {
+    **ACTION_SCHEMA,
+    "properties": {**ACTION_SCHEMA["properties"], "answer": HANDBOOK_ANSWER_SCHEMA},
+}
 
 
 def with_review_action(schema: dict[str, Any]) -> dict[str, Any]:
@@ -285,6 +293,8 @@ def parse_action(
             return None, "evidence_refs must be a list of strings"
         if "incidents" in need and not isinstance(ans["incidents"], list):
             return None, "incidents must be a list of objects"
+        if "answers" in need and not isinstance(ans["answers"], list):
+            return None, "answers must be a list of objects"
         return obj, ""
     return None, "action must be 'execute' or 'final'"
 
@@ -350,6 +360,7 @@ class Runner:
         review_required: bool | None = None,
         review_update_source: str | None = None,
         edit_check: str | None = None,
+        result_screen: str | None = None,
     ) -> RunResult:
         """``caching`` overrides ``request.prompt_caching`` for this run (four-condition runs);
         ``jev`` overrides ``jev.enabled`` (experiment 008; CLM modes only). ``update_review``
@@ -418,6 +429,21 @@ class Runner:
                 raise ValueError("proposed-edit checking is exclusive with the review features")
             if echk == "jev" and self.jev is None:
                 raise ValueError("edit-check advice requested but no Jev advisor is configured")
+        rs = self.cfg.result_screen
+        rscr = result_screen or ("jev" if rs.enabled else "off")
+        if rscr not in ("off", "jev"):
+            raise ValueError(f"result_screen must be off or jev, not {rscr!r}")
+        if rscr != "off":
+            if task.kind != "handbook":
+                raise ValueError(
+                    "result screening applies to structured search results (handbook tasks) only"
+                )
+            if jev_on or upd != "off" or irev != "off" or echk != "off":
+                raise ValueError(
+                    "result screening is exclusive with the review and edit-check features"
+                )
+            if self.jev is None:
+                raise ValueError("result screening requested but no Jev advisor is configured")
         irev_tags = (
             {"off": "", "control": "-pre3", "jev": "-pre3jev"}
             if source == "latest-round"
@@ -431,10 +457,11 @@ class Runner:
             else {"off": "", "control": "-upd", "jev": "-updjev"}[upd]
             + irev_tags[irev]
             + {"off": "", "control": "-chk", "jev": "-chkjev"}[echk]
+            + {"off": "", "jev": "-scr"}[rscr]
         )
         run_id = f"{stamp}-{mode}{cond}{tag}-{task.spec.name}-{secrets.token_hex(2)}"
         return _Run(
-            self, task, mode, run_id, label, on, jev_on, upd, irev, required, source, echk
+            self, task, mode, run_id, label, on, jev_on, upd, irev, required, source, echk, rscr
         ).execute()
 
 
@@ -504,8 +531,13 @@ class _Run:
         review_required: bool = False,
         review_update_source: str = "stated",
         edit_check: str = "off",
+        result_screen: str = "off",
     ) -> None:
         self.r = runner
+        # Experiment 012: "off" (A) or "jev" (B: screening of structured search results).
+        self.rscr = result_screen
+        self.screen_log: list[dict[str, Any]] = []
+        self.recovery_log: list[dict[str, Any]] = []
         # Experiment 011 pilot: "off" (A), "control" (B: proposals) or "jev" (C: proposals + Jev).
         self.echk = edit_check
         self.proposal: dict[str, Any] | None = None  # the pending proposal, if any
@@ -604,6 +636,8 @@ class _Run:
             self.system += INITIATED_REVIEW_CLAUSE
             if self.irev == "jev":
                 self.system += INITIATED_REVIEW_JEV_CLAUSE
+        if self.rscr == "jev":
+            self.system += SEARCH_SCREEN_CLAUSE
         if self.echk != "off":
             self.system += EDIT_CHECK_CLAUSE
             if self.echk == "jev":
@@ -1356,6 +1390,8 @@ class _Run:
             error=res.error,
             runtime_trace=res.runtime_trace,
         )
+        if self.task.kind == "handbook":
+            res = self._present_search(res, thought, code)
         candidates = self._track_files(before, after, code)
         self._note_reads(code)
         receipt: str | None = None
@@ -1475,16 +1511,27 @@ class _Run:
     def loop(self) -> tuple[str, str]:
         coding = self.task.kind == "coding"
         rounds = self.task.kind == "rounds"
+        handbook = self.task.kind == "handbook"
         schema = (
             CODING_ACTION_SCHEMA
             if coding
+            else HANDBOOK_ACTION_SCHEMA
+            if handbook
             else ROUNDS_ACTION_SCHEMA
             if rounds
             else STAGED_ACTION_SCHEMA
             if self.task.staged
             else ACTION_SCHEMA
         )
-        fields = CODING_FIELDS if coding else ROUNDS_FIELDS if rounds else INCIDENT_FIELDS
+        fields = (
+            CODING_FIELDS
+            if coding
+            else HANDBOOK_FIELDS
+            if handbook
+            else ROUNDS_FIELDS
+            if rounds
+            else INCIDENT_FIELDS
+        )
         staged = self.task.staged
         if self.jev_on:
             schema = with_review_action(schema)
@@ -2501,6 +2548,82 @@ class _Run:
             "review_records": reviews,
         }
 
+    # ------------------------------------------- search-result screening (experiment 012)
+    def _present_search(self, res: ExecResult, thought: str, code: str) -> ExecResult:
+        """Both conditions: search blocks cut by the output cap keep complete passages; with
+        screening on, eligible blocks are screened. The observation is built from the result."""
+        call = self._jev_attempts if self.rscr == "jev" else None
+        cfg = self.cfg.result_screen
+        out = screen_stdout(
+            res.stdout,
+            self.task.prompt,
+            thought,
+            self.cfg.jev.model,
+            call,
+            self.ws,
+            cfg.threshold,
+            cfg.min_keep,
+        )
+        for rec in out.records:
+            rec["step"] = self.step
+            if "request" in rec:
+                n = sum(1 for r in self.screen_log if "request" in r) + 1
+                self.trace.write_json(f"result_screen/{self.step:03d}-{rec['rid']}.json", rec)
+                rec = {k: v for k, v in rec.items() if k != "request"}
+                rec["record"] = f"result_screen/{self.step:03d}-{rec['rid']}.json"
+                rec["seq"] = n
+            self.screen_log.append(rec)
+            self.trace.event(
+                "search_result", **{k: v for k, v in rec.items() if k != "probabilities"}
+            )
+        reads = recovery_reads(out.text, code)
+        if reads["show_calls"] or reads["saved_reads"] or reads["doc_reads"]:
+            omitted = {i for r in self.screen_log for i in r.get("omitted", [])}
+            reads.update(step=self.step, omitted_recovered=sorted(omitted & set(reads["show_ids"])))
+            self.recovery_log.append(reads)
+        if out.text == res.stdout:
+            return res
+        whole = res.stdout_bytes <= len(res.stdout.encode())
+        return replace(
+            res, stdout=out.text, stdout_bytes=len(out.text.encode()) if whole else res.stdout_bytes
+        )
+
+    def result_screen_summary(self) -> dict[str, Any]:
+        blocks = [r for r in self.screen_log if r.get("kind") == "block"]
+        screened = [r for r in blocks if r.get("screened")]
+        return {
+            "mode": self.rscr,
+            "version": SCREEN_VERSION,
+            "threshold": self.cfg.result_screen.threshold,
+            "min_keep": self.cfg.result_screen.min_keep,
+            "blocks": len(blocks),
+            "eligible": sum(1 for r in blocks if r["eligible"]),
+            "screened": len(screened),
+            "errors": sum(1 for r in blocks if r.get("error")),
+            "skipped_provenance": sum(1 for r in blocks if r.get("skipped")),
+            "provenance_ok": sum(1 for r in blocks if r.get("provenance_ok")),
+            "cap_repairs": sum(1 for r in self.screen_log if r.get("kind") == "cap_repair"),
+            "passages_in": sum(r["passages"] for r in blocks),
+            "passages_screened": sum(r["passages"] for r in screened),
+            "passages_omitted": sum(len(r["omitted"]) for r in screened),
+            "missing_answers": sum(len(r["missing_answers"]) for r in screened),
+            "chars_in": sum(r["chars"] for r in blocks),
+            "chars_screened": sum(r["chars"] for r in screened),
+            "chars_kept": sum(r["kept_chars"] for r in screened),
+            "notice_chars": sum(r.get("notice_chars", 0) for r in blocks),
+            "recovery": {
+                "steps": len(self.recovery_log),
+                "show_calls": sum(r["show_calls"] for r in self.recovery_log),
+                "saved_reads": sum(r["saved_reads"] for r in self.recovery_log),
+                "doc_reads": sum(r["doc_reads"] for r in self.recovery_log),
+                "omitted_recovered": sorted(
+                    {i for r in self.recovery_log for i in r["omitted_recovered"]}
+                ),
+            },
+            "block_log": blocks,
+            "recovery_log": self.recovery_log,
+        }
+
     # ------------------------------------------- proposed-edit checking (011 agent pilot)
     def _note_reads(self, code: str) -> None:
         """Rereading evidence (all conditions): executions whose code opens requirement files or
@@ -3023,6 +3146,8 @@ class _Run:
             score = self.evaluate_coding(completed=self.answer is not None)
         elif self.task.kind == "rounds":
             score = score_rounds(self.answer, truth, self.task.files)
+        elif self.task.kind == "handbook":
+            score = score_handbook(self.answer, truth)
         else:
             score = (
                 score_answer(self.answer, truth, self.task.files)
@@ -3091,6 +3216,7 @@ class _Run:
             "update_review": self.update_review_summary(),
             "initiated_review": self.initiated_review_summary(),
             "edit_check": self.edit_check_summary(),
+            "result_screen": self.result_screen_summary(),
             "request": self.request_summary(),
             "peak_working_context_chars": self.peak_ctx_chars,
             "context_revisions": len(self.store.revisions) - 1,

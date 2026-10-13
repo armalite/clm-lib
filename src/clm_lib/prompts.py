@@ -25,7 +25,9 @@ from .context import Entry
 # conditions, INITIATED_REVIEW_V3_JEV_CLAUSE for the Jev condition); all other texts unchanged.
 # 2026-10-13.5 adds the experiment-011 pilot clauses (EDIT_CHECK_CLAUSE for both checking
 # conditions, EDIT_CHECK_JEV_CLAUSE for the Jev condition); all other texts unchanged.
-PROMPT_VERSION = "2026-10-13.5"
+# 2026-10-13.6 adds the experiment-012 handbook task kind (AGENT_ROLE/FINAL_EXAMPLE entries) and
+# SEARCH_SCREEN_CLAUSE for the screening condition; all other texts unchanged.
+PROMPT_VERSION = "2026-10-13.6"
 
 PROTOCOL = """You are {agent_role} working through a strict JSON protocol.
 
@@ -53,6 +55,7 @@ AGENT_ROLE = {
     "incident": "an investigation agent",
     "coding": "a software engineering agent",
     "rounds": "an investigation agent",
+    "handbook": "a research agent",
 }
 FINAL_EXAMPLE = {
     "incident": (
@@ -63,6 +66,10 @@ FINAL_EXAMPLE = {
     "rounds": (
         '  {"action": "final", "answer": {"incidents": [...], "unresolved": [...],\n'
         '                                 "summary": "..."}}   (fields as specified in <task>)'
+    ),
+    "handbook": (
+        '  {"action": "final", "answer": {"answers": [{"question": "Q1", "value": "...",\n'
+        '                                              "citations": ["HB-07 §2", ...]}, ...]}}'
     ),
 }
 
@@ -306,6 +313,17 @@ EDIT_CHECK_JEV_CLAUSE = """- In this run, each proposal is also checked by a fas
   it. The scores are advice and can be wrong. A flag means "inspect", not "wrong" (missing
   evidence may explain it), and a clear result does not guarantee the change is safe. You decide
   whether to accept, revise or withdraw; you never need to change a proposal or lower a score.
+"""
+
+# Experiment 012, screening condition only.
+SEARCH_SCREEN_CLAUSE = """
+SEARCH RESULTS ARE SCREENED (this run):
+- A search result with 3 or more passages and at least 2,000 characters is screened by a fast
+  classifier (Jev) before it reaches you: passages it judges unrelated to your query are
+  omitted, and the result ends with a notice listing the omitted passage ids.
+- Omitted passages are not lost: show(ids) and the saved result file named in the result header
+  print them unscreened, and documents can be read directly. Screening can omit passages you
+  need, and it never adds text.
 """
 
 SUMMARY_SYSTEM_TOKEN_TAIL_ROUNDS = """You compress an agent's working transcript. The agent is

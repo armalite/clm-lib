@@ -1,0 +1,87 @@
+{
+ "id": "012-jev-result-screening",
+ "title": "Experiment 012: Jev screening of structured document-search results (component diagnostic, smoke, development pilot)",
+ "provenance": {
+  "source_repo": "https://github.com/armalite/clm-lib",
+  "base_commit": "0e7e877",
+  "tree_state": "HEAD 0e7e877 plus the uncommitted 012 implementation (handbook.py, jev_screen.py, jev_screen_diag.py, runner/cli/config/prompts/export changes, tests, configs/exp012.toml); the comparison record holds the source patch",
+  "generator_version": "handbook-gen/1",
+  "scorer": "handbook-checks/1",
+  "screen_version": "result-screen/1 (threshold 0.5, min_keep 2)",
+  "question_version": "jev-screen-question/1 (sha256 6332a7b4...)",
+  "prompt_version": "2026-10-13.6",
+  "model": "claude-opus-5-5 (effort low)",
+  "jev_model": "jev-1.13.0",
+  "cases": "experiments/012-jev-result-screening/screen-cases-v1.json in the results repository (jev-screen-diag/1, sha256 8f6c8099...)",
+  "jev_price": "USD 0.042 per million input tokens, output free",
+  "budget": "ledger ceiling set explicitly from USD 97.010420 to USD 88.293391 (settled spend USD 83.293391 + USD 5 for 012, both providers); replaces the unused 011 pilot allowance",
+  "status": "component gate passed; smoke verified the live path; development pilot complete (4/4 strict success) but screening was never exercised: Claude did not call search in either B run"
+ },
+ "settings": {
+  "config": "configs/exp012.toml",
+  "command": "compare",
+  "conditions": [
+   "clm_helpers:on",
+   "clm_helpers+scr:on"
+  ],
+  "tasks": [
+   "handbook-dev-1",
+   "handbook-dev-2"
+  ],
+  "repetitions": 1,
+  "smoke_task": "handbook-smoke-1"
+ },
+ "phases": {
+  "diagnostic-dev": "runs/jev-diagnostic/20261013T071821-screen-dev (12 cases; 5% omitted at the draft 0.3; threshold changed to 0.5 on these answers)",
+  "diagnostic-frozen": "runs/jev-diagnostic/20261013T072006-screen-frozen (36 cases, run once; gate passed)",
+  "pilot-smoke": "one B run on handbook-smoke-1; excluded from comparisons",
+  "pilot": "2 development instances x A/B, comparison 20261013T072241, run once"
+ },
+ "runs": [
+  {
+   "run_id": "20261013T072054-clm_helpers-cacheon-scr-handbook-smoke-1-7f35",
+   "role": "smoke",
+   "phase": "pilot-smoke",
+   "group": "pilot",
+   "note": "012 live integration smoke: B on handbook-smoke-1; excluded from all comparisons"
+  },
+  {
+   "run_id": "20261013T072241-clm_helpers-cacheon-handbook-dev-1-5e86",
+   "role": "calibration",
+   "phase": "pilot",
+   "group": "pilot",
+   "note": "development pilot block 0 position 0: A (ordinary CLM, unscreened search results) on handbook-dev-1"
+  },
+  {
+   "run_id": "20261013T072334-clm_helpers-cacheon-scr-handbook-dev-1-be1a",
+   "role": "calibration",
+   "phase": "pilot",
+   "group": "pilot",
+   "note": "development pilot block 0 position 1: B (the same with result-screen/1) on handbook-dev-1"
+  },
+  {
+   "run_id": "20261013T072427-clm_helpers-cacheon-scr-handbook-dev-2-e80b",
+   "role": "calibration",
+   "phase": "pilot",
+   "group": "pilot",
+   "note": "development pilot block 1 position 0: B (the same with result-screen/1) on handbook-dev-2"
+  },
+  {
+   "run_id": "20261013T072506-clm_helpers-cacheon-handbook-dev-2-f6e1",
+   "role": "calibration",
+   "phase": "pilot",
+   "group": "pilot",
+   "note": "development pilot block 1 position 1: A (ordinary CLM, unscreened search results) on handbook-dev-2"
+  }
+ ],
+ "comparisons": [
+  "20261013T072241"
+ ],
+ "comparison_phases": {
+  "20261013T072241": "pilot"
+ },
+ "diagnostics": [
+  "20261013T071821-screen-dev",
+  "20261013T072006-screen-frozen"
+ ]
+}

@@ -145,6 +145,16 @@ class EditCheckConfig:
 
 
 @dataclass
+class ResultScreenConfig:
+    # Experiment 012: Jev screening of structured document-search results (off by default).
+    # `enabled` sets the per-run default; `compare --conditions <mode>+scr:on` overrides it. The
+    # policy constants (result-screen/1) are frozen here; Jev client settings come from [jev].
+    enabled: bool = False
+    threshold: float = 0.5  # keep a passage when Jev's probability is at least this (012 freeze)
+    min_keep: int = 2  # always keep at least this many passages (highest probabilities)
+
+
+@dataclass
 class BudgetConfig:
     ceiling_usd: float = 10.0
     min_run_reserve_usd: float = 0.75
@@ -172,6 +182,7 @@ class Config:
     update_review: UpdateReviewConfig = field(default_factory=UpdateReviewConfig)
     initiated_review: InitiatedReviewConfig = field(default_factory=InitiatedReviewConfig)
     edit_check: EditCheckConfig = field(default_factory=EditCheckConfig)
+    result_screen: ResultScreenConfig = field(default_factory=ResultScreenConfig)
     runs_dir: str = "runs"
 
     def to_dict(self) -> dict[str, Any]:
@@ -201,6 +212,7 @@ def load_config(path: Path | None) -> Config:
         "update_review": UpdateReviewConfig,
         "initiated_review": InitiatedReviewConfig,
         "edit_check": EditCheckConfig,
+        "result_screen": ResultScreenConfig,
     }
     kwargs: dict[str, Any] = {}
     for key, cls in sections.items():

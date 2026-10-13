@@ -319,6 +319,13 @@ Ground truth exists only in memory until the run ends, then goes to `evaluator/`
   - the recovery exception.
 - **Deliberately not built:** a transaction framework, file rollback, automatic rejection, or any change to the §22 component.
 
+## Handbook search and result screening (experiment 012)
+
+- **One tool source:** `handbook.py` generates the corpus and questions and holds `TOOLS_SOURCE`, the exact `handbook_tools.py` written to the fixtures. The host executes the same source (`tools_namespace`) for the offline opportunity check and to build diagnostic cases, so the sandbox and the diagnostic use one search algorithm.
+- **Where screening runs:** `jev_screen.screen_stdout` is the only screening path. `_Run._present_search` calls it from `execute_step` for handbook tasks before the observation is built. It is called without a Jev callback in condition A (presentation only) and with `_jev_attempts` in B, so retries and ledger settlement are those of 008–011.
+- **Structure-based eligibility:** blocks are recognised by the tool's markers and checked against the saved JSON. Runtime notices are parsed separately from passage text, so a re-parsed block never treats a notice as content (a defect found and fixed in offline tests before any live call).
+- **Deliberately not built:** screening of arbitrary command output, a larger output cap for B, automatic rereads, and any change to CLM editing.
+
 ## Design choices
 
 - **JSON-lines transcript with escaping** instead of nonce delimiters: it's simple and can't be forged.

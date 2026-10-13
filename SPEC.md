@@ -20,6 +20,7 @@ Version history:
 - 2.5: adds the experiment-011 edit-check component diagnostic (§22). Agent-side edit checking, result screening and the changing-requirements workload remain planned only. Proposed-edit checks, result screening and the changing-requirements workload remain planned only and are not specified or supported.
 - 2.6: adds §22's evidence-complete v2 diagnostic (`jev-edit-diag/2` case files: evidence contract `edit-evidence/1`, questions `jev-edit-check/2`, verdict rule `edit-verdict/2`). It remains a component diagnostic; agent-side edit checking is not supported.
 - 2.7: adds the W2 changing-requirements workload (`export-gen/1`, scorer `export-checks/1`) and opt-in proposed-edit checking for CLM runs (`edit-check-pilot/1`, §23), off by default; the §22 diagnostics are unchanged.
+- 2.8: adds the handbook document-search workload (`handbook-gen/1`, scorer `handbook-checks/1`) and opt-in Jev screening of structured search results (`result-screen/1`, §24), off by default.
 - 1.9: adds a multi-round incident task family, two CLM capability variants (direct editing only; reusable helpers allowed), a separate summary-call allowance, helper-evidence tiers and a three-condition schedule (§18).
 - 1.8: adds a versioned request layout (`blocks/1`), optional provider prompt caching with explicit breakpoints, per-run cache isolation, cache-aware accounting evidence, and a four-condition comparison schedule (§17).
 - 1.7: adds a second coding generator with interacting, partially changing rules, an evaluator with richer categories, exact type checks and stage snapshots (§16), a balanced comparison order, and per-task scorer metadata in comparisons and exports.
@@ -609,4 +610,37 @@ The summary baseline's policy is selected by `[baseline] policy`, and recorded i
 - **Evidence:**
   - **`summary.json → edit_check`:** mode, versions, threshold, proposals by status, recovery-exempt edits, confirm actions and invalid ones, checks, verdicts, reactions by verdict, flagged or uncertain proposals that were accepted, requirement reads and test runs (all conditions), and the proposal and confirm logs.
   - **Files and events:** `edit_check/P<n>.json` (the exact request and answers), `context_proposal`, `edit_check` and `confirm_edit` events, and `ec_*` export columns.
+
+## 24. Handbook search workload and search-result screening (experiment 012)
+
+### 24.1 Handbook workload (`handbook-gen/1`, `handbook.py`)
+
+- **Instances:** `handbook-dev-1` and `-dev-2` (pilot), `handbook-smoke-1` (2 questions, smoke only) and `handbook-diag-1..4` (component diagnostic only). The task kind is `handbook`, unstaged.
+- **The handbook:** 40 markdown documents under `/task/fixtures/handbook/`. Each has a header line (version, status, effective dates, supersedes or superseded by) and numbered sections. A section is a passage, cited `HB-07 §2`.
+- **Subjects:** 8 policy subjects. Each has a current policy, a superseded version, an exception memo with a carve-out, a related-budgets distractor, and an FAQ entry restating the current standard value.
+- **Questions:** 6 per instance, of the types `current`, `past`, `exception`, `carveout` and `additive`. Numeric answers have one or more valid support sets; some sets need 2 passages.
+- **Tools:** `/task/fixtures/handbook_tools.py`, identical in every condition:
+  - `search(query, k=5)` (k ≤ 8) uses deterministic stdlib BM25 over passages. It prints a structured block (`<<search-result SR-NNN query=... k=... returned=... saved=...>>`, then `=== <id> | <title> — <heading> | <meta>` and the passage text, then `<<end search-result SR-NNN>>`) and saves the original (`.txt` and `.json`) under `/task/workspace/search-results/`.
+  - `show(ids)` prints named passages as `<<passages (unscreened): ...>>`, a format that is never screened.
+  - Documents stay directly readable.
+- **The final answer:** `{"answers": [{"question", "value", "citations"}]}`.
+- **Scorer (`handbook-checks/1`, host side):** a question is correct when the value matches numerically **and** the citations include a complete valid support set. Citation ids are normalised (`HB-7#2`, `HB-07 section 2`, …). A superseded value is counted `stale`; citations outside every support set are counted. Strict success means every question is correct.
+
+### 24.2 Search-result screening (`result-screen/1`, `jev_screen.py`)
+
+- **Opt-in:** `[result_screen] enabled` (default false), the per-run `result_screen` (`off` or `jev`), the condition `<clm mode>+scr`, or `run --result-screen`.
+  - **Scope:** handbook tasks only, exclusive with §19–§21 and §23.
+  - **Unchanged:** ordinary CLM editing and every other task kind.
+- **Presentation, both conditions:** after an execution, structured search blocks in stdout are parsed. A block cut by the existing 6,000-character output cap is cut back to its last complete passage, with a notice naming the passages not shown (from the saved original). No other output is changed. Each block's passages are checked against the saved original (provenance).
+- **Screening (`jev`):**
+  - **Eligible:** a complete block with ≥ 3 passages and ≥ 2,000 presented characters, whose provenance matches.
+  - **The request:** one Jev request per block (`build_screen_request`). `state` holds the task (≤ 4,000 characters), the query, the step's stated `thought` (≤ 500 characters) and every passage (id, source header, text). There is one `noul` question per passage, carrying that passage's id and full text, with the frozen `QUESTION` and `SCOPE`.
+  - **Selection:** keep a passage at probability ≥ `[result_screen] threshold` (0.5), and at least `min_keep` (2), highest first, in original order. A missing answer keeps its passage.
+  - **Rendering:** omitted passages are removed, and the fixed notice `[result-screen/1: kept k of n passages (c of t chars); omitted ...; unscreened: show([...]) or <saved path>]` (or `all n passages kept`) is added.
+  - **Service error** (after `[jev] retries`): the block is shown unscreened with `screening unavailable; nothing omitted`.
+  - **Recording:** every attempt is in the ledger and `jev/`, and every screened block in `result_screen/<step>-<id>.json`.
+- **Never screened:** `show()` output, saved originals, documents, stderr and any other output, so recovery reads are always unfiltered.
+- **Recovery accounting (both conditions):** `show()` calls and their ids (with any previously omitted ids recovered), saved-file reads, and direct document reads (code touching `fixtures/handbook`).
+- **Evidence:** `summary.json → result_screen` (blocks, eligible, screened, errors, provenance, cap repairs, passages and characters in, kept and omitted, missing answers, notice characters, recovery counts, block and recovery logs), and `rs_*` export columns.
+- **Component diagnostic:** `clm-lib jev-screen-diagnostic --cases <file> --split dev|frozen` (`jev_screen_diag.py`) applies the same request and selection to labelled cases (TypeSafe only). It reports support-passage recall, complete-support-set survival, the omitted share by label, the term-match reference selector and the gate.
 
