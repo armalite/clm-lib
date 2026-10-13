@@ -88,7 +88,9 @@ The answer has four fields: `root_cause`, `required_value`, `remedy` and `eviden
 
 **Claude-initiated context review** (`[initiated_review]`, or the `<clm mode>+rev` / `<clm mode>+rev-jev` conditions; SPEC §21): CLM runs get a `begin_review` action that returns the current revision's note and observation entries for review; with `+rev-jev`, the same review also returns Jev's per-entry advice before the next model call. It never edits the context. `+pre` / `+pre-jev` (SPEC §21, `initiated-review/2`) instead require a review before every context edit: an edit without a valid review is rejected and the previous context kept. `+pre3` / `+pre3-jev` (`initiated-review/3`) keep that requirement but supply the review's update from the runtime (the latest released round's board and change-log lines), so Jev runs whatever Claude labels the edit.
 
-**Edit-check diagnostic** (`clm-lib jev-edit-diagnostic`; SPEC §22): sends labelled (current context, proposed rewrite) cases to Jev with narrow questions (v1: lost / changed / evidence; v2 adds `insufficient` and a mechanical evidence selection of the full revision, execution output and newly cited source lines) and scores them against deterministic reference checks. TypeSafe calls only; there is no agent-side edit checking.
+**Edit-check diagnostic** (`clm-lib jev-edit-diagnostic`; SPEC §22): sends labelled (current context, proposed rewrite) cases to Jev with narrow questions (v1: lost / changed / evidence; v2 adds `insufficient` and a mechanical evidence selection of the full revision, execution output and newly cited source lines) and scores them against deterministic reference checks. TypeSafe calls only.
+
+**Proposed-edit checking** (`[edit_check]`, or the `<clm mode>+chk` / `<clm mode>+chk-jev` conditions; SPEC §23; experiment 011's development pilot): an experimental workflow around CLM. A valid change to `context.json` is held as a proposal until Claude replies `confirm_edit` accept or withdraw, or writes again to revise. With `+chk-jev`, Jev checks each proposal with the frozen §22 v2 questions first; its scores are advice only. Ordinary CLM (no flag) applies edits directly, as before. The W2 changing-requirements coding workload (`w2-dev-1`, `w2-dev-2`; SPEC §23.1) is the pilot's task.
 
 **Request layouts and prompt caching** (`[request]` in the config; SPEC §17):
 - **`single-user/1`** (the default) is the original layout.
@@ -217,6 +219,7 @@ src/clm_lib/
   jev_diag.py   Jev component diagnostic on labelled cases
   update_review.py  experiment 009: the mechanical round update payload (round-files/1)
   jev_edit_check.py experiment 011: edit-check component diagnostic
+  w2.py         experiment 011 pilot: W2 data-export task (export-gen/1) + scorer
   invoice_ref2.py  standalone reference rules for invoice-gen/2
   prompts.py    frozen prompt text and request rendering
   report.py     markdown report from evidence
