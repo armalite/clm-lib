@@ -22,7 +22,8 @@ Version history:
 - 2.7: adds the W2 changing-requirements workload (`export-gen/1`, scorer `export-checks/1`) and opt-in proposed-edit checking for CLM runs (`edit-check-pilot/1`, §23), off by default; the §22 diagnostics are unchanged.
 - 2.8: adds the handbook document-search workload (`handbook-gen/1`, scorer `handbook-checks/1`) and opt-in Jev screening of structured search results (`result-screen/1`, §24), off by default.
 - 2.9: adds §24.3, the experiment-012 v2 document-service workload (`docsvc-gen/1`): runtime `search` and `fetch` actions over a corpus held only in host memory, with `result-screen/1` unchanged except for the recovery verb in its notice and disclosure.
-- 2.10: adds §25, Jev as a primitive inside model-written code (`jev-primitive/1`), opt-in and off by default (experiment 014, planned).
+- 2.10: adds §25, Jev as a primitive inside model-written code (`jev-primitive/1`), opt-in and off by default (experiment 014).
+- 2.11: adds §25's per-run extra instruction (`run --extra-instruction-file`), used for experiment 014's prompted demonstration; off unless given.
 - 1.9: adds a multi-round incident task family, two CLM capability variants (direct editing only; reusable helpers allowed), a separate summary-call allowance, helper-evidence tiers and a three-condition schedule (§18).
 - 1.8: adds a versioned request layout (`blocks/1`), optional provider prompt caching with explicit breakpoints, per-run cache isolation, cache-aware accounting evidence, and a four-condition comparison schedule (§17).
 - 1.7: adds a second coding generator with interacting, partially changing rules, an evaluator with richer categories, exact type checks and stage snapshots (§16), a balanced comparison order, and per-task scorer metadata in comparisons and exports.
@@ -661,7 +662,7 @@ The summary baseline's policy is selected by `[baseline] policy`, and recorded i
   - **Never screened:** `execute` output in `docservice` tasks, fetches and saved-file reads.
   - **Accounting:** `summary.json → result_screen.service` counts searches, fetches, fetched ids and omitted passages recovered by fetch.
 
-## 25. Jev as a primitive inside model-written code (`jev-primitive/1`; experiment 014, planned)
+## 25. Jev as a primitive inside model-written code (`jev-primitive/1`; experiment 014)
 
 - **Purpose:** model-authored code (including saved, reusable helpers) can ask Jev narrow yes/no questions **during its own execution** and then apply its own logic to edit `context.json` in that same execution.
   - **No model turn** is used to request or interpret the answer.
@@ -694,4 +695,5 @@ The summary baseline's policy is selected by `[baseline] policy`, and recorded i
   - `jev_primitive` events;
   - `summary.json → jev_primitive` (requests, calls, by status, items, unanswered at exit, steps with calls, log).
 - **Excluded** from coding submissions and snapshots: `clm_jev.py` and the mailbox.
+- **Per-run extra instruction** (for configured demonstrations): `run --extra-instruction-file FILE` appends the file's text to the task prompt for that run only. The text is recorded verbatim in `run.json → extra_instruction` (`null` when absent), so a run that was told to use a capability is always labelled as such. Without the option, prompts are unchanged.
 

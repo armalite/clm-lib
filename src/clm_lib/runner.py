@@ -397,6 +397,7 @@ class Runner:
         edit_check: str | None = None,
         result_screen: str | None = None,
         jev_primitive: bool | None = None,
+        extra_instruction: str | None = None,
     ) -> RunResult:
         """``caching`` overrides ``request.prompt_caching`` for this run (four-condition runs);
         ``jev`` overrides ``jev.enabled`` (experiment 008; CLM modes only). ``update_review``
@@ -505,7 +506,13 @@ class Runner:
             + ("-jprim" if jprim else "")
         )
         run_id = f"{stamp}-{mode}{cond}{tag}-{task.spec.name}-{secrets.token_hex(2)}"
-        return _Run(
+        if (
+            extra_instruction
+        ):  # a declared, per-run addition to the task text (recorded in run.json)
+            task = replace(
+                task, prompt=task.prompt.rstrip("\n") + "\n\n" + extra_instruction.strip() + "\n"
+            )
+        r = _Run(
             self,
             task,
             mode,
@@ -520,7 +527,9 @@ class Runner:
             echk,
             rscr,
             jprim,
-        ).execute()
+        )
+        r.extra_instruction = extra_instruction or None
+        return r.execute()
 
 
 REVIEW_REQUIRED = "context edits in this run require a review first"
@@ -595,6 +604,7 @@ class _Run:
         self.r = runner
         # Experiment 014 (planned): Jev called from model-written code (jev-primitive/1).
         self.jprim = jev_primitive
+        self.extra_instruction: str | None = None
         self.prim_log: list[dict[str, Any]] = []
         self.prim_calls = 0
         self.prim_unanswered: list[dict[str, Any]] = []
@@ -3248,6 +3258,7 @@ class _Run:
             "summary_policy": self.policy.policy if self.mode == "summary" else None,
             "system_prompt_sha256": sha256_text(self.prompt_system),
             "task_prompt_sha256": sha256_text(self.task.prompt),
+            "extra_instruction": self.extra_instruction,
             "request": self.request_settings(),
             "provider": self.r.provider.describe(),
             "price": self.r.price.__dict__ if self.r.price else None,

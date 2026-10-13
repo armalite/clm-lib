@@ -297,3 +297,14 @@ def test_timeout_cancellation_and_unanswered_requests(make_runner: Any) -> None:
     )  # answered in flight, or left unprocessed
     if jp["unanswered_at_exit"]:
         assert jp["calls"] == 0
+
+
+def test_extra_instruction_is_appended_to_the_task_and_recorded(make_runner: Any) -> None:
+    runner, prov = make_runner([FINAL], executor=_NoRun(), ceiling=10.0)
+    res = runner.run(generate("dev"), "clm_helpers", extra_instruction="CONFIGURED: do X.")
+    assert "CONFIGURED: do X." in prov.requests[0].user
+    meta = json.loads((res.run_dir / "run.json").read_text())
+    assert meta["extra_instruction"] == "CONFIGURED: do X."
+    runner2, _ = make_runner([FINAL], executor=_NoRun(), ceiling=10.0)
+    res2 = runner2.run(generate("dev"), "clm_helpers")
+    assert json.loads((res2.run_dir / "run.json").read_text())["extra_instruction"] is None

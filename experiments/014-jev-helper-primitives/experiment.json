@@ -1,0 +1,38 @@
+{
+ "id": "014-jev-helper-primitives",
+ "title": "Experiment 014: Jev as a primitive inside model-written context helpers (prompted live capability demonstration)",
+ "provenance": {
+  "source_repo": "https://github.com/armalite/clm-lib",
+  "base_commit": "024fc76",
+  "tree_state": "HEAD 024fc76 plus the uncommitted per-run extra instruction option (runner.py, cli.py --extra-instruction-file, one test) and configs/exp014.toml; diff SHA-256 prefix 8c8c80de61181e8f, runner.py b311d115, jev_primitive.py 3408dee1, executor.py 34d8416b, exp014.toml fe86d34d (as frozen in the protocol)",
+  "primitive_version": "jev-primitive/1 (limits: 4 calls per execution, 30 per run, 20 items)",
+  "generator_version": "export-gen/1",
+  "scorer": "export-checks/1",
+  "prompt_version": "2026-10-13.8",
+  "model": "claude-opus-5-5 (effort low)",
+  "jev_model": "jev-1.13.0",
+  "jev_price": "USD 0.042 per million input tokens, output free",
+  "instruction": "experiments/014-jev-helper-primitives/demonstration-instruction.txt in the results repository (SHA-256 prefix fcc1da240f1408f8), appended to the task prompt and recorded in run.json as extra_instruction",
+  "budget": "ledger ceiling set explicitly from USD 93.815911 to USD 85.351732 (settled spend USD 84.351732 + USD 1 for this demonstration, both providers); replaces the unused 012 v2 allowance",
+  "status": "one prompted live demonstration on w2-dev-1, run once: completed, 35/35 hidden checks; the model-written helper called Jev in 4 executions and its threshold on the answers decided which notes received a review marker; accepted edits reached the next requests. Configured use, not adoption; no comparison."
+ },
+ "settings": {
+  "config": "configs/exp014.toml",
+  "command": "run --jev-primitive on --extra-instruction-file demonstration-instruction.txt (live)",
+  "condition": "clm_helpers+jprim:on",
+  "task": "w2-dev-1",
+  "repetitions": 1
+ },
+ "phases": {
+  "prompted-demonstration": "one live run on w2-dev-1 with the configured demonstration instruction; run once, not a comparison"
+ },
+ "runs": [
+  {
+   "run_id": "20261013T102922-clm_helpers-cacheon-jprim-w2-dev-1-7d51",
+   "role": "guided",
+   "phase": "prompted-demonstration",
+   "group": "demo",
+   "note": "014 prompted live capability demonstration: the model was instructed to write a context helper that calls clm_jev.judge; configured use, not spontaneous adoption; no comparison arm"
+  }
+ ]
+}

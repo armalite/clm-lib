@@ -440,6 +440,9 @@ def cmd_run(args: argparse.Namespace) -> int:
         edit_check=echk,
         result_screen=rscr,
         jev_primitive=jprim,
+        extra_instruction=Path(args.extra_instruction_file).read_text(encoding="utf-8")
+        if args.extra_instruction_file
+        else None,
     )
     _print_result(res)
     return 0
@@ -954,6 +957,11 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("config", "on", "off"),
         default="config",
         help="experiment 014: let model-written code call Jev (jev-primitive/1) (default: [jev_primitive])",
+    )
+    r.add_argument(
+        "--extra-instruction-file",
+        default="",
+        help="a declared per-run addition to the task text (recorded in run.json); for prompted demonstrations",
     )
     r.set_defaults(func=cmd_run)
 
