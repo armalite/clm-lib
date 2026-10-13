@@ -1,6 +1,6 @@
 # clm-lib: Technical Specification
 
-Version: 2.4 | 13 October 2026
+Version: 2.5 | 13 October 2026
 
 Repository: `clm-lib` | Python package: `clm_lib` | CLI: `clm-lib`
 
@@ -16,7 +16,8 @@ Version history:
 - 2.1: adds update-triggered context review with optional Jev advice (§20), off by default. Other Jev-assistance strategies on the roadmap (Claude-initiated review, proposed-edit checks) are planned only and are not specified or supported.
 - 2.2: adds Claude-initiated context review with optional Jev advice (§21), off by default.
 - 2.3: adds §21's required pre-edit review variant (`initiated-review/2`), off by default, and an optional artifact group in run selections.
-- 2.4: adds §21's runtime-supplied review update (`initiated-review/3`), off by default. Proposed-edit checks, result screening and the changing-requirements workload remain planned only and are not specified or supported.
+- 2.4: adds §21's runtime-supplied review update (`initiated-review/3`), off by default.
+- 2.5: adds the experiment-011 edit-check component diagnostic (§22). Agent-side edit checking, result screening and the changing-requirements workload remain planned only. Proposed-edit checks, result screening and the changing-requirements workload remain planned only and are not specified or supported.
 - 1.9: adds a multi-round incident task family, two CLM capability variants (direct editing only; reusable helpers allowed), a separate summary-call allowance, helper-evidence tiers and a three-condition schedule (§18).
 - 1.8: adds a versioned request layout (`blocks/1`), optional provider prompt caching with explicit breakpoints, per-run cache isolation, cache-aware accounting evidence, and a four-condition comparison schedule (§17).
 - 1.7: adds a second coding generator with interacting, partially changing rules, an evaluator with richer categories, exact type checks and stage snapshots (§16), a balanced comparison order, and per-task scorer metadata in comparisons and exports.
@@ -509,3 +510,20 @@ The summary baseline's policy is selected by `[baseline] policy`, and recorded i
     - **Per review:** `update_source`, `update_round`, `payload`, `payload_sha256`, `payload_lines`, `payload_truncated`, `applicable` and `not_applicable_reason`.
     - **Summary:** `reviews_applicable`, `reviews_not_applicable_by_reason`, `reviews_repeat_round` and `reviews_by_label`.
     - **Export:** the `ir_update_source` columns.
+
+## 22. Edit-check component diagnostic (experiment 011)
+
+**`clm-lib jev-edit-diagnostic --cases <file> --split dev|frozen`** sends one TypeSafe request per case, and makes no main-model calls.
+- **`state`:** `task`, `current_context`, `update` and `proposed_context` (the entries with `id`, `role` and `body`, in order). Nothing else from the case file is sent: no labels, categories, families, provenance or justifications.
+- **The questions (`jev-edit-check/1`, `jev_edit_check.QUESTIONS`):** three `noul` questions, `lost`, `changed` and `evidence`, each with fixed criteria and a shared scope instruction.
+- **Verdict:** a case is flagged if any probability is at least the case file's `reporting_threshold` (0.5).
+- **Missing answers:**
+  - a case with every answer missing, or a failed call, is unanswered;
+  - for the gate, an unanswered harmful case counts as missed and an unanswered acceptable case as flagged;
+  - a partial case uses the available maximum.
+- **Attempts:** each attempt is reserved and settled in the ledger (kind `jev-diagnostic`), with `[jev] retries` for retryable errors.
+- **Deterministic reference checks:**
+  - **reference loss:** `file:line`, `§N`, `ABC-123` or `[Author Year]` tokens lost;
+  - **new numbers:** numbers absent from the current context and the update.
+- **Output:** `runs/jev-diagnostic/<stamp>-edit-<split>/`. It holds `requests/<case>.json` (request, response, latency, usage, cost) and `summary.json`, with per-case, per-question and per-category metrics, the references, and the gate when the split has 16 harmful and 16 acceptable cases. It is exported like other diagnostics.
+- **Not implemented:** an agent-side edit check, edit holding or blocking.

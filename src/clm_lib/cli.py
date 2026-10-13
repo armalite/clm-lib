@@ -758,6 +758,28 @@ def cmd_jev_diagnostic(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_jev_edit_diagnostic(args: argparse.Namespace) -> int:
+    """Experiment 011 component diagnostic: Jev checks proposed context rewrites (paid: TypeSafe
+    only; no main-model calls)."""
+    from .jev_edit_check import run_edit_diagnostic
+
+    cfg = _config(args)
+    ledger = _ledger(cfg, args.max_usd)
+    advisor, price = _jev_advisor(cfg)
+    out = run_edit_diagnostic(
+        advisor,
+        price,
+        ledger,
+        Path(args.cases),
+        args.split,
+        _runs_dir(cfg) / "jev-diagnostic",
+        cfg.jev.model,
+        retries=cfg.jev.retries,
+    )
+    print(f"diagnostic written to {out}")
+    return 0
+
+
 def cmd_report(args: argparse.Namespace) -> int:
     from .report import build_report
 
@@ -896,6 +918,14 @@ def build_parser() -> argparse.ArgumentParser:
     jd.add_argument("--split", choices=("dev", "frozen"), default="frozen")
     jd.add_argument("--max-usd", type=float, default=None)
     jd.set_defaults(func=cmd_jev_diagnostic)
+
+    je = sub.add_parser(
+        "jev-edit-diagnostic", help="experiment 011: Jev checks labelled context rewrites (paid)"
+    )
+    je.add_argument("--cases", required=True)
+    je.add_argument("--split", choices=("dev", "frozen"), default="frozen")
+    je.add_argument("--max-usd", type=float, default=None)
+    je.set_defaults(func=cmd_jev_edit_diagnostic)
 
     rp = sub.add_parser("report", help="markdown report from recorded runs and the ledger")
     rp.add_argument("--out", default="")

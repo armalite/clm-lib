@@ -271,6 +271,14 @@ Ground truth exists only in memory until the run ends, then goes to `evaluator/`
 - **Export groups:** `export_experiment` places runs with a `group` under `artifacts/runs/<group>/<role>/`. 010 uses `group: "v2"` to keep protocol versions apart.
 - **Runtime-supplied review update (010 v3):** `_begin_review_v2` branches on `isrc == "latest-round"`. The update is `build_payload(task.stages[stage - 1])`, the same builder as 009. Jev applicability is computed from the payload and candidates only, so Claude's optional label cannot gate it. Everything after the review (authorisation, gate, settlement, expiry) is the unchanged v2 path. Tests: `tests/test_pre_edit_review_v3.py`. 010 v3 runs use `group: "v3"`.
 
+## Edit-check component diagnostic (experiment 011)
+
+- **Module:** `jev_edit_check.py` builds one request per case from `payload_state()`. That is the only function that reads a case, and it copies just the four checker-visible fields. The run uses the existing `TypeSafeAdvisor`, `JevPrice` and ledger.
+- **Retries:** they mirror `_jev_attempts`: one reserve and settle per attempt, with no hidden retries.
+- **Scoring:** `score_edit_check` computes case verdicts, per-question metrics, categories, the ambiguous answers, deterministic references (`check_ref_loss`, `check_new_numbers`) and the predeclared gate.
+- **Separation:** cases and labels live in the results repository; clm-lib holds only the code.
+- **Tests:** `tests/test_jev_edit_check.py`.
+
 ## Design choices
 
 - **JSON-lines transcript with escaping** instead of nonce delimiters: it's simple and can't be forged.
