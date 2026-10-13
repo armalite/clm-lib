@@ -341,6 +341,9 @@ Ground truth exists only in memory until the run ends, then goes to `evaluator/`
 - **Tests** in `tests/test_jev_primitive.py` run real containers with a scripted fake Jev on the host.
 - **The configured instruction** for 014's prompted demonstration is a per-run option (`Runner.run(..., extra_instruction=)`), not a new prompt version or task variant. It is appended to the task text and stored in `run.json`, so exports show that the use was instructed.
 - **Live demonstration** (one run, 2026-10-13): a model-written helper called real Jev in 4 executions, with no extra model calls. Its own threshold chose which notes to mark, and the accepted revisions reached the next requests. The results and their limits are in the results repository's 014 README.
+- **Comparison phase (W3; SPEC §26):**
+  - **The register is scored host-side** from the store's in-memory revisions at assessment points the runner records at each stage release and at the final answer. So the timing is fixed by the runtime, not inferred afterwards from the logs.
+  - **Replay reuses the live mailbox broker** (`JevBroker`) with a scripted `call`, so the code under replay sees exactly the same client and protocol. It needs only the pre-execution workspace snapshot that W3 runs record, and the regenerated fixtures (checked against `fixture_sha256`).
 
 ## Design choices
 

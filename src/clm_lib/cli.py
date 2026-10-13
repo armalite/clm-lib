@@ -847,6 +847,19 @@ def cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_replay_jev(args: argparse.Namespace) -> int:
+    """Offline replay attribution of a jev-primitive/1 run (sandbox, scripted answers, no API)."""
+    from .replay import replay_run
+
+    run_dir = Path(args.run_dir)
+    out = Path(args.out) if args.out else Path("runs") / "replay" / run_dir.name
+    res = replay_run(run_dir, out, _executor(_config(args)))
+    print(json.dumps({"out": str(out), "summary": res["summary"]}, indent=1))
+    for st in res["steps"]:
+        print(f"  step {st['step']} (stage {st['stage']}): {st['dependence']['class']}")
+    return 0
+
+
 def cmd_export(args: argparse.Namespace) -> int:
     from .export import ExportConflict, export_experiment
 
@@ -1022,6 +1035,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ex.add_argument("--dest", required=True, help="results repository root")
     ex.set_defaults(func=cmd_export)
+
+    rj = sub.add_parser(
+        "replay-jev",
+        help="offline replay attribution of a jev-primitive run (sandbox; scripted answers; no API)",
+    )
+    rj.add_argument("run_dir", help="a recorded run directory (it is not modified)")
+    rj.add_argument("--out", default="", help="output folder (default runs/replay/<run id>)")
+    rj.set_defaults(func=cmd_replay_jev)
 
     b = sub.add_parser("budget", help="show the persistent spend ledger")
     b.add_argument(

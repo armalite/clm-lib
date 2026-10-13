@@ -1,6 +1,6 @@
 {
  "id": "014-jev-helper-primitives",
- "title": "Experiment 014: Jev as a primitive inside model-written context helpers (prompted live capability demonstration)",
+ "title": "Experiment 014: Jev as a primitive inside model-written context helpers (prompted live demonstration; W3 comparison-phase development pilot)",
  "provenance": {
   "source_repo": "https://github.com/armalite/clm-lib",
   "base_commit": "024fc76",
@@ -14,17 +14,44 @@
   "jev_price": "USD 0.042 per million input tokens, output free",
   "instruction": "experiments/014-jev-helper-primitives/demonstration-instruction.txt in the results repository (SHA-256 prefix fcc1da240f1408f8), appended to the task prompt and recorded in run.json as extra_instruction",
   "budget": "ledger ceiling set explicitly from USD 93.815911 to USD 85.351732 (settled spend USD 84.351732 + USD 1 for this demonstration, both providers); replaces the unused 012 v2 allowance",
-  "status": "one prompted live demonstration on w2-dev-1, run once: completed, 35/35 hidden checks; the model-written helper called Jev in 4 executions and its threshold on the answers decided which notes received a review marker; accepted edits reached the next requests. Configured use, not adoption; no comparison."
+  "status": "one prompted live demonstration on w2-dev-1, run once: completed, 35/35 hidden checks; the model-written helper called Jev in 4 executions and its threshold on the answers decided which notes received a review marker; accepted edits reached the next requests. Configured use, not adoption; no comparison.",
+  "comparison": {
+   "protocol": "experiments/014-jev-helper-primitives/protocol-comparison.md in the results repository (frozen before the B smoke; freeze record 1)",
+   "tree_state": "HEAD 0fb0334 plus the uncommitted W3 comparison implementation (w3.py export-gen/2, register_score.py register-checks/1, replay.py jev-replay/1, runner/tasks/cli hooks, tests, configs/exp014c.toml); tracked diff SHA-256 prefix c90dc1265b38789a, file prefixes in the freeze record",
+   "generator_version": "export-gen/2",
+   "scorer": "export-checks/2 (code) and register-checks/1 (register)",
+   "replay": "jev-replay/1 (clm-lib replay-jev; offline, sandboxed, scripted answers)",
+   "prompt_version": "2026-10-13.8",
+   "model": "claude-opus-5-5 (effort low)",
+   "jev_model": "jev-1.13.0",
+   "instruction_b": "experiments/014-jev-helper-primitives/comparison-instruction-b.txt in the results repository (SHA-256 prefix 1064862cd4246ffe); A has no extra instruction",
+   "config": "configs/exp014c.toml (context budget 12000, jev_primitive 8/40/20, ceiling 87.535602)",
+   "budget": "ledger ceiling set explicitly from USD 85.351732 to USD 87.535602 (settled spend USD 84.535602 + USD 3 new for the comparison smoke and pilot, both providers); earlier unused allowances not stacked",
+   "status": "B smoke and 4-run development pilot run once each: all 5 runs code-correct (smoke 42/42, pilot 64/64), register harm 0; Jev called in every B run (9, 17, 11 calls) but replay found no register change that depended on the answers in any of 15 Jev-using executions (answers were printed and Claude wrote the edits); B cost +18% and +32% vs A. Mechanism not exercised; evaluation not run (not authorised)."
+  }
  },
  "settings": {
   "config": "configs/exp014.toml",
   "command": "run --jev-primitive on --extra-instruction-file demonstration-instruction.txt (live)",
   "condition": "clm_helpers+jprim:on",
   "task": "w2-dev-1",
-  "repetitions": 1
+  "repetitions": 1,
+  "comparison": {
+   "config": "configs/exp014c.toml",
+   "command": "run --task <instance> --mode clm_helpers --jev-primitive off (A) | --jev-primitive on --extra-instruction-file comparison-instruction-b.txt (B)",
+   "smoke_task": "w3-smoke-1 (B only, excluded)",
+   "tasks": [
+    "w3-dev-1",
+    "w3-dev-2"
+   ],
+   "order": "w3-dev-1: A then B; w3-dev-2: B then A",
+   "repetitions": 1
+  }
  },
  "phases": {
-  "prompted-demonstration": "one live run on w2-dev-1 with the configured demonstration instruction; run once, not a comparison"
+  "prompted-demonstration": "one live run on w2-dev-1 with the configured demonstration instruction; run once, not a comparison",
+  "comparison-smoke": "one configured B run on w3-smoke-1; excluded from comparisons",
+  "comparison-pilot": "W3 development pilot: 2 instances x A/B, once per cell, in the frozen order"
  },
  "runs": [
   {
@@ -33,6 +60,41 @@
    "phase": "prompted-demonstration",
    "group": "demo",
    "note": "014 prompted live capability demonstration: the model was instructed to write a context helper that calls clm_jev.judge; configured use, not spontaneous adoption; no comparison arm"
+  },
+  {
+   "run_id": "20261013T143429-clm_helpers-cacheon-jprim-w3-smoke-1-8797",
+   "role": "smoke",
+   "phase": "comparison-smoke",
+   "group": "comparison-smoke",
+   "note": "014 comparison phase: configured B smoke on w3-smoke-1; excluded from all comparisons"
+  },
+  {
+   "run_id": "20261013T143716-clm_helpers-cacheon-w3-dev-1-495e",
+   "role": "calibration",
+   "phase": "comparison-pilot",
+   "group": "comparison-dev",
+   "note": "comparison pilot w3-dev-1 position 0: A (ordinary CLM with helpers, register objective)"
+  },
+  {
+   "run_id": "20261013T143929-clm_helpers-cacheon-jprim-w3-dev-1-4a83",
+   "role": "calibration",
+   "phase": "comparison-pilot",
+   "group": "comparison-dev",
+   "note": "comparison pilot w3-dev-1 position 1: B (configured Jev-assisted procedure)"
+  },
+  {
+   "run_id": "20261013T144206-clm_helpers-cacheon-jprim-w3-dev-2-d925",
+   "role": "calibration",
+   "phase": "comparison-pilot",
+   "group": "comparison-dev",
+   "note": "comparison pilot w3-dev-2 position 0: B (configured Jev-assisted procedure)"
+  },
+  {
+   "run_id": "20261013T144446-clm_helpers-cacheon-w3-dev-2-36fe",
+   "role": "calibration",
+   "phase": "comparison-pilot",
+   "group": "comparison-dev",
+   "note": "comparison pilot w3-dev-2 position 1: A (ordinary CLM with helpers, register objective)"
   }
  ]
 }

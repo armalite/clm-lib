@@ -107,6 +107,12 @@ INSTANCES: dict[str, InstanceSpec] = {
     "w2-dev-1": InstanceSpec("w2-dev-1", 8101, "export_w2", "w2-dev"),
     "w2-dev-2": InstanceSpec("w2-dev-2", 8102, "export_w2", "w2-dev"),
     "w2-smoke-1": InstanceSpec("w2-smoke-1", 8301, "export_w2", "w2-smoke"),
+    # Experiment 014 comparison phase: the W3 register workload (w3.py, export-gen/2). Two
+    # development instances for the pilot and one integration-smoke instance (never part of an
+    # outcome comparison). No evaluation instances are defined yet.
+    "w3-dev-1": InstanceSpec("w3-dev-1", 8501, "export_w3", "w3-dev"),
+    "w3-dev-2": InstanceSpec("w3-dev-2", 8502, "export_w3", "w3-dev"),
+    "w3-smoke-1": InstanceSpec("w3-smoke-1", 8701, "export_w3", "w3-smoke"),
     # Experiment 012: document-search question answering (handbook.py, handbook-gen/1). Two
     # development instances for the pilot, one integration-smoke instance, and separate
     # diagnostic instances for the component diagnostic (never used for agent runs). No
@@ -939,6 +945,10 @@ def generate(name: str) -> TaskInstance:
         from .w2 import generate_w2
 
         return generate_w2(spec)
+    if spec.scenario == "export_w3":
+        from .w3 import generate_w3
+
+        return generate_w3(spec)
     if spec.scenario == "handbook":
         from .handbook import generate_handbook
 

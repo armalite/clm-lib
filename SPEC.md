@@ -1,6 +1,6 @@
 # clm-lib: Technical Specification
 
-Version: 2.5 | 13 October 2026
+Version: 2.12 | 14 October 2026
 
 Repository: `clm-lib` | Python package: `clm_lib` | CLI: `clm-lib`
 
@@ -24,6 +24,7 @@ Version history:
 - 2.9: adds §24.3, the experiment-012 v2 document-service workload (`docsvc-gen/1`): runtime `search` and `fetch` actions over a corpus held only in host memory, with `result-screen/1` unchanged except for the recovery verb in its notice and disclosure.
 - 2.10: adds §25, Jev as a primitive inside model-written code (`jev-primitive/1`), opt-in and off by default (experiment 014).
 - 2.11: adds §25's per-run extra instruction (`run --extra-instruction-file`), used for experiment 014's prompted demonstration; off unless given.
+- 2.12: adds §26, the W3 register workload (`export-gen/2`, code scorer `export-checks/2`, register scorer `register-checks/1`) and offline replay attribution for jev-primitive runs (`jev-replay/1`, `replay-jev`), for experiment 014's comparison phase; opt-in (W3 tasks and the command only).
 - 1.9: adds a multi-round incident task family, two CLM capability variants (direct editing only; reusable helpers allowed), a separate summary-call allowance, helper-evidence tiers and a three-condition schedule (§18).
 - 1.8: adds a versioned request layout (`blocks/1`), optional provider prompt caching with explicit breakpoints, per-run cache isolation, cache-aware accounting evidence, and a four-condition comparison schedule (§17).
 - 1.7: adds a second coding generator with interacting, partially changing rules, an evaluator with richer categories, exact type checks and stage snapshots (§16), a balanced comparison order, and per-task scorer metadata in comparisons and exports.
@@ -697,3 +698,22 @@ The summary baseline's policy is selected by `[baseline] policy`, and recorded i
 - **Excluded** from coding submissions and snapshots: `clm_jev.py` and the mailbox.
 - **Per-run extra instruction** (for configured demonstrations): `run --extra-instruction-file FILE` appends the file's text to the task prompt for that run only. The text is recorded verbatim in `run.json → extra_instruction` (`null` when absent), so a run that was told to use a capability is always labelled as such. Without the option, prompts are unchanged.
 
+## 26. W3 register workload and replay attribution (experiment 014 comparison phase)
+
+- **Workload** (`w3.py`, generator `export-gen/2`, code scorer `export-checks/2`): W2's records-export task extended to 7 stages (smoke: 5). Stages 1–2 are initial requirements and stages 3–7 change notices; every item has a visible id `S<stage>.<n>`, and notice items do not name the items they affect.
+  - **Relationships:** full replacements, partial amendments (including an amendment of an amendment), a withdrawal, an exception that survives, two obligations triggered by later items without being restated, decision records and information items.
+  - **Instances:** `w3-smoke-1` (8701), `w3-dev-1` (8501), `w3-dev-2` (8502). No evaluation instances are defined.
+  - **Code scoring:** W2's sandbox evaluator and score structure, with the categories retained, exception, replaced, amended, kept_part, deferred and interaction, plus snapshots at each release.
+- **Register objective:** the W3 task prompt asks for a register in the working context, made of items starting `CURRENT` or `HISTORY` that cite item ids. It prescribes neither a helper nor an algorithm.
+- **Register scoring** (`register_score.py`, `register-checks/1`), host-side after the run, on accepted revisions only:
+  - **Timing:** stage k is assessed on the revision live when stage k+1 is released, and the last stage at the accepted final answer (`_register_point`).
+  - **Categories:** see the module docstring.
+  - **Output:** `evaluator/register_score.json` and `summary.json → register`.
+- **Evaluator-only** (never in prompts, fixtures, the workspace or Jev payloads): item effects, register truth, semantic probes, hidden checks.
+- **Pre-execution snapshots:** for W3 tasks, in both conditions, the runtime writes the full pre-execution workspace to `workspace_pre/step-NNN.json` (host-side; nothing visible changes).
+- **Replay attribution** (`replay.py`, `jev-replay/1`, `clm-lib replay-jev RUN_DIR [--out DIR]`):
+  - **The method:** every execution of a recorded run that called Jev is re-executed in the normal sandbox, on an isolated copy of its pre-execution workspace and the fixtures released at that step, with scripted responses: recorded (which must reproduce the accepted revision), withheld, and inverted.
+  - **Safeguards:** no API calls; the run folder is not modified.
+  - **Classes:** `substantive`, `marker_only`, `no_register_dependence`, `crash_without_answers`, `no_edit_without_answers`, `not_reproduced`.
+  - **What it reports:** dependence of the helper's behaviour on its inputs, not correctness.
+- **Unchanged:** W2 and every earlier task, prompt and config. `configs/exp014c.toml` is the comparison phase's config.

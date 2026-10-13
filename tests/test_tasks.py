@@ -10,7 +10,7 @@ from clm_lib.tasks import HELDOUT, INSTANCES, TaskInstance, generate, score_answ
 SINGLE = [
     n
     for n in INSTANCES
-    if not n.startswith(("staged-", "coding", "rounds-", "w2-", "handbook-", "docsvc-"))
+    if not n.startswith(("staged-", "coding", "rounds-", "w2-", "w3-", "handbook-", "docsvc-"))
 ]
 
 

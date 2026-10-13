@@ -626,6 +626,10 @@ class _Run:
         self.confirms: list[dict[str, Any]] = []
         self.ec_checks = 0
         self.code_reads: list[dict[str, Any]] = []
+        # W3 register workload (export-gen/2): assessment points and the register score.
+        self.register_task = task.generator_version == "export-gen/2"
+        self.register_points: list[dict[str, Any]] = []
+        self.register_score: dict[str, Any] | None = None
         self.jev_on = jev_on
         self.upd = update_review  # experiment 009: "off", "control" or "jev"
         self.updates: list[dict[str, Any]] = []
@@ -1248,6 +1252,19 @@ class _Run:
         self._save_revision()
         return True
 
+    def _register_point(self, point: str) -> None:
+        """W3: the accepted revision live when stage ``self.stage`` has been processed (at the
+        release of the next stage, or at the accepted final answer)."""
+        if self.register_task:
+            self.register_points.append(
+                {
+                    "stage": self.stage,
+                    "revision": self.store.current.number,
+                    "step": self.step,
+                    "point": point,
+                }
+            )
+
     def _save_revision(self) -> None:
         rev = self.store.current
         self.trace.write_json(
@@ -1464,6 +1481,9 @@ class _Run:
         )
         mirrored = self.store.mirror(self.ws) if self.clm else ""
         before = snapshot_files(self.ws)
+        if self.register_task:
+            # W3 (export-gen/2): the full pre-execution workspace, host-side, for offline replay.
+            self.trace.write_json(f"workspace_pre/step-{self.step:03d}.json", before)
         broker = None
         if self.jprim:
             jp = self.cfg.jev_primitive
@@ -1739,6 +1759,7 @@ class _Run:
                     continue
                 self._end_proposal("unresolved_at_final")
                 self.answer = action["answer"]
+                self._register_point("final")
                 self.trace.event("final_answer", step=self.step, answer=self.answer)
                 return "completed", "final answer"
             self.execute_step(action)
@@ -1747,6 +1768,7 @@ class _Run:
         """Release the next evidence stage (staged tasks only)."""
         thought = str(action.get("thought", ""))[:1000]
         if self.stage < self.task.n_stages:
+            self._register_point("release")
             if getattr(self.task.truth, "snapshot_checks", None):
                 # Host-side copy of the workspace at the end of this stage (evaluator-only).
                 shutil.copytree(
@@ -3372,7 +3394,7 @@ class _Run:
 
     def evaluate_coding(self, completed: bool) -> Any:
         """Score the submitted workspace in a fresh sandbox; never run it on the host."""
-        from . import coding, coding2, w2
+        from . import coding, coding2, w2, w3
 
         ev = self.dir / "evaluator"
         shutil.copytree(self.ws, ev / "submission", ignore=self._submission_ignore())
@@ -3381,6 +3403,7 @@ class _Run:
         staged_mod: Any = {
             coding2.GENERATOR_VERSION: coding2,
             w2.GENERATOR_VERSION: w2,
+            w3.GENERATOR_VERSION: w3,
         }.get(self.task.generator_version)
         if staged_mod is None:
             output, error = self._sandbox_eval(
@@ -3431,6 +3454,12 @@ class _Run:
                 else no_answer_score(truth)
             )
         self.trace.write_json("evaluator/truth.json", truth.to_dict())
+        if self.register_task:
+            from .register_score import score_run
+
+            revs = {r.number: [e.to_dict() for e in r.entries] for r in self.store.revisions}
+            self.register_score = score_run(self.register_points, revs, truth)
+            self.trace.write_json("evaluator/register_score.json", self.register_score)
         self.trace.write_json(
             "evaluator/score.json",
             {
@@ -3494,6 +3523,7 @@ class _Run:
             "edit_check": self.edit_check_summary(),
             "result_screen": self.result_screen_summary(),
             "jev_primitive": self.jev_primitive_summary(),
+            "register": self.register_score,
             "request": self.request_summary(),
             "peak_working_context_chars": self.peak_ctx_chars,
             "context_revisions": len(self.store.revisions) - 1,
