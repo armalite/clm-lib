@@ -15,6 +15,7 @@ import subprocess
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, Protocol
@@ -145,6 +146,9 @@ class Executor(Protocol):
     isolation: str
 
     def run(self, code: str, workspace: Path, fixtures: Path) -> ExecResult: ...
+
+    # Executors that support jev-primitive/1 also accept ``broker=`` (DockerExecutor does); the
+    # runtime passes it only when the primitive is enabled.
 
     def describe(self) -> dict[str, object]: ...
 
@@ -316,7 +320,16 @@ class DockerExecutor:
             nonce,
         ]
 
-    def run(self, code: str, workspace: Path, fixtures: Path) -> ExecResult:
+    def run(
+        self,
+        code: str,
+        workspace: Path,
+        fixtures: Path,
+        broker: Callable[[], None] | None = None,
+    ) -> ExecResult:
+        """Run ``code`` once in a fresh container. With ``broker`` (jev-primitive/1), the host
+        polls it between short waits while the same execution is still running; without one,
+        the original single blocking wait is used."""
         ok, why = self.check_cached()
         if not ok:
             raise ExecutorUnavailable(why)
@@ -359,7 +372,18 @@ class DockerExecutor:
         timed_out = False
         try:
             # Backstop above the in-container limit (container start-up is not counted there).
-            proc.wait(timeout=self.timeout_s + 20)
+            if broker is None:
+                proc.wait(timeout=self.timeout_s + 20)
+            else:
+                deadline = start + self.timeout_s + 20
+                while True:
+                    try:
+                        proc.wait(timeout=0.05)
+                        break
+                    except subprocess.TimeoutExpired:
+                        if time.monotonic() >= deadline:
+                            raise
+                        broker()
         except subprocess.TimeoutExpired:
             timed_out = True
             subprocess.run(

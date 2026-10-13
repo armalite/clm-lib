@@ -155,6 +155,18 @@ class ResultScreenConfig:
 
 
 @dataclass
+class JevPrimitiveConfig:
+    # Experiment 014 (planned): Jev as a primitive inside model-written code (jev-primitive/1),
+    # off by default. Code calls clm_jev.judge(...) during an execution; the host answers through
+    # a workspace mailbox. `compare --conditions <mode>+jprim:on` or `run --jev-primitive on`
+    # override `enabled`. Jev client settings (model, timeout, retries) come from [jev].
+    enabled: bool = False
+    max_calls_per_execution: int = 4
+    max_calls_per_run: int = 30
+    max_items: int = 20
+
+
+@dataclass
 class BudgetConfig:
     ceiling_usd: float = 10.0
     min_run_reserve_usd: float = 0.75
@@ -183,6 +195,7 @@ class Config:
     initiated_review: InitiatedReviewConfig = field(default_factory=InitiatedReviewConfig)
     edit_check: EditCheckConfig = field(default_factory=EditCheckConfig)
     result_screen: ResultScreenConfig = field(default_factory=ResultScreenConfig)
+    jev_primitive: JevPrimitiveConfig = field(default_factory=JevPrimitiveConfig)
     runs_dir: str = "runs"
 
     def to_dict(self) -> dict[str, Any]:
@@ -213,6 +226,7 @@ def load_config(path: Path | None) -> Config:
         "initiated_review": InitiatedReviewConfig,
         "edit_check": EditCheckConfig,
         "result_screen": ResultScreenConfig,
+        "jev_primitive": JevPrimitiveConfig,
     }
     kwargs: dict[str, Any] = {}
     for key, cls in sections.items():

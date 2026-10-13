@@ -22,6 +22,7 @@ Version history:
 - 2.7: adds the W2 changing-requirements workload (`export-gen/1`, scorer `export-checks/1`) and opt-in proposed-edit checking for CLM runs (`edit-check-pilot/1`, §23), off by default; the §22 diagnostics are unchanged.
 - 2.8: adds the handbook document-search workload (`handbook-gen/1`, scorer `handbook-checks/1`) and opt-in Jev screening of structured search results (`result-screen/1`, §24), off by default.
 - 2.9: adds §24.3, the experiment-012 v2 document-service workload (`docsvc-gen/1`): runtime `search` and `fetch` actions over a corpus held only in host memory, with `result-screen/1` unchanged except for the recovery verb in its notice and disclosure.
+- 2.10: adds §25, Jev as a primitive inside model-written code (`jev-primitive/1`), opt-in and off by default (experiment 014, planned).
 - 1.9: adds a multi-round incident task family, two CLM capability variants (direct editing only; reusable helpers allowed), a separate summary-call allowance, helper-evidence tiers and a three-condition schedule (§18).
 - 1.8: adds a versioned request layout (`blocks/1`), optional provider prompt caching with explicit breakpoints, per-run cache isolation, cache-aware accounting evidence, and a four-condition comparison schedule (§17).
 - 1.7: adds a second coding generator with interacting, partially changing rules, an evaluator with richer categories, exact type checks and stage snapshots (§16), a balanced comparison order, and per-task scorer metadata in comparisons and exports.
@@ -659,4 +660,38 @@ The summary baseline's policy is selected by `[baseline] policy`, and recorded i
   - **What is screened:** only `search` observations, through `jev_screen.screen_stdout` with the recovery verb `fetch`. Its notice reads `unscreened: fetch([...]) or <saved path>`, and condition B's disclosure is `SEARCH_SCREEN_SERVICE_CLAUSE` (prompt version `2026-10-13.7`).
   - **Never screened:** `execute` output in `docservice` tasks, fetches and saved-file reads.
   - **Accounting:** `summary.json → result_screen.service` counts searches, fetches, fetched ids and omitted passages recovered by fetch.
+
+## 25. Jev as a primitive inside model-written code (`jev-primitive/1`; experiment 014, planned)
+
+- **Purpose:** model-authored code (including saved, reusable helpers) can ask Jev narrow yes/no questions **during its own execution** and then apply its own logic to edit `context.json` in that same execution.
+  - **No model turn** is used to request or interpret the answer.
+  - **The host never edits context on Jev's behalf.**
+- **Opt-in:** `[jev_primitive] enabled` (default false), `run --jev-primitive on`, or the condition `<clm mode>+jprim`.
+  - **Scope:** CLM modes only, exclusive with §19–§24's Jev features. It requires a Jev advisor.
+  - **Unchanged when off:** every other behaviour, prompt and executor path.
+- **Sandbox interface:** `/task/workspace/clm_jev.py`, written by the runtime at run start (stdlib only).
+  - **The call:** `clm_jev.judge(question, items, background="", criteria=None, timeout=25.0)`, where `items` maps keys to texts.
+  - **The result:** `{"status": "ok"|"error", "answers": {key: probability|None}, "model", "error"}`.
+  - **The transport:** the call writes `req-<id>.json` into the workspace mailbox `/task/workspace/.clm-jev/` and polls for `resp-<id>.json`.
+- **Host side** (`jev_primitive.JevBroker`):
+  - **Polling:** `DockerExecutor.run(..., broker=)` polls the broker between 0.05 s waits while the container runs; the overall deadline and kill path are unchanged.
+  - **Validation:** each request is checked against the documented fields (`version`, `id`, `question` ≤ 500, `background` ≤ 4,000, 1–20 `items` of `key` ≤ 64 and `text` ≤ 4,000, optional `criteria`; ≤ 100,000 bytes), as a regular file with no symlinks.
+  - **The Jev request:** `build_body` makes one TypeSafe request: `state` = {background, items}, with one `noul` question per item (the code's question, the item text, the fixed `SCOPE`, the code's criteria or defaults).
+  - **The call** goes through the runtime's recorded attempt loop: `[jev]` retries, one ledger reservation and settlement per attempt.
+  - **The response file** is written atomically.
+  - **Limits:** `max_calls_per_execution` (4) and `max_calls_per_run` (30). Over-limit, invalid or budget-refused requests get an explicit error response without a Jev call.
+  - **Budget exhaustion during an execution** answers the request with an error; the step is recorded, then the run stops.
+- **After each execution:** unanswered requests (the execution ended first) are recorded as `unanswered_at_exit`, with no Jev call, and the mailbox is emptied.
+- **Information boundary:**
+  - **Jev receives only the text the code sends**, which the code can already see (the context file, released fixtures, the workspace).
+  - **The host adds nothing:** it reads no files on the code's behalf, never executes request content, and exposes no truth, future stages, deleted revisions or host files.
+  - **The sandbox keeps** no network and no credentials.
+- **Status line:** `jev primitive calls used k/max`.
+- **Prompt:** `JEV_PRIMITIVE_CLAUSE` (prompt version `2026-10-13.8`) describes the call and says its use is optional.
+- **Evidence:**
+  - `jev_primitive/NNNN.json` per request (the sandbox request, the TypeSafe body, the response, status, host time);
+  - `jev/NNNN.json` per attempt;
+  - `jev_primitive` events;
+  - `summary.json → jev_primitive` (requests, calls, by status, items, unanswered at exit, steps with calls, log).
+- **Excluded** from coding submissions and snapshots: `clm_jev.py` and the mailbox.
 

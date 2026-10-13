@@ -55,6 +55,8 @@ from .jev_edit_check import (
     build_edit_request_v2,
     questions_v2_sha256,
 )
+from .jev_primitive import CLIENT_FILENAME, CLIENT_SOURCE, MAILBOX, JevBroker, PrimitiveLimits
+from .jev_primitive import VERSION as PRIMITIVE_VERSION
 from .jev_screen import SCREEN_VERSION, recovery_reads, screen_stdout
 from .prompts import (
     EDIT_CHECK_CLAUSE,
@@ -66,6 +68,7 @@ from .prompts import (
     INITIATED_REVIEW_V3_CLAUSE,
     INITIATED_REVIEW_V3_JEV_CLAUSE,
     JEV_CLAUSE,
+    JEV_PRIMITIVE_CLAUSE,
     PROMPT_VERSION,
     SEARCH_SCREEN_CLAUSE,
     SEARCH_SCREEN_SERVICE_CLAUSE,
@@ -393,6 +396,7 @@ class Runner:
         review_update_source: str | None = None,
         edit_check: str | None = None,
         result_screen: str | None = None,
+        jev_primitive: bool | None = None,
     ) -> RunResult:
         """``caching`` overrides ``request.prompt_caching`` for this run (four-condition runs);
         ``jev`` overrides ``jev.enabled`` (experiment 008; CLM modes only). ``update_review``
@@ -476,6 +480,14 @@ class Runner:
                 )
             if self.jev is None:
                 raise ValueError("result screening requested but no Jev advisor is configured")
+        jprim = self.cfg.jev_primitive.enabled if jev_primitive is None else jev_primitive
+        if jprim:
+            if mode not in CLM_MODES:
+                raise ValueError("the Jev primitive is available to CLM modes only")
+            if jev_on or upd != "off" or irev != "off" or echk != "off" or rscr != "off":
+                raise ValueError("the Jev primitive is exclusive with the other Jev features")
+            if self.jev is None:
+                raise ValueError("the Jev primitive requested but no Jev advisor is configured")
         irev_tags = (
             {"off": "", "control": "-pre3", "jev": "-pre3jev"}
             if source == "latest-round"
@@ -490,10 +502,24 @@ class Runner:
             + irev_tags[irev]
             + {"off": "", "control": "-chk", "jev": "-chkjev"}[echk]
             + {"off": "", "jev": "-scr"}[rscr]
+            + ("-jprim" if jprim else "")
         )
         run_id = f"{stamp}-{mode}{cond}{tag}-{task.spec.name}-{secrets.token_hex(2)}"
         return _Run(
-            self, task, mode, run_id, label, on, jev_on, upd, irev, required, source, echk, rscr
+            self,
+            task,
+            mode,
+            run_id,
+            label,
+            on,
+            jev_on,
+            upd,
+            irev,
+            required,
+            source,
+            echk,
+            rscr,
+            jprim,
         ).execute()
 
 
@@ -564,8 +590,14 @@ class _Run:
         review_update_source: str = "stated",
         edit_check: str = "off",
         result_screen: str = "off",
+        jev_primitive: bool = False,
     ) -> None:
         self.r = runner
+        # Experiment 014 (planned): Jev called from model-written code (jev-primitive/1).
+        self.jprim = jev_primitive
+        self.prim_log: list[dict[str, Any]] = []
+        self.prim_calls = 0
+        self.prim_unanswered: list[dict[str, Any]] = []
         # Experiment 012: "off" (A) or "jev" (B: screening of structured search results).
         self.rscr = result_screen
         self.screen_log: list[dict[str, Any]] = []
@@ -612,6 +644,9 @@ class _Run:
         self.fx = self.dir / "fixtures"
         self.ws.mkdir()
         self.fx.mkdir()
+        if self.jprim:  # jev-primitive/1: the client module and the mailbox, before step 1
+            (self.ws / CLIENT_FILENAME).write_text(CLIENT_SOURCE, encoding="utf-8")
+            (self.ws / MAILBOX).mkdir()
         self.climits = ContextLimits()
         self.store = ContextStore(self.climits)
         bl = self.cfg.baseline
@@ -675,6 +710,10 @@ class _Run:
             self.system += INITIATED_REVIEW_CLAUSE
             if self.irev == "jev":
                 self.system += INITIATED_REVIEW_JEV_CLAUSE
+        if self.jprim:
+            self.system += JEV_PRIMITIVE_CLAUSE.format(
+                max_calls=self.cfg.jev_primitive.max_calls_per_execution
+            )
         if self.rscr == "jev":
             self.system += (
                 SEARCH_SCREEN_SERVICE_CLAUSE if task.kind == "docservice" else SEARCH_SCREEN_CLAUSE
@@ -740,6 +779,11 @@ class _Run:
                 if a
                 else "context edit authorisation: none (start begin_review before editing "
                 "context.json)"
+            )
+        if self.jprim:
+            lines.append(
+                f"jev primitive calls used {self.prim_calls}/"
+                f"{self.cfg.jev_primitive.max_calls_per_run}"
             )
         if self.echk != "off":
             p = self.proposal
@@ -1410,10 +1454,29 @@ class _Run:
         )
         mirrored = self.store.mirror(self.ws) if self.clm else ""
         before = snapshot_files(self.ws)
+        broker = None
+        if self.jprim:
+            jp = self.cfg.jev_primitive
+            broker = JevBroker(
+                self.ws,
+                self._jev_attempts,
+                self._record_primitive,
+                self.cfg.jev.model,
+                PrimitiveLimits(jp.max_calls_per_execution, jp.max_calls_per_run, jp.max_items),
+                run_calls_used=self.prim_calls,
+            )
         try:
-            res = self.r.executor.run(code, self.ws, self.fx)
+            if broker is None:
+                res = self.r.executor.run(code, self.ws, self.fx)
+            else:
+                res = self.r.executor.run(code, self.ws, self.fx, broker=broker)  # type: ignore[call-arg]
         except ExecutorUnavailable as exc:
             raise _Stop("executor_unavailable", str(exc)) from exc
+        if broker is not None:
+            self.prim_calls = broker.run_calls_used
+            for rid in broker.finish():  # the execution ended first; no Jev call was made
+                self.prim_unanswered.append({"step": self.step, "id": rid})
+                self.trace.event("jev_primitive_unanswered", step=self.step, id=rid)
         self.c.executions += 1
         if res.timed_out:
             self.c.exec_timeouts += 1
@@ -1471,6 +1534,8 @@ class _Run:
         if self.clm:
             self.store.mirror(self.ws)
             self._mirror_proposal()
+        if broker is not None and broker.stop is not None:
+            raise broker.stop  # the budget ran out during the execution; the step is recorded
 
     def _record_edit(self, out: EditOutcome) -> str | None:
         if out.attempted:
@@ -2597,6 +2662,38 @@ class _Run:
             "review_records": reviews,
         }
 
+    # ------------------------------------------- Jev primitive in model code (exp 014)
+    def _record_primitive(self, rec: dict[str, Any]) -> None:
+        rec = {"step": self.step, **rec}
+        n = len(self.prim_log) + 1
+        self.trace.write_json(f"jev_primitive/{n:04d}.json", rec)
+        self.prim_log.append(
+            {k: v for k, v in rec.items() if k not in ("request", "body", "response")}
+            | {
+                "record": f"jev_primitive/{n:04d}.json",
+                "items": len((rec.get("request") or {}).get("items", [])),
+            }
+        )
+        self.trace.event(
+            "jev_primitive", step=self.step, id=rec.get("id"), status=rec.get("status")
+        )
+
+    def jev_primitive_summary(self) -> dict[str, Any]:
+        by: dict[str, int] = {}
+        for r in self.prim_log:
+            by[r["status"]] = by.get(r["status"], 0) + 1
+        return {
+            "enabled": self.jprim,
+            "version": PRIMITIVE_VERSION,
+            "requests": len(self.prim_log),
+            "calls": self.prim_calls,
+            "by_status": by,
+            "items": sum(r["items"] for r in self.prim_log),
+            "unanswered_at_exit": self.prim_unanswered,
+            "steps_with_calls": sorted({r["step"] for r in self.prim_log}),
+            "log": self.prim_log,
+        }
+
     # ------------------------------------------- search-result screening (experiment 012)
     def _present_search(self, res: ExecResult, thought: str, code: str) -> ExecResult:
         """Both conditions: search blocks cut by the output cap keep complete passages; with
@@ -3228,6 +3325,8 @@ class _Run:
             CONTEXT_FILENAME,
             f".{CONTEXT_FILENAME}.host-tmp",
             PROPOSAL_FILENAME,
+            CLIENT_FILENAME,
+            MAILBOX,
             "spill",
             "__pycache__",
         )
@@ -3383,6 +3482,7 @@ class _Run:
             "initiated_review": self.initiated_review_summary(),
             "edit_check": self.edit_check_summary(),
             "result_screen": self.result_screen_summary(),
+            "jev_primitive": self.jev_primitive_summary(),
             "request": self.request_summary(),
             "peak_working_context_chars": self.peak_ctx_chars,
             "context_revisions": len(self.store.revisions) - 1,

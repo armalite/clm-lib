@@ -332,6 +332,14 @@ Ground truth exists only in memory until the run ends, then goes to `evaluator/`
 - **Where the actions run:** `_Run.service_step` runs `search` and `fetch` in the runtime, like other runtime actions (no sandbox call). It writes the saved originals that both conditions can read, and passes search text through `_screen_text`, the same recorder that §24.2's `_present_search` uses.
 - **The boundary is tested in the sandbox:** a whole-filesystem `grep` for corpus text from model code finds nothing (`tests/test_docservice.py`).
 
+## Jev primitive in model-written code (experiment 014, planned)
+
+- **Why a mailbox:** the sandbox has no network, and the host already shares the workspace bind mount with it. A file mailbox (`.clm-jev/req-*.json` and `resp-*.json`) is the smallest channel that lets the **same** Python process wait for a host answer and continue. There is no second execution, no extra model action, and no sandbox credentials.
+- **The executor change** is minimal and opt-in: `DockerExecutor.run(..., broker=)` replaces its single blocking wait with 0.05 s waits that call the broker in between, under the same backstop deadline and kill path. Without a broker, the old code path runs unchanged.
+- **Accounting:** `JevBroker` (in `jev_primitive.py`) validates requests and answers them through `_Run._jev_attempts`, so accounting matches 008–012. The runner records each exchange, empties the mailbox after the execution, and re-raises a budget stop only after the step is recorded.
+- **The editing policy stays in model code.** The runtime exposes a judgment, never an edit.
+- **Tests** in `tests/test_jev_primitive.py` run real containers with a scripted fake Jev on the host.
+
 ## Design choices
 
 - **JSON-lines transcript with escaping** instead of nonce delimiters: it's simple and can't be forged.

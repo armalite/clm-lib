@@ -397,6 +397,7 @@ def _live_runner(cfg: Config, max_usd: float | None, need_jev: bool = False) -> 
         or (ir.enabled and ir.advice)
         or (ec.enabled and ec.advice)
         or cfg.result_screen.enabled
+        or cfg.jev_primitive.enabled
     )
     jev, jev_price = _jev_advisor(cfg) if wanted else (None, None)
     return Runner(
@@ -421,7 +422,10 @@ def cmd_run(args: argparse.Namespace) -> int:
     source = None if args.review_update_source == "config" else args.review_update_source
     echk = None if args.edit_check == "config" else args.edit_check
     rscr = None if args.result_screen == "config" else args.result_screen
-    runner = _live_runner(cfg, args.max_usd, need_jev=bool(jev) or "jev" in (upd, irev, echk, rscr))
+    jprim = None if args.jev_primitive == "config" else args.jev_primitive == "on"
+    runner = _live_runner(
+        cfg, args.max_usd, need_jev=bool(jev) or bool(jprim) or "jev" in (upd, irev, echk, rscr)
+    )
     caching = None if args.caching == "config" else args.caching == "on"
     res = runner.run(
         generate(args.task),
@@ -435,6 +439,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         review_update_source=source,
         edit_check=echk,
         result_screen=rscr,
+        jev_primitive=jprim,
     )
     _print_result(res)
     return 0
@@ -515,30 +520,31 @@ CONDITION_MODES = ("summary", "clm", "clm_direct", "clm_helpers", "clm_reuse")
 # Per-run condition flags after "+": (experiment-008 review action, experiment-009 update
 # review, experiment-010 initiated review, 010 v2 review required before context edits, 010 v3
 # review update source, experiment-011 pilot proposed-edit checking, experiment-012 search-result
-# screening).
-CONDITION_FLAGS: dict[str, tuple[bool, str, str, bool, str, str, str]] = {
-    "": (False, "off", "off", False, "stated", "off", "off"),
-    "jev": (True, "off", "off", False, "stated", "off", "off"),
-    "upd": (False, "control", "off", False, "stated", "off", "off"),
-    "upd-jev": (False, "jev", "off", False, "stated", "off", "off"),
-    "rev": (False, "off", "control", False, "stated", "off", "off"),
-    "rev-jev": (False, "off", "jev", False, "stated", "off", "off"),
-    "pre": (False, "off", "control", True, "stated", "off", "off"),
-    "pre-jev": (False, "off", "jev", True, "stated", "off", "off"),
-    "pre3": (False, "off", "control", True, "latest-round", "off", "off"),
-    "pre3-jev": (False, "off", "jev", True, "latest-round", "off", "off"),
-    "chk": (False, "off", "off", False, "stated", "control", "off"),
-    "chk-jev": (False, "off", "off", False, "stated", "jev", "off"),
-    "scr": (False, "off", "off", False, "stated", "off", "jev"),
+# screening, experiment-014 Jev primitive in model code).
+CONDITION_FLAGS: dict[str, tuple[bool, str, str, bool, str, str, str, bool]] = {
+    "": (False, "off", "off", False, "stated", "off", "off", False),
+    "jev": (True, "off", "off", False, "stated", "off", "off", False),
+    "upd": (False, "control", "off", False, "stated", "off", "off", False),
+    "upd-jev": (False, "jev", "off", False, "stated", "off", "off", False),
+    "rev": (False, "off", "control", False, "stated", "off", "off", False),
+    "rev-jev": (False, "off", "jev", False, "stated", "off", "off", False),
+    "pre": (False, "off", "control", True, "stated", "off", "off", False),
+    "pre-jev": (False, "off", "jev", True, "stated", "off", "off", False),
+    "pre3": (False, "off", "control", True, "latest-round", "off", "off", False),
+    "pre3-jev": (False, "off", "jev", True, "latest-round", "off", "off", False),
+    "chk": (False, "off", "off", False, "stated", "control", "off", False),
+    "chk-jev": (False, "off", "off", False, "stated", "jev", "off", False),
+    "scr": (False, "off", "off", False, "stated", "off", "jev", False),
+    "jprim": (False, "off", "off", False, "stated", "off", "off", True),
 }
 
 
 def conditions_need_jev(text: str | None) -> bool:
     for p in (text or "").split(","):
-        jev, upd, irev, _, _, echk, rscr = CONDITION_FLAGS.get(
+        jev, upd, irev, _, _, echk, rscr, jprim = CONDITION_FLAGS.get(
             p.split(":")[0].partition("+")[2], CONDITION_FLAGS[""]
         )
-        if jev or "jev" in (upd, irev, echk, rscr):
+        if jev or jprim or "jev" in (upd, irev, echk, rscr):
             return True
     return False
 
@@ -559,7 +565,7 @@ def parse_conditions(text: str) -> list[tuple[str, bool]]:
         if flag not in CONDITION_FLAGS:
             raise ValueError(
                 f"bad condition {part!r}; only '+jev', '+upd', '+upd-jev', '+rev', '+rev-jev', "
-                "'+pre', '+pre-jev', '+pre3', '+pre3-jev', '+chk', '+chk-jev' or '+scr' may follow a mode"
+                "'+pre', '+pre-jev', '+pre3', '+pre3-jev', '+chk', '+chk-jev', '+scr' or '+jprim' may follow a mode"
             )
         if base not in CONDITION_MODES or cache not in ("on", "off"):
             raise ValueError(
@@ -682,9 +688,10 @@ def run_matrix(
             source = None
             echk = None
             rscr = None
+            jprim = None
             if "caching" in cell:  # condition schedules: flags are explicit, otherwise off
                 mode, _, flag = mode.partition("+")
-                jev, upd, irev, required, source, echk, rscr = CONDITION_FLAGS[flag]
+                jev, upd, irev, required, source, echk, rscr, jprim = CONDITION_FLAGS[flag]
             cell["pair"] = pair
             if not stopped and runner.ledger.remaining_usd < cfg.budget.min_run_reserve_usd:
                 stopped = (
@@ -706,6 +713,7 @@ def run_matrix(
                     review_update_source=source,
                     edit_check=echk,
                     result_screen=rscr,
+                    jev_primitive=jprim,
                 )
                 _print_result(res)
                 m = res.metrics
@@ -940,6 +948,12 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("config", "off", "jev"),
         default="config",
         help="experiment 012: Jev screening of search results for this run (default: [result_screen])",
+    )
+    r.add_argument(
+        "--jev-primitive",
+        choices=("config", "on", "off"),
+        default="config",
+        help="experiment 014: let model-written code call Jev (jev-primitive/1) (default: [jev_primitive])",
     )
     r.set_defaults(func=cmd_run)
 

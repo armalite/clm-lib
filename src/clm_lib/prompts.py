@@ -30,7 +30,8 @@ from .context import Entry
 # 2026-10-13.7 adds the experiment-012 v2 docservice task kind (AGENT_ROLE/FINAL_EXAMPLE) and
 # SEARCH_SCREEN_SERVICE_CLAUSE (the service version of the screening disclosure); all other
 # texts unchanged.
-PROMPT_VERSION = "2026-10-13.7"
+# 2026-10-13.8 adds JEV_PRIMITIVE_CLAUSE (experiment 014, opt-in); all other texts unchanged.
+PROMPT_VERSION = "2026-10-13.8"
 
 PROTOCOL = """You are {agent_role} working through a strict JSON protocol.
 
@@ -343,6 +344,20 @@ SEARCH RESULTS ARE SCREENED (this run):
   omitted, and the result ends with a notice listing the omitted passage ids.
 - Omitted passages are not lost: the fetch action and the saved result file named in the result
   header return them unscreened. Screening can omit passages you need, and it never adds text.
+"""
+
+# Experiment 014 (planned), only when jev-primitive/1 is enabled for the run.
+JEV_PRIMITIVE_CLAUSE = """
+JEV FROM YOUR OWN CODE (this run):
+- Your code can ask a fast classifier (Jev) narrow yes/no questions while it runs:
+    import clm_jev
+    r = clm_jev.judge(question, {{"key": "text", ...}}, background="", criteria=None)
+  r["status"] is "ok" or "error"; r["answers"] maps each key to the probability that the
+  question is true for that item (None if missing). Up to 20 items and {max_calls} calls per
+  execution; the call waits for the answer and your code continues in the same step.
+- Jev sees only the text your code sends. Its answers can be wrong; your code decides what they
+  mean and what, if anything, to change. Using it is optional; each call takes time and costs a
+  little. Helpers you save may call it in later steps.
 """
 
 SUMMARY_SYSTEM_TOKEN_TAIL_ROUNDS = """You compress an agent's working transcript. The agent is
