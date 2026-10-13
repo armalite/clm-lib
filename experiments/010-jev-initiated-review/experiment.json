@@ -14,8 +14,9 @@
   "request_layout": "blocks/1, caching on, 5m, run-tag/1",
   "jev_price": "USD 0.042 per million input tokens, output free (docs.typesafe.ai/models, retrieved 2026-10-12)",
   "budget": "ledger ceiling set explicitly from USD 70.210028 to USD 89.687573 (settled spend USD 59.687573 + USD 30 authorised for 010); replaces earlier unused allowances",
-  "status": "v1 stopped at its calibration gate (no reviews); v2 stopped at its calibration gate (no applicable Jev reviews)",
-  "v2": "protocol v2 (required pre-edit review) implemented on HEAD e99c91e plus uncommitted v2 changes; patch artifacts/comparisons/20261012T213922/20261012T213922.patch; ceiling set from USD 89.687573 to 91.209294 (settled spend 61.209294 + 30)"
+  "status": "v1 and v2 stopped at their calibration gates; v3 passed its gate and completed its 36-run evaluation",
+  "v2": "protocol v2 (required pre-edit review) implemented on HEAD e99c91e plus uncommitted v2 changes; patch artifacts/comparisons/20261012T213922/20261012T213922.patch; ceiling set from USD 89.687573 to 91.209294 (settled spend 61.209294 + 30)",
+  "v3": "protocol v3 on HEAD 9ad46ec plus uncommitted v3 changes and the rounds-eval-9..12 registration; patches artifacts/comparisons/<stamp>/<stamp>.patch (evaluation patch sha256 146a4af883141334f77018858cf4aa67d42858031a41f8f0cf7c1a0ac8a1f746); ceiling set from USD 91.209294 to 93.725281 (settled spend 63.725281 + 30)"
  },
  "settings": {
   "config": "configs/exp010.toml",
@@ -41,13 +42,38 @@
    ],
    "review_version": "initiated-review/2",
    "prompt_version": "2026-10-13.3"
+  },
+  "v3": {
+   "config": "configs/exp010v3.toml",
+   "conditions": [
+    "clm_helpers:on",
+    "clm_helpers+pre3:on",
+    "clm_helpers+pre3-jev:on"
+   ],
+   "calibration_tasks": [
+    "rounds-dev-1",
+    "rounds-dev-2"
+   ],
+   "evaluation_tasks": [
+    "rounds-eval-9",
+    "rounds-eval-10",
+    "rounds-eval-11",
+    "rounds-eval-12"
+   ],
+   "evaluation_repetitions": 3,
+   "review_version": "initiated-review/3",
+   "update_source": "latest-round (round-files/1)",
+   "prompt_version": "2026-10-13.4"
   }
  },
  "phases": {
   "calibration": "2 development instances x 2 conditions, comparison 20261012T204507: readiness gate FAILED (0 reviews initiated in all 4 runs)",
   "evaluation": "not run: the readiness gate failed; no fresh instances were registered",
   "v2-calibration": "protocol v2 (required pre-edit review): 2 development instances x 3 conditions, comparison 20261012T213922; readiness gate FAILED (0 applicable Jev reviews: all 48 accepted reviews in B/C were declared compaction)",
-  "v2-evaluation": "not run: the v2 readiness gate failed; rounds-eval-9..12 not registered"
+  "v2-evaluation": "not run: the v2 readiness gate failed; rounds-eval-9..12 not registered",
+  "v3-smoke": "one C run on rounds-diag-1 verifying the live path; excluded",
+  "v3-calibration": "protocol v3: 2 reused development instances x 3 conditions, comparison 20261012T230436; gate PASSED",
+  "v3-evaluation": "protocol v3: rounds-eval-9..12 x 3 repetitions x 3 conditions = 36 runs, comparison 20261012T232533"
  },
  "runs": [
   {
@@ -115,14 +141,319 @@
    "phase": "v2-calibration",
    "group": "v2",
    "note": "protocol v2 calibration block 1 position 2: A (ordinary CLM) on rounds-dev-2"
+  },
+  {
+   "run_id": "20261012T225935-clm_helpers-cacheon-pre3jev-rounds-diag-1-f4c4",
+   "role": "smoke",
+   "phase": "v3-smoke",
+   "group": "v3",
+   "note": "protocol v3 live smoke: C on rounds-diag-1; excluded from all comparisons"
+  },
+  {
+   "run_id": "20261012T230437-clm_helpers-cacheon-rounds-dev-1-02f1",
+   "role": "calibration",
+   "phase": "v3-calibration",
+   "group": "v3",
+   "note": "protocol v3 calibration (reused development instances) block 0 position 0: A (ordinary CLM) on rounds-dev-1 rep 1"
+  },
+  {
+   "run_id": "20261012T230703-clm_helpers-cacheon-pre3-rounds-dev-1-e73b",
+   "role": "calibration",
+   "phase": "v3-calibration",
+   "group": "v3",
+   "note": "protocol v3 calibration (reused development instances) block 0 position 1: B (required pre-edit review, runtime update, no Jev) on rounds-dev-1 rep 1"
+  },
+  {
+   "run_id": "20261012T230945-clm_helpers-cacheon-pre3jev-rounds-dev-1-7614",
+   "role": "calibration",
+   "phase": "v3-calibration",
+   "group": "v3",
+   "note": "protocol v3 calibration (reused development instances) block 0 position 2: C (required pre-edit review, runtime update, with Jev) on rounds-dev-1 rep 1"
+  },
+  {
+   "run_id": "20261012T231251-clm_helpers-cacheon-pre3-rounds-dev-2-c87a",
+   "role": "calibration",
+   "phase": "v3-calibration",
+   "group": "v3",
+   "note": "protocol v3 calibration (reused development instances) block 1 position 0: B (required pre-edit review, runtime update, no Jev) on rounds-dev-2 rep 1"
+  },
+  {
+   "run_id": "20261012T231635-clm_helpers-cacheon-pre3jev-rounds-dev-2-495a",
+   "role": "calibration",
+   "phase": "v3-calibration",
+   "group": "v3",
+   "note": "protocol v3 calibration (reused development instances) block 1 position 1: C (required pre-edit review, runtime update, with Jev) on rounds-dev-2 rep 1"
+  },
+  {
+   "run_id": "20261012T231949-clm_helpers-cacheon-rounds-dev-2-c55c",
+   "role": "calibration",
+   "phase": "v3-calibration",
+   "group": "v3",
+   "note": "protocol v3 calibration (reused development instances) block 1 position 2: A (ordinary CLM) on rounds-dev-2 rep 1"
+  },
+  {
+   "run_id": "20261012T232533-clm_helpers-cacheon-rounds-eval-9-854e",
+   "role": "evaluation",
+   "phase": "v3-evaluation",
+   "group": "v3",
+   "note": "protocol v3 evaluation block 0 position 0: A (ordinary CLM) on rounds-eval-9 rep 1"
+  },
+  {
+   "run_id": "20261012T232811-clm_helpers-cacheon-pre3-rounds-eval-9-8bd8",
+   "role": "evaluation",
+   "phase": "v3-evaluation",
+   "group": "v3",
+   "note": "protocol v3 evaluation block 0 position 1: B (required pre-edit review, runtime update, no Jev) on rounds-eval-9 rep 1"
+  },
+  {
+   "run_id": "20261012T233137-clm_helpers-cacheon-pre3jev-rounds-eval-9-218f",
+   "role": "evaluation",
+   "phase": "v3-evaluation",
+   "group": "v3",
+   "note": "protocol v3 evaluation block 0 position 2: C (required pre-edit review, runtime update, with Jev) on rounds-eval-9 rep 1"
+  },
+  {
+   "run_id": "20261012T233442-clm_helpers-cacheon-pre3-rounds-eval-10-aa68",
+   "role": "evaluation",
+   "phase": "v3-evaluation",
+   "group": "v3",
+   "note": "protocol v3 evaluation block 1 position 0: B (required pre-edit review, runtime update, no Jev) on rounds-eval-10 rep 1"
+  },
+  {
+   "run_id": "20261012T233749-clm_helpers-cacheon-pre3jev-rounds-eval-10-d8e1",
+   "role": "evaluation",
+   "phase": "v3-evaluation",
+   "group": "v3",
+   "note": "protocol v3 evaluation block 1 position 1: C (required pre-edit review, runtime update, with Jev) on rounds-eval-10 rep 1"
+  },
+  {
+   "run_id": "20261012T234049-clm_helpers-cacheon-rounds-eval-10-b15a",
+   "role": "evaluation",
+   "phase": "v3-evaluation",
+   "group": "v3",
+   "note": "protocol v3 evaluation block 1 position 2: A (ordinary CLM) on rounds-eval-10 rep 1"
+  },
+  {
+   "run_id": "20261012T234312-clm_helpers-cacheon-pre3jev-rounds-eval-11-580c",
+   "role": "evaluation",
+   "phase": "v3-evaluation",
+   "group": "v3",
+   "note": "protocol v3 evaluation block 2 position 0: C (required pre-edit review, runtime update, with Jev) on rounds-eval-11 rep 1"
+  },
+  {
+   "run_id": "20261012T234642-clm_helpers-cacheon-rounds-eval-11-dfdb",
+   "role": "evaluation",
+   "phase": "v3-evaluation",
+   "group": "v3",
+   "note": "protocol v3 evaluation block 2 position 1: A (ordinary CLM) on rounds-eval-11 rep 1"
+  },
+  {
+   "run_id": "20261012T234937-clm_helpers-cacheon-pre3-rounds-eval-11-7467",
+   "role": "evaluation",
+   "phase": "v3-evaluation",
+   "group": "v3",
+   "note": "protocol v3 evaluation block 2 position 2: B (required pre-edit review, runtime update, no Jev) on rounds-eval-11 rep 1"
+  },
+  {
+   "run_id": "20261012T235313-clm_helpers-cacheon-pre3jev-rounds-eval-12-f083",
+   "role": "evaluation",
+   "phase": "v3-evaluation",
+   "group": "v3",
+   "note": "protocol v3 evaluation block 3 position 0: C (required pre-edit review, runtime update, with Jev) on rounds-eval-12 rep 1"
+  },
+  {
+   "run_id": "20261012T235640-clm_helpers-cacheon-pre3-rounds-eval-12-4c0d",
+   "role": "evaluation",
+   "phase": "v3-evaluation",
+   "group": "v3",
+   "note": "protocol v3 evaluation block 3 position 1: B (required pre-edit review, runtime update, no Jev) on rounds-eval-12 rep 1"
+  },
+  {
+   "run_id": "20261012T235941-clm_helpers-cacheon-rounds-eval-12-c16b",
+   "role": "evaluation",
+   "phase": "v3-evaluation",
+   "group": "v3",
+   "note": "protocol v3 evaluation block 3 position 2: A (ordinary CLM) on rounds-eval-12 rep 1"
+  },
+  {
+   "run_id": "20261013T000208-clm_helpers-cacheon-rounds-eval-9-da12",
+   "role": "evaluation",
+   "phase": "v3-evaluation",
+   "group": "v3",
+   "note": "protocol v3 evaluation block 4 position 0: A (ordinary CLM) on rounds-eval-9 rep 2"
+  },
+  {
+   "run_id": "20261013T000430-clm_helpers-cacheon-pre3jev-rounds-eval-9-bb3e",
+   "role": "evaluation",
+   "phase": "v3-evaluation",
+   "group": "v3",
+   "note": "protocol v3 evaluation block 4 position 1: C (required pre-edit review, runtime update, with Jev) on rounds-eval-9 rep 2"
+  },
+  {
+   "run_id": "20261013T000735-clm_helpers-cacheon-pre3-rounds-eval-9-440d",
+   "role": "evaluation",
+   "phase": "v3-evaluation",
+   "group": "v3",
+   "note": "protocol v3 evaluation block 4 position 2: B (required pre-edit review, runtime update, no Jev) on rounds-eval-9 rep 2"
+  },
+  {
+   "run_id": "20261013T001059-clm_helpers-cacheon-pre3-rounds-eval-10-d58d",
+   "role": "evaluation",
+   "phase": "v3-evaluation",
+   "group": "v3",
+   "note": "protocol v3 evaluation block 5 position 0: B (required pre-edit review, runtime update, no Jev) on rounds-eval-10 rep 2"
+  },
+  {
+   "run_id": "20261013T001401-clm_helpers-cacheon-rounds-eval-10-2e3b",
+   "role": "evaluation",
+   "phase": "v3-evaluation",
+   "group": "v3",
+   "note": "protocol v3 evaluation block 5 position 1: A (ordinary CLM) on rounds-eval-10 rep 2"
+  },
+  {
+   "run_id": "20261013T001646-clm_helpers-cacheon-pre3jev-rounds-eval-10-0b2d",
+   "role": "evaluation",
+   "phase": "v3-evaluation",
+   "group": "v3",
+   "note": "protocol v3 evaluation block 5 position 2: C (required pre-edit review, runtime update, with Jev) on rounds-eval-10 rep 2"
+  },
+  {
+   "run_id": "20261013T001938-clm_helpers-cacheon-rounds-eval-11-e76b",
+   "role": "evaluation",
+   "phase": "v3-evaluation",
+   "group": "v3",
+   "note": "protocol v3 evaluation block 6 position 0: A (ordinary CLM) on rounds-eval-11 rep 2"
+  },
+  {
+   "run_id": "20261013T002220-clm_helpers-cacheon-pre3-rounds-eval-11-7e4b",
+   "role": "evaluation",
+   "phase": "v3-evaluation",
+   "group": "v3",
+   "note": "protocol v3 evaluation block 6 position 1: B (required pre-edit review, runtime update, no Jev) on rounds-eval-11 rep 2"
+  },
+  {
+   "run_id": "20261013T002540-clm_helpers-cacheon-pre3jev-rounds-eval-11-9542",
+   "role": "evaluation",
+   "phase": "v3-evaluation",
+   "group": "v3",
+   "note": "protocol v3 evaluation block 6 position 2: C (required pre-edit review, runtime update, with Jev) on rounds-eval-11 rep 2"
+  },
+  {
+   "run_id": "20261013T002912-clm_helpers-cacheon-pre3-rounds-eval-12-5c2e",
+   "role": "evaluation",
+   "phase": "v3-evaluation",
+   "group": "v3",
+   "note": "protocol v3 evaluation block 7 position 0: B (required pre-edit review, runtime update, no Jev) on rounds-eval-12 rep 2"
+  },
+  {
+   "run_id": "20261013T003218-clm_helpers-cacheon-pre3jev-rounds-eval-12-d060",
+   "role": "evaluation",
+   "phase": "v3-evaluation",
+   "group": "v3",
+   "note": "protocol v3 evaluation block 7 position 1: C (required pre-edit review, runtime update, with Jev) on rounds-eval-12 rep 2"
+  },
+  {
+   "run_id": "20261013T003519-clm_helpers-cacheon-rounds-eval-12-273e",
+   "role": "evaluation",
+   "phase": "v3-evaluation",
+   "group": "v3",
+   "note": "protocol v3 evaluation block 7 position 2: A (ordinary CLM) on rounds-eval-12 rep 2"
+  },
+  {
+   "run_id": "20261013T003736-clm_helpers-cacheon-pre3jev-rounds-eval-9-3c19",
+   "role": "evaluation",
+   "phase": "v3-evaluation",
+   "group": "v3",
+   "note": "protocol v3 evaluation block 8 position 0: C (required pre-edit review, runtime update, with Jev) on rounds-eval-9 rep 3"
+  },
+  {
+   "run_id": "20261013T004034-clm_helpers-cacheon-rounds-eval-9-3f4f",
+   "role": "evaluation",
+   "phase": "v3-evaluation",
+   "group": "v3",
+   "note": "protocol v3 evaluation block 8 position 1: A (ordinary CLM) on rounds-eval-9 rep 3"
+  },
+  {
+   "run_id": "20261013T004251-clm_helpers-cacheon-pre3-rounds-eval-9-ed83",
+   "role": "evaluation",
+   "phase": "v3-evaluation",
+   "group": "v3",
+   "note": "protocol v3 evaluation block 8 position 2: B (required pre-edit review, runtime update, no Jev) on rounds-eval-9 rep 3"
+  },
+  {
+   "run_id": "20261013T004524-clm_helpers-cacheon-pre3jev-rounds-eval-10-5266",
+   "role": "evaluation",
+   "phase": "v3-evaluation",
+   "group": "v3",
+   "note": "protocol v3 evaluation block 9 position 0: C (required pre-edit review, runtime update, with Jev) on rounds-eval-10 rep 3"
+  },
+  {
+   "run_id": "20261013T004847-clm_helpers-cacheon-pre3-rounds-eval-10-eb84",
+   "role": "evaluation",
+   "phase": "v3-evaluation",
+   "group": "v3",
+   "note": "protocol v3 evaluation block 9 position 1: B (required pre-edit review, runtime update, no Jev) on rounds-eval-10 rep 3"
+  },
+  {
+   "run_id": "20261013T005150-clm_helpers-cacheon-rounds-eval-10-8387",
+   "role": "evaluation",
+   "phase": "v3-evaluation",
+   "group": "v3",
+   "note": "protocol v3 evaluation block 9 position 2: A (ordinary CLM) on rounds-eval-10 rep 3"
+  },
+  {
+   "run_id": "20261013T005421-clm_helpers-cacheon-rounds-eval-11-3321",
+   "role": "evaluation",
+   "phase": "v3-evaluation",
+   "group": "v3",
+   "note": "protocol v3 evaluation block 10 position 0: A (ordinary CLM) on rounds-eval-11 rep 3"
+  },
+  {
+   "run_id": "20261013T005703-clm_helpers-cacheon-pre3jev-rounds-eval-11-44f7",
+   "role": "evaluation",
+   "phase": "v3-evaluation",
+   "group": "v3",
+   "note": "protocol v3 evaluation block 10 position 1: C (required pre-edit review, runtime update, with Jev) on rounds-eval-11 rep 3"
+  },
+  {
+   "run_id": "20261013T010113-clm_helpers-cacheon-pre3-rounds-eval-11-089a",
+   "role": "evaluation",
+   "phase": "v3-evaluation",
+   "group": "v3",
+   "note": "protocol v3 evaluation block 10 position 2: B (required pre-edit review, runtime update, no Jev) on rounds-eval-11 rep 3"
+  },
+  {
+   "run_id": "20261013T010548-clm_helpers-cacheon-pre3-rounds-eval-12-ac37",
+   "role": "evaluation",
+   "phase": "v3-evaluation",
+   "group": "v3",
+   "note": "protocol v3 evaluation block 11 position 0: B (required pre-edit review, runtime update, no Jev) on rounds-eval-12 rep 3"
+  },
+  {
+   "run_id": "20261013T010832-clm_helpers-cacheon-rounds-eval-12-d3df",
+   "role": "evaluation",
+   "phase": "v3-evaluation",
+   "group": "v3",
+   "note": "protocol v3 evaluation block 11 position 1: A (ordinary CLM) on rounds-eval-12 rep 3"
+  },
+  {
+   "run_id": "20261013T011052-clm_helpers-cacheon-pre3jev-rounds-eval-12-23c3",
+   "role": "evaluation",
+   "phase": "v3-evaluation",
+   "group": "v3",
+   "note": "protocol v3 evaluation block 11 position 2: C (required pre-edit review, runtime update, with Jev) on rounds-eval-12 rep 3"
   }
  ],
  "comparisons": [
   "20261012T204507",
-  "20261012T213922"
+  "20261012T213922",
+  "20261012T230436",
+  "20261012T232533"
  ],
  "comparison_phases": {
   "20261012T204507": "calibration",
-  "20261012T213922": "v2-calibration"
+  "20261012T213922": "v2-calibration",
+  "20261012T230436": "v3-calibration",
+  "20261012T232533": "v3-evaluation"
  }
 }

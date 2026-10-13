@@ -21,7 +21,9 @@ from .context import Entry
 # 2026-10-13.3 adds the experiment-010 v2 required-review clauses (INITIATED_REVIEW_V2_CLAUSE for
 # both review conditions, INITIATED_REVIEW_V2_JEV_CLAUSE for the Jev condition); all other texts
 # unchanged.
-PROMPT_VERSION = "2026-10-13.3"
+# 2026-10-13.4 adds the experiment-010 v3 clauses (INITIATED_REVIEW_V3_CLAUSE for both review
+# conditions, INITIATED_REVIEW_V3_JEV_CLAUSE for the Jev condition); all other texts unchanged.
+PROMPT_VERSION = "2026-10-13.4"
 
 PROTOCOL = """You are {agent_role} working through a strict JSON protocol.
 
@@ -247,6 +249,31 @@ INITIATED_REVIEW_V2_JEV_CLAUSE = """- In this run, each update review also asks 
   action in it (compaction reviews get no advice). The advice is probabilistic and can be wrong,
   and it never edits your context. A low probability is not a reason to delete an entry, and a
   high one does not mean the entry is wrong. You decide whether and how to edit.
+"""
+
+# Experiment 010 v3 (initiated-review/3): identical in both review conditions (B and C). The
+# review's update is supplied by the runtime; Claude's optional label is recorded only.
+INITIATED_REVIEW_V3_CLAUSE = """
+CONTEXT EDITS NEED A REVIEW FIRST (this run):
+- Before you edit context.json, start a context review: reply {"action": "begin_review"}. You may
+  add "purpose" ("update" or "compaction") and a short "new_information" note; both are recorded
+  only.
+- The runtime replies with the context revision, the entries to review (your notes and
+  observations) and the update this review uses: the incident-board and change-log lines of the
+  latest released round. The review authorises one context.json edit in a later step, until you
+  make that edit, start another review, or the next round is released. You may also decide not
+  to edit.
+- An edit to context.json without a valid review is rejected and the previous context is kept;
+  other effects of that code are not undone. A review uses one model call. Exception: when the
+  runtime status says OVER LIMIT, edit context.json directly in that step; no review is needed.
+"""
+
+# Experiment 010 v3, Jev condition only.
+INITIATED_REVIEW_V3_JEV_CLAUSE = """- In this run, each review also asks a fast classifier (Jev), for each listed entry, for the
+  probability that the latest round's board and change-log lines require reconsidering a current
+  assertion or planned action in it. The advice is probabilistic and can be wrong, and it never
+  edits your context. A low probability is not a reason to delete an entry, and a high one does
+  not mean the entry is wrong. You decide whether and how to edit.
 """
 
 SUMMARY_SYSTEM_TOKEN_TAIL_ROUNDS = """You compress an agent's working transcript. The agent is

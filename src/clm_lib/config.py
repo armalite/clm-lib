@@ -118,6 +118,9 @@ class InitiatedReviewConfig:
     enabled: bool = False
     advice: bool = False
     required: bool = False  # v2 (initiated-review/2): context edits need a prior review
+    # v3 (initiated-review/3): "latest-round" makes the review's update the latest released
+    # round's board and change-log lines (round-files/1); "stated" keeps v1/v2 behaviour.
+    update_source: str = "stated"
     max_reviews: int = 12  # begin_review actions per run
     max_info_chars: int = 2000  # length of the stated new information
     max_candidates: int = 60  # entries scored per review; any beyond are listed as not assessed

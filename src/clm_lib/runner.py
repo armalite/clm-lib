@@ -48,6 +48,8 @@ from .prompts import (
     INITIATED_REVIEW_JEV_CLAUSE,
     INITIATED_REVIEW_V2_CLAUSE,
     INITIATED_REVIEW_V2_JEV_CLAUSE,
+    INITIATED_REVIEW_V3_CLAUSE,
+    INITIATED_REVIEW_V3_JEV_CLAUSE,
     JEV_CLAUSE,
     PROMPT_VERSION,
     SUMMARY_SYSTEM_TOKEN_TAIL_CODING,
@@ -193,6 +195,7 @@ def parse_action(
     allow_review: bool = False,
     allow_begin_review: bool = False,
     begin_review_v2: bool = False,
+    begin_review_v3: bool = False,
 ) -> tuple[dict[str, Any] | None, str]:
     """Return (action, error). Only a whole-response JSON object is accepted."""
     raw = text.strip()
@@ -207,6 +210,12 @@ def parse_action(
         return None, "response JSON must be an object"
     kind = obj.get("action")
     if kind == "advance" and allow_advance:
+        return obj, ""
+    if kind == "begin_review" and allow_begin_review and begin_review_v3:
+        if obj.get("purpose") not in (None, "update", "compaction"):
+            return None, "begin_review 'purpose' must be 'update' or 'compaction' if given"
+        if not isinstance(obj.get("new_information", ""), str):
+            return None, "begin_review 'new_information' must be a string"
         return obj, ""
     if kind == "begin_review" and allow_begin_review and begin_review_v2:
         if obj.get("purpose") not in ("update", "compaction"):
@@ -310,6 +319,7 @@ class Runner:
         update_review: str | None = None,
         initiated_review: str | None = None,
         review_required: bool | None = None,
+        review_update_source: str | None = None,
     ) -> RunResult:
         """``caching`` overrides ``request.prompt_caching`` for this run (four-condition runs);
         ``jev`` overrides ``jev.enabled`` (experiment 008; CLM modes only). ``update_review``
@@ -360,8 +370,17 @@ class Runner:
         required = ir.required if review_required is None else review_required
         if required and irev == "off":
             raise ValueError("a required review needs initiated review (control or jev)")
+        source = ir.update_source if review_update_source is None else review_update_source
+        if source not in ("stated", "latest-round"):
+            raise ValueError(f"review update source must be stated or latest-round, not {source!r}")
+        if source == "latest-round" and (not required or task.kind != "rounds"):
+            raise ValueError(
+                "the latest-round update source needs a required review on rounds tasks"
+            )
         irev_tags = (
-            {"off": "", "control": "-pre", "jev": "-prejev"}
+            {"off": "", "control": "-pre3", "jev": "-pre3jev"}
+            if source == "latest-round"
+            else {"off": "", "control": "-pre", "jev": "-prejev"}
             if required
             else {"off": "", "control": "-rev", "jev": "-revjev"}
         )
@@ -371,10 +390,13 @@ class Runner:
             else {"off": "", "control": "-upd", "jev": "-updjev"}[upd] + irev_tags[irev]
         )
         run_id = f"{stamp}-{mode}{cond}{tag}-{task.spec.name}-{secrets.token_hex(2)}"
-        return _Run(self, task, mode, run_id, label, on, jev_on, upd, irev, required).execute()
+        return _Run(
+            self, task, mode, run_id, label, on, jev_on, upd, irev, required, source
+        ).execute()
 
 
 REVIEW_REQUIRED = "context edits in this run require a review first"
+V3_PAYLOAD_MAX_CHARS = 4000  # 010 v3: the round-files/1 length limit, as in experiment 009
 
 
 def _entry_batches(entries: list[Entry], batch_size: int, max_chars: int) -> list[list[ReviewItem]]:
@@ -429,6 +451,7 @@ class _Run:
         update_review: str = "off",
         initiated_review: str = "off",
         review_required: bool = False,
+        review_update_source: str = "stated",
     ) -> None:
         self.r = runner
         self.jev_on = jev_on
@@ -438,6 +461,7 @@ class _Run:
         self.ireviews: list[dict[str, Any]] = []
         # 010 v2: context edits need a prior review; one authorisation per review.
         self.ireq = review_required
+        self.isrc = review_update_source  # v3: "latest-round"
         self.edit_auth: dict[str, Any] | None = None
         self.auth_log: list[dict[str, Any]] = []
         self.blocked_edits: list[int] = []
@@ -509,7 +533,11 @@ class _Run:
             self.system += UPDATE_REVIEW_CLAUSE
             if self.upd == "jev":
                 self.system += UPDATE_REVIEW_JEV_CLAUSE
-        if self.irev != "off" and self.ireq:
+        if self.irev != "off" and self.isrc == "latest-round":
+            self.system += INITIATED_REVIEW_V3_CLAUSE
+            if self.irev == "jev":
+                self.system += INITIATED_REVIEW_V3_JEV_CLAUSE
+        elif self.irev != "off" and self.ireq:
             self.system += INITIATED_REVIEW_V2_CLAUSE
             if self.irev == "jev":
                 self.system += INITIATED_REVIEW_V2_JEV_CLAUSE
@@ -1405,6 +1433,7 @@ class _Run:
                 self.jev_on,
                 self.irev != "off",
                 self.ireq,
+                self.isrc == "latest-round",
             )
             if action is None:
                 self.trace.event(
@@ -1425,6 +1454,7 @@ class _Run:
                     self.jev_on,
                     self.irev != "off",
                     self.ireq,
+                    self.isrc == "latest-round",
                 )
                 if action is None:
                     self.trace.event("invalid_action", step=self.step, error=err, after_repair=True)
@@ -1868,8 +1898,9 @@ class _Run:
         edit authorisation bound to the reviewed entries. Nothing in the context changes except
         the usual runtime append of this step's entries."""
         ir = self.cfg.initiated_review
+        v3 = self.isrc == "latest-round"
         thought = str(action.get("thought", ""))[:1000]
-        purpose = action["purpose"]
+        purpose = action.get("purpose") if v3 else action["purpose"]
         info = action.get("new_information", "") or ""
         rev = self.store.current
         used = sum(1 for r in self.ireviews if r["status"] != "rejected")
@@ -1883,9 +1914,36 @@ class _Run:
             "info_chars": len(info),
             "advice": self.irev == "jev",
         }
+        if v3:
+            # initiated-review/3: the update is the latest released round's board and
+            # change-log lines (round-files/1); Claude's label and note are recorded only.
+            payload, sources, truncated = build_payload(
+                self.task.stages[self.stage - 1], V3_PAYLOAD_MAX_CHARS
+            )
+            rec.update(
+                update_source="latest-round",
+                update_round=self.stage,
+                payload_version=PAYLOAD_VERSION,
+                payload=payload,
+                payload_sha256=hashlib.sha256(payload.encode()).hexdigest(),
+                payload_chars=len(payload),
+                payload_lines=len(payload.splitlines()),
+                payload_sources=sources,
+                payload_truncated=truncated,
+                payload_max_chars=V3_PAYLOAD_MAX_CHARS,
+                round_review_index=sum(
+                    1
+                    for r in self.ireviews
+                    if r["status"] != "rejected" and r.get("update_round") == self.stage
+                ),
+            )
         error = (
             f"review limit reached ({ir.max_reviews} per task)"
             if used >= ir.max_reviews
+            else f"the new information is {len(info)} chars; at most {ir.max_info_chars}"
+            if v3 and len(info) > ir.max_info_chars
+            else None
+            if v3
             else "an update review needs the new information"
             if purpose == "update" and not info.strip()
             else f"the new information is {len(info)} chars; at most {ir.max_info_chars}"
@@ -1913,6 +1971,20 @@ class _Run:
                 not_assessed_ids=not_assessed,
             )
             listed = ", ".join(e.id for e in candidates) or "none"
+            if v3:
+                k = self.stage
+                files = ", ".join(rec["payload_sources"]) or "none"
+                head = [
+                    f"Context review (initiated-review/3; context revision {rev.number}; your "
+                    f"label: {purpose or 'none'}).",
+                    f"Update for this review (runtime-supplied, {PAYLOAD_VERSION}): the "
+                    f"incident-board and change-log lines released in round {k} "
+                    f"({rec['payload_lines']} lines; files {files}; sha256 "
+                    f"{rec['payload_sha256'][:12]})"
+                    if payload
+                    else f"Update for this review: none (round {k} released no incident-board "
+                    "or change-log lines).",
+                ]
             lines = [
                 f"Context review (initiated-review/2; context revision {rev.number}; purpose: "
                 f"{purpose})."
@@ -1924,6 +1996,8 @@ class _Run:
                     else ""
                 ),
             ]
+            if v3:
+                lines[0:1] = head
             if not_assessed:
                 lines.append(
                     f"Not listed (over the {ir.max_candidates}-entry limit): {not_assessed}"
@@ -1934,7 +2008,51 @@ class _Run:
                 "decide not to edit. Your context is unchanged."
             )
             rec["status"] = "started"
-            if self.irev == "jev":
+            if v3:
+                applicable = bool(payload) and bool(candidates)
+                rec["applicable"] = applicable
+                if not applicable:
+                    rec["not_applicable_reason"] = (
+                        "empty_update" if not payload else "no_candidates"
+                    )
+            if self.irev == "jev" and v3 and not rec["applicable"]:
+                rec["status"] = "not_applicable"
+                lines.append(
+                    "Context review advice: not applicable ("
+                    + (
+                        f"round {self.stage} released no incident-board or change-log lines"
+                        if rec["not_applicable_reason"] == "empty_update"
+                        else "no entries to assess"
+                    )
+                    + ")."
+                )
+            elif self.irev == "jev" and v3:
+                before = dict(self.jev_usage)
+                attempts0 = self.c.jev_attempts
+                batches = _entry_batches(candidates, self.cfg.jev.batch_size, ir.max_batch_chars)
+                answers, models, errors = self._jev_score(payload, batches)
+                advice = _advice_lines(
+                    rev.number,
+                    f"round {self.stage} board and change-log lines",
+                    answers,
+                    models,
+                    errors,
+                )
+                lines += advice
+                answered = sum(1 for v in answers.values() if v is not None)
+                rec.update(
+                    status="advised" if answered else "advice_failed",
+                    batches=[len(b) for b in batches],
+                    answers=answers,
+                    models=sorted(models),
+                    errors=errors,
+                    attempts=self.c.jev_attempts - attempts0,
+                    jev_input_tokens=self.jev_usage["input_tokens"] - before["input_tokens"],
+                    jev_cost_usd=round(self.jev_usage["cost_usd"] - before["cost_usd"], 8),
+                    jev_latency_s=round(self.jev_usage["latency_s"] - before["latency_s"], 4),
+                    advice_chars=len("\n".join(advice)) + 1,
+                )
+            elif self.irev == "jev":
                 if purpose == "compaction":
                     rec["status"] = "not_applicable"
                     lines.append(
@@ -2134,10 +2252,33 @@ class _Run:
                 "authorisations": auths,
                 "authorisation_outcomes": {o: outcomes.count(o) for o in sorted(set(outcomes))},
             }
+            if self.isrc == "latest-round":
+                reasons = [
+                    str(r.get("not_applicable_reason")) for r in started if not r["applicable"]
+                ]
+                v2.update(
+                    update_source="latest-round",
+                    payload_version=PAYLOAD_VERSION,
+                    reviews_applicable=sum(1 for r in started if r["applicable"]),
+                    reviews_not_applicable_by_reason={
+                        x: reasons.count(x) for x in sorted(set(reasons))
+                    },
+                    reviews_repeat_round=sum(1 for r in started if r["round_review_index"] > 0),
+                    reviews_by_label={
+                        str(lab): sum(1 for r in started if r["purpose"] == lab)
+                        for lab in sorted({r["purpose"] for r in started}, key=str)
+                    },
+                )
         return {
             **v2,
             "mode": self.irev,
-            "version": ("initiated-review/2" if self.ireq else "initiated-review/1")
+            "version": (
+                "initiated-review/3"
+                if self.isrc == "latest-round"
+                else "initiated-review/2"
+                if self.ireq
+                else "initiated-review/1"
+            )
             if self.irev != "off"
             else None,
             "question_version": QUESTION_VERSION if self.irev == "jev" else None,

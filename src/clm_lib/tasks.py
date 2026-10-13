@@ -92,12 +92,13 @@ INSTANCES: dict[str, InstanceSpec] = {
         for i in range(1, n + 1)
     },
     # Experiment 007: multi-service incident over 10-12 evidence rounds (rounds.py). rounds-eval-1..4
-    # were 007's evaluation; rounds-eval-5..8 (seeds 7205-7208) are experiment 009's evaluation.
+    # were 007's evaluation; rounds-eval-5..8 (seeds 7205-7208) are experiment 009's evaluation;
+    # rounds-eval-9..12 (seeds 7209-7212) are experiment 010 v3's evaluation.
     **{
         f"rounds-{split}-{i}": InstanceSpec(
             f"rounds-{split}-{i}", seed0 + i, "incident_rounds", f"rounds-{split}"
         )
-        for split, n, seed0 in (("dev", 2, 7100), ("eval", 8, 7200))
+        for split, n, seed0 in (("dev", 2, 7100), ("eval", 12, 7200))
         for i in range(1, n + 1)
     },
     # Experiment 009: separate instances for diagnostic case text and the integration smoke run

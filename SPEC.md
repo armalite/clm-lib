@@ -1,6 +1,6 @@
 # clm-lib: Technical Specification
 
-Version: 2.3 | 13 October 2026
+Version: 2.4 | 13 October 2026
 
 Repository: `clm-lib` | Python package: `clm_lib` | CLI: `clm-lib`
 
@@ -15,7 +15,8 @@ Version history:
 - 2.0: adds an optional, host-mediated context-review action backed by TypeSafe Jev (§19), off by default.
 - 2.1: adds update-triggered context review with optional Jev advice (§20), off by default. Other Jev-assistance strategies on the roadmap (Claude-initiated review, proposed-edit checks) are planned only and are not specified or supported.
 - 2.2: adds Claude-initiated context review with optional Jev advice (§21), off by default.
-- 2.3: adds §21's required pre-edit review variant (`initiated-review/2`), off by default, and an optional artifact group in run selections. Proposed-edit checks, result screening and the changing-requirements workload remain planned only and are not specified or supported.
+- 2.3: adds §21's required pre-edit review variant (`initiated-review/2`), off by default, and an optional artifact group in run selections.
+- 2.4: adds §21's runtime-supplied review update (`initiated-review/3`), off by default. Proposed-edit checks, result screening and the changing-requirements workload remain planned only and are not specified or supported.
 - 1.9: adds a multi-round incident task family, two CLM capability variants (direct editing only; reusable helpers allowed), a separate summary-call allowance, helper-evidence tiers and a three-condition schedule (§18).
 - 1.8: adds a versioned request layout (`blocks/1`), optional provider prompt caching with explicit breakpoints, per-run cache isolation, cache-aware accounting evidence, and a four-condition comparison schedule (§17).
 - 1.7: adds a second coding generator with interacting, partially changing rules, an evaluator with richer categories, exact type checks and stage snapshots (§16), a balanced comparison order, and per-task scorer metadata in comparisons and exports.
@@ -496,3 +497,15 @@ The summary baseline's policy is selected by `[baseline] policy`, and recorded i
     - **Per review:** `authorisation_outcome` and `authorised_edit_step`.
     - **Also:** `edit_log` entries carry `authorised_by_review_step`, and the v2 export columns are `ir_version` through `ir_auth_unused`.
 - **Export groups:** a run in `experiment.json` may carry `"group": "<name>"` (lowercase letters, digits and dashes). It is then exported to `artifacts/runs/<group>/<role>/<run_id>/`, so protocol versions of one experiment never share a folder. Runs without a group are exported as before.
+- **Runtime-supplied review update (`initiated-review/3`, experiment 010 v3):** `[initiated_review] update_source = "latest-round"` (default `stated`), or the conditions `<clm mode>+pre3` and `<clm mode>+pre3-jev`.
+  - **Scope:** it requires the required pre-edit review (as above), on `rounds` tasks only.
+  - **The action:** `begin_review` takes an optional `purpose` and `new_information`, which are recorded only. Only over-long notes and the review limit are rejected.
+  - **The update:** the latest released round's `round-files/1` payload (§20 construction, cut at `V3_PAYLOAD_MAX_CHARS` = 4,000). The review material names it (round, files, line count, SHA-256 prefix) but does not quote it.
+  - **Jev (with `+pre3-jev`):** it is called whenever the payload is non-empty and candidates exist, whatever the label. Otherwise the review records `not_applicable` with `empty_update` or `no_candidates`.
+  - **Repeat reviews:** a repeat review of a round calls Jev again (`round_review_index`).
+  - **Unchanged:** authorisation, the gate, the recovery exemption and the candidate rule.
+  - **Prompt clauses:** `INITIATED_REVIEW_V3_CLAUSE` and `INITIATED_REVIEW_V3_JEV_CLAUSE` (prompt version `2026-10-13.4`).
+  - **Evidence:**
+    - **Per review:** `update_source`, `update_round`, `payload`, `payload_sha256`, `payload_lines`, `payload_truncated`, `applicable` and `not_applicable_reason`.
+    - **Summary:** `reviews_applicable`, `reviews_not_applicable_by_reason`, `reviews_repeat_round` and `reviews_by_label`.
+    - **Export:** the `ir_update_source` columns.

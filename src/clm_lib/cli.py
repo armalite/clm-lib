@@ -411,6 +411,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     upd = None if args.update_review == "config" else args.update_review
     irev = None if args.initiated_review == "config" else args.initiated_review
     required = None if args.review_required == "config" else args.review_required == "on"
+    source = None if args.review_update_source == "config" else args.review_update_source
     runner = _live_runner(cfg, args.max_usd, need_jev=bool(jev) or "jev" in (upd, irev))
     caching = None if args.caching == "config" else args.caching == "on"
     res = runner.run(
@@ -422,6 +423,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         update_review=upd,
         initiated_review=irev,
         review_required=required,
+        review_update_source=source,
     )
     _print_result(res)
     return 0
@@ -500,23 +502,26 @@ CONDITION_MODES = ("summary", "clm", "clm_direct", "clm_helpers", "clm_reuse")
 
 
 # Per-run condition flags after "+": (experiment-008 review action, experiment-009 update
-# review, experiment-010 initiated review, 010 v2 review required before context edits).
-CONDITION_FLAGS: dict[str, tuple[bool, str, str, bool]] = {
-    "": (False, "off", "off", False),
-    "jev": (True, "off", "off", False),
-    "upd": (False, "control", "off", False),
-    "upd-jev": (False, "jev", "off", False),
-    "rev": (False, "off", "control", False),
-    "rev-jev": (False, "off", "jev", False),
-    "pre": (False, "off", "control", True),
-    "pre-jev": (False, "off", "jev", True),
+# review, experiment-010 initiated review, 010 v2 review required before context edits, 010 v3
+# review update source).
+CONDITION_FLAGS: dict[str, tuple[bool, str, str, bool, str]] = {
+    "": (False, "off", "off", False, "stated"),
+    "jev": (True, "off", "off", False, "stated"),
+    "upd": (False, "control", "off", False, "stated"),
+    "upd-jev": (False, "jev", "off", False, "stated"),
+    "rev": (False, "off", "control", False, "stated"),
+    "rev-jev": (False, "off", "jev", False, "stated"),
+    "pre": (False, "off", "control", True, "stated"),
+    "pre-jev": (False, "off", "jev", True, "stated"),
+    "pre3": (False, "off", "control", True, "latest-round"),
+    "pre3-jev": (False, "off", "jev", True, "latest-round"),
 }
 
 
 def conditions_need_jev(text: str | None) -> bool:
     for p in (text or "").split(","):
-        jev, upd, irev, _ = CONDITION_FLAGS.get(
-            p.split(":")[0].partition("+")[2], (False, "off", "off", False)
+        jev, upd, irev, _, _ = CONDITION_FLAGS.get(
+            p.split(":")[0].partition("+")[2], (False, "off", "off", False, "stated")
         )
         if jev or upd == "jev" or irev == "jev":
             return True
@@ -528,7 +533,8 @@ def parse_conditions(text: str) -> list[tuple[str, bool]]:
     ``+jev`` (experiment 008: Jev context review on), e.g. ``clm_helpers+jev:on``, or
     ``+upd`` / ``+upd-jev`` (experiment 009: update-triggered review, without or with Jev), or
     ``+rev`` / ``+rev-jev`` (experiment 010: Claude-initiated review, without or with Jev), or
-    ``+pre`` / ``+pre-jev`` (experiment 010 v2: review required before context edits)."""
+    ``+pre`` / ``+pre-jev`` (experiment 010 v2: review required before context edits), or
+    ``+pre3`` / ``+pre3-jev`` (010 v3: the same with the runtime-supplied latest-round update)."""
     out = []
     for part in text.split(","):
         mode, _, cache = part.strip().partition(":")
@@ -536,7 +542,7 @@ def parse_conditions(text: str) -> list[tuple[str, bool]]:
         if flag not in CONDITION_FLAGS:
             raise ValueError(
                 f"bad condition {part!r}; only '+jev', '+upd', '+upd-jev', '+rev', '+rev-jev', "
-                "'+pre' or '+pre-jev' may follow a mode"
+                "'+pre', '+pre-jev', '+pre3' or '+pre3-jev' may follow a mode"
             )
         if base not in CONDITION_MODES or cache not in ("on", "off"):
             raise ValueError(
@@ -656,9 +662,10 @@ def run_matrix(
             upd = None
             irev = None
             required = None
+            source = None
             if "caching" in cell:  # condition schedules: flags are explicit, otherwise off
                 mode, _, flag = mode.partition("+")
-                jev, upd, irev, required = CONDITION_FLAGS[flag]
+                jev, upd, irev, required, source = CONDITION_FLAGS[flag]
             cell["pair"] = pair
             if not stopped and runner.ledger.remaining_usd < cfg.budget.min_run_reserve_usd:
                 stopped = (
@@ -677,6 +684,7 @@ def run_matrix(
                     update_review=upd,
                     initiated_review=irev,
                     review_required=required,
+                    review_update_source=source,
                 )
                 _print_result(res)
                 m = res.metrics
@@ -849,6 +857,12 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("config", "on", "off"),
         default="config",
         help="experiment 010 v2: context edits need a prior review (default: [initiated_review])",
+    )
+    r.add_argument(
+        "--review-update-source",
+        choices=("config", "stated", "latest-round"),
+        default="config",
+        help="experiment 010 v3: where a required review's update comes from",
     )
     r.set_defaults(func=cmd_run)
 

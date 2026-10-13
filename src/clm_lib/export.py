@@ -341,6 +341,16 @@ def _metrics_row(run_id: str, role: str, src: Path, charged: float) -> dict[str,
                 ir_auth_invalidated=out.get("invalidated", 0),
                 ir_auth_unused=out.get("unused", 0),
             )
+            if ir.get("update_source") == "latest-round":  # 010 v3
+                na = ir["reviews_not_applicable_by_reason"]
+                row.update(
+                    ir_update_source="latest-round",
+                    ir_reviews_applicable=ir["reviews_applicable"],
+                    ir_reviews_na_empty_update=na.get("empty_update", 0),
+                    ir_reviews_na_no_candidates=na.get("no_candidates", 0),
+                    ir_reviews_repeat_round=ir["reviews_repeat_round"],
+                    ir_reviews_by_label=json.dumps(ir["reviews_by_label"]),
+                )
     by_provider = (m.get("cost") or {}).get("by_provider")
     if by_provider:
         row["cost_anthropic_usd"] = by_provider["anthropic"]

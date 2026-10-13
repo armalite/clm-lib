@@ -316,7 +316,13 @@ def build_report(
         ir = m.get("initiated_review") or {}
         irev = ir.get("mode", "off")
         if irev != "off":
-            kind = "required pre-edit review" if ir.get("required") else "initiated review"
+            kind = (
+                "required pre-edit review (runtime update)"
+                if ir.get("update_source") == "latest-round"
+                else "required pre-edit review"
+                if ir.get("required")
+                else "initiated review"
+            )
             mode = f"{mode} + {kind}{' with Jev advice' if irev == 'jev' else ''}"
         if rq.get("layout", "single-user/1") != "single-user/1":
             mode = f"{mode} ({rq['layout']}, caching {rq.get('prompt_caching', 'off')})"
