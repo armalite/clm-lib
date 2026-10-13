@@ -278,6 +278,21 @@ Ground truth exists only in memory until the run ends, then goes to `evaluator/`
 - **Scoring:** `score_edit_check` computes case verdicts, per-question metrics, categories, the ambiguous answers, deterministic references (`check_ref_loss`, `check_new_numbers`) and the predeclared gate.
 - **Separation:** cases and labels live in the results repository; clm-lib holds only the code.
 - **Tests:** `tests/test_jev_edit_check.py`.
+- **v2 (`jev-edit-diag/2` case files):**
+  - **`select_evidence()`** builds the state from the case's runtime-visible inputs (`current` revision, `update`, `exec_output`, released `sources`, `proposed`) by a fixed rule with fixed limits. It returns disclosure notes and a `complete` flag. Its sibling `build_edit_request_v2()` is the only path to the payload.
+  - **`verdict_v2()`** keeps harm and insufficiency separate.
+  - **`score_edit_check_v2()`** reports flagged, uncertain, clear and unanswered per label, the gap cases, the same-evidence references (`check_new_numbers_v2`) and the coverage gate.
+  - **v1 functions and outputs are unchanged.**
+- **Runtime integration (documented, not built):** a deployable checker would get the same inputs inside a run.
+  - **The inputs:**
+    - the current revision from `ContextStore`;
+    - the latest released stage's board and change lines (as `+pre3` already supplies);
+    - the `execution_result` stdout of the step that wrote `context.json`;
+    - the released fixture files under the read-only mount.
+  - **What it needs:** the runtime would have to hold the `context.json` read back after that execution as a *proposal* instead of committing it, call `select_evidence`, and return Jev's scores as advice in the next observation. Claude would then apply, revise or withdraw it.
+  - **No double execution:** the evidence comes from the one execution that wrote the proposal.
+  - **Never supplied by design:** deleted revisions.
+  - **Known limit:** short or ambiguous reference paths, such as a bare `ledger-svc.log:14-31` when several rounds have that file, are reported in `evidence_notes`, not guessed.
 
 ## Design choices
 

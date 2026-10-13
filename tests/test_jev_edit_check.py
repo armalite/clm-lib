@@ -302,3 +302,278 @@ def test_diagnostic_export(tmp_path: Path) -> None:
         tmp_path / "results" / "experiments" / "989-edit" / "artifacts" / "diagnostics" / out.name
     )
     assert (dest / "summary.json").exists() and (dest / "requests" / "c01.json").exists()
+
+
+# ================================================================ v2: evidence-complete checking
+from clm_lib.jev_edit_check import (  # noqa: E402
+    MAX_ENTRY_CHARS,
+    PAYLOAD_FIELDS_V2,
+    QUESTIONS_V2,
+    build_edit_request_v2,
+    check_new_numbers_v2,
+    questions_v2_sha256,
+    select_evidence,
+    verdict_v2,
+)
+
+
+def case2(
+    cid: str, label: str, cur: list[tuple[str, str]], prop: list[str], **extra: Any
+) -> dict[str, Any]:
+    entry = lambda i, rb: {"id": f"e{i}", "role": rb[0], "body": rb[1]}  # noqa: E731
+    return {
+        "id": cid,
+        "split": "frozen",
+        "family": "fam",
+        "provenance": "constructed",
+        "task": "Do the task.",
+        "current": [entry(i, rb) for i, rb in enumerate(cur, 1)],
+        "update": extra.pop("update", ""),
+        "exec_output": extra.pop("exec_output", ""),
+        "sources": extra.pop("sources", {}),
+        "proposed": [{"id": f"n{i}", "role": "note", "body": b} for i, b in enumerate(prop, 1)],
+        "label": label,
+        "category": "cat",
+        "justification": "secret why",
+        **extra,
+    }
+
+
+SRC = {
+    "r1/logs/a.log": "\n".join(
+        f"line {i} ok" if i != 7 else "line 7 ERROR disk full" for i in range(1, 61)
+    ),
+    "r2/logs/a.log": "x\ny",
+}
+
+
+def test_v2_evidence_contract_is_deterministic_and_discloses_gaps() -> None:
+    c = case2(
+        "c01",
+        "acceptable",
+        [
+            ("note", "old note"),
+            ("observation", "step output: disk WARN"),
+            ("receipt", "edit accepted"),
+        ],
+        [
+            "disk full at r1/logs/a.log:7; also r1/logs/a.log:1-30 and r9/x.log:3 and a.log:2 and r1/logs/a.log:99"
+        ],
+        exec_output="",
+        sources=SRC,
+    )
+    state, meta = select_evidence(c)
+    assert tuple(state) == PAYLOAD_FIELDS_V2
+    assert [e["role"] for e in state["current_context"]] == [
+        "note",
+        "observation",
+        "receipt",
+    ]  # whole revision
+    refs = {x["reference"]: x["lines"] for x in state["cited_sources"]}
+    assert refs["r1/logs/a.log:7"] == ["r1/logs/a.log:7: line 7 ERROR disk full"]
+    assert len(refs["r1/logs/a.log:1-30"]) == 20
+    notes = " | ".join(state["evidence_notes"])
+    assert (
+        "spans 30 lines; only the first 20" in notes and "r9/x.log:3 could not be resolved" in notes
+    )
+    assert "a.log:2 could not be resolved (ambiguous short path)" in notes
+    assert "line 99 does not exist" in notes and "printed nothing" in notes
+    assert meta["complete"] is False
+    # References already present in the current context are not re-fetched.
+    c2 = case2(
+        "c02",
+        "acceptable",
+        [("note", "see r1/logs/a.log:7")],
+        ["see r1/logs/a.log:7 (kept)"],
+        exec_output="ok",
+        sources=SRC,
+    )
+    s2, m2 = select_evidence(c2)
+    assert s2["cited_sources"] == [] and m2["complete"] is True and s2["evidence_notes"] == []
+    # Long entries are cut with a marker and a note; nothing is silently incomplete.
+    c3 = case2(
+        "c03", "acceptable", [("observation", "z" * (MAX_ENTRY_CHARS + 50))], ["n"], exec_output="o"
+    )
+    s3, _ = select_evidence(c3)
+    assert s3["current_context"][0]["body"].endswith("[... truncated: 50 characters omitted]")
+    assert any("current_context entry e1 truncated" in n for n in s3["evidence_notes"])
+
+
+def test_v2_payload_leaks_no_labels_or_whole_source_files() -> None:
+    c = case2(
+        "c07",
+        "harmful",
+        [("note", "keep r1/logs/a.log:7")],
+        ["dropped"],
+        sources=SRC,
+        lost_text="keep",
+    )
+    body, _ = build_edit_request_v2(c, "jev-1.13.0")
+    assert (
+        set(body["questions"])
+        == set(QUESTIONS_V2)
+        == {"lost", "changed", "evidence", "insufficient"}
+    )
+    text = json.dumps(body)
+    for field in (*LABEL_FIELDS, "sources", "exec_output"):
+        assert f'"{field}"' not in text
+    for word in (
+        "harmful",
+        "secret why",
+        "c07",
+        "line 33 ok",
+    ):  # no label, id or unrelated source lines
+        assert word not in text
+
+
+def test_v2_verdicts_abstention_and_gate(tmp_path: Path) -> None:
+    assert (
+        verdict_v2({"lost": 0.6, "changed": 0.1, "evidence": 0.1, "insufficient": 0.9}, 0.5)
+        == "flagged"
+    )
+    assert (
+        verdict_v2({"lost": 0.1, "changed": 0.1, "evidence": 0.1, "insufficient": 0.8}, 0.5)
+        == "uncertain"
+    )
+    assert (
+        verdict_v2({"lost": 0.1, "changed": 0.1, "evidence": 0.1, "insufficient": 0.2}, 0.5)
+        == "clear"
+    )
+    assert (
+        verdict_v2({"lost": None, "changed": None, "evidence": None, "insufficient": None}, 0.5)
+        == "unanswered"
+    )
+    assert verdict_v2(None, 0.5) == "unanswered"
+    cases = [case2(f"h{i:02d}", "harmful", [("note", "a")], [f"H{i:02d}x"]) for i in range(16)]
+    cases += [case2(f"a{i:02d}", "acceptable", [("note", "a")], [f"A{i:02d}x"]) for i in range(16)]
+    cases += [case2("g01", "insufficient", [("note", "a")], ["G01x"])]
+    low = {"lost": 0.1, "changed": 0.1, "evidence": 0.1}
+    answers = {
+        f"H{i:02d}x": (
+            {**low, "lost": 0.9, "insufficient": 0.1} if i < 14 else {**low, "insufficient": 0.9}
+        )
+        for i in range(16)
+    }
+    answers |= {
+        f"A{i:02d}x": ({**low, "insufficient": 0.1} if i < 13 else {**low, "insufficient": 0.8})
+        for i in range(16)
+    }
+    answers["G01x"] = {**low, "insufficient": 0.9}
+    p = tmp_path / "cases2.json"
+    p.write_text(
+        json.dumps({"version": "jev-edit-diag/2", "reporting_threshold": 0.5, "cases": cases})
+    )
+    out = run_edit_diagnostic(
+        EditFake(answers),
+        PRICE,
+        Ledger.open(tmp_path / "l.json", 10.0),
+        p,
+        "frozen",
+        tmp_path / "r",
+        "m",
+        sleep=lambda s: None,
+    )
+    assert out.name.endswith("-edit2-frozen")
+    s = json.loads((out / "summary.json").read_text())
+    sc = s["score"]
+    assert (
+        s["question_version"] == "jev-edit-check/2" and s["evidence_version"] == "edit-evidence/1"
+    )
+    assert (
+        sc["summary"]["harmful_flagged"] == "14/16" and sc["summary"]["harmful_uncertain"] == "2/16"
+    )
+    assert (
+        sc["summary"]["acceptable_clear"] == "13/16"
+        and sc["summary"]["acceptable_needing_inspection"] == "3/16"
+    )
+    assert sc["gate"]["passed"] is True and sc["gap_cases"]["g01"]["verdict"] == "uncertain"
+    # Abstaining on acceptable cases cannot pass the coverage requirement.
+    answers |= {f"A{i:02d}x": {**low, "insufficient": 0.8} for i in range(10, 16)}
+    out2 = run_edit_diagnostic(
+        EditFake(answers),
+        PRICE,
+        Ledger.open(tmp_path / "l2.json", 10.0),
+        p,
+        "frozen",
+        tmp_path / "r2",
+        "m",
+        sleep=lambda s: None,
+    )
+    g2 = json.loads((out2 / "summary.json").read_text())["score"]["gate"]
+    assert g2["acceptable_flagged"] == 0 and g2["acceptable_clear"] == 10 and g2["passed"] is False
+    req = json.loads((out / "requests" / "h00.json").read_text())
+    assert "evidence" in req and set(req["answers"]) == set(QUESTIONS_V2)
+    summary = json.loads((out / "summary.json").read_text())
+    assert summary["questions_sha256"] == questions_v2_sha256()
+
+
+def test_v2_harm_questions_accept_support_from_all_supplied_material() -> None:
+    # A completion or change justified by execution output or a cited source is not unsupported.
+    for k in ("lost", "changed", "evidence"):
+        text = json.dumps(QUESTIONS_V2[k])
+        assert "execution output" in text and "cited sources" in text, k
+        assert "the update supports" not in text and "the update does not" not in text, k
+
+
+def test_v2_deterministic_checks_get_the_same_evidence() -> None:
+    c = case2(
+        "c01",
+        "acceptable",
+        [("note", "rate 100")],
+        ["rate 120 per r1/logs/a.log:7"],
+        exec_output="new rate 120",
+        sources=SRC,
+    )
+    assert check_new_numbers_v2(c) == []  # 120 is in the execution output, 7 in the cited reference
+    c2 = case2("c02", "harmful", [("note", "rate 100")], ["rate 150"], exec_output="new rate 120")
+    assert check_new_numbers_v2(c2) == ["150"]
+
+
+def test_v1_files_still_use_v1_and_both_export_separately(tmp_path: Path) -> None:
+    from clm_lib.export import export_experiment
+
+    v1 = write_cases(tmp_path, [case("c01", "harmful", ["a"], ["H1"])])
+    fake = EditFake({"H1": {"lost": 0.9, "changed": 0.1, "evidence": 0.1, "insufficient": 0.1}})
+    ledger_path = tmp_path / "ledger.json"
+    root = tmp_path / "runs" / "jev-diagnostic"
+    o1 = run_edit_diagnostic(
+        fake, PRICE, Ledger.open(ledger_path, 10.0), v1, "frozen", root, "m", sleep=lambda s: None
+    )
+    s1 = json.loads((o1 / "summary.json").read_text())
+    assert o1.name.endswith("-edit-frozen") and s1["question_version"] == "jev-edit-check/1"
+    assert set(fake.calls[0]["questions"]) == {"lost", "changed", "evidence"}
+    p2 = tmp_path / "v2.json"
+    p2.write_text(
+        json.dumps(
+            {
+                "version": "jev-edit-diag/2",
+                "reporting_threshold": 0.5,
+                "cases": [case2("c01", "harmful", [("note", "a")], ["H1"])],
+            }
+        )
+    )
+    o2 = run_edit_diagnostic(
+        fake, PRICE, Ledger.open(ledger_path, 10.0), p2, "frozen", root, "m", sleep=lambda s: None
+    )
+    exp = tmp_path / "exp"
+    exp.mkdir()
+    (exp / "experiment.json").write_text(
+        json.dumps(
+            {
+                "id": "988-edit",
+                "title": "t",
+                "runs": [],
+                "comparisons": [],
+                "diagnostics": [o1.name, o2.name],
+            }
+        )
+    )
+    export_experiment(exp, tmp_path / "runs", ledger_path, tmp_path / "results")
+    d = tmp_path / "results" / "experiments" / "988-edit" / "artifacts" / "diagnostics"
+    assert (
+        (d / o1.name / "summary.json").exists()
+        and (d / o2.name / "summary.json").exists()
+        and o1.name != o2.name
+    )
+    led = json.loads(ledger_path.read_text())
+    assert [e["kind"] for e in led["entries"]] == ["jev-diagnostic"] * 2

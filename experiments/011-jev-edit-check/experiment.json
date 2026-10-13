@@ -10,7 +10,16 @@
   "cases": "experiments/011-jev-edit-check/diagnostic-cases-v1.json in the results repository (jev-edit-diag/1)",
   "jev_price": "USD 0.042 per million input tokens, output free (docs.typesafe.ai/models, retrieved 2026-10-12)",
   "budget": "ledger ceiling set explicitly from USD 93.725281 to USD 85.003257 (settled spend USD 82.003257 + USD 3 TypeSafe-only for this diagnostic); replaces earlier unused allowances",
-  "status": "component diagnostic complete; readiness gate failed; no agent integration"
+  "status": "v1: component diagnostic complete, readiness gate failed. v2 (evidence-complete): component diagnostic complete, readiness gate passed. No agent integration in either.",
+  "v2": {
+   "tree_state": "HEAD 44a5532 plus the uncommitted 011 v2 diagnostic (jev_edit_check.py v2 functions, tests, exp011v2 config)",
+   "question_version": "jev-edit-check/2 (questions_sha256 8ad0d68a86c4a47eb7a3489e210fbdce607c3aa3b61f1aa1e9ee54d1cc67df83; development run 1 used a pre-freeze draft, see protocol)",
+   "evidence_version": "edit-evidence/1",
+   "verdict_version": "edit-verdict/2",
+   "cases": "experiments/011-jev-edit-check/diagnostic-cases-v2.json in the results repository (jev-edit-diag/2, SHA-256 384feb4221d3baeb19d54068c0cbe36238e715e816bd4a00dd5d4eb7bf29597c)",
+   "budget": "ledger ceiling set explicitly from USD 85.003257 to USD 85.005891 (settled spend USD 82.005891 + USD 3 TypeSafe-only for v2); replaces the unused v1 allowance",
+   "config": "configs/exp011v2.toml (identical to exp011.toml except the ceiling)"
+  }
  },
  "settings": {
   "config": "configs/exp011.toml",
@@ -18,12 +27,17 @@
  },
  "phases": {
   "dev": "8 development cases (API shape and wording): runs/jev-diagnostic/20261013T030359-edit-dev",
-  "frozen": "32 labelled + 4 ambiguous frozen cases, run once: runs/jev-diagnostic/20261013T030432-edit-frozen; readiness gate FAILED (16/16 detected, 3/16 acceptable flagged > 2)"
+  "frozen": "32 labelled + 4 ambiguous frozen cases, run once: runs/jev-diagnostic/20261013T030432-edit-frozen; readiness gate FAILED (16/16 detected, 3/16 acceptable flagged > 2)",
+  "v2_dev": "8 development cases: runs/jev-diagnostic/20261013T033931-edit2-dev (draft wording) and 20261013T034105-edit2-dev (corrected wording)",
+  "v2_frozen": "32 labelled + 6 gap frozen cases, run once: runs/jev-diagnostic/20261013T034139-edit2-frozen; readiness gate PASSED (16/16 flagged, 1/16 acceptable flagged, 15/16 acceptable clear)"
  },
  "runs": [],
  "comparisons": [],
  "diagnostics": [
   "20261013T030359-edit-dev",
-  "20261013T030432-edit-frozen"
+  "20261013T030432-edit-frozen",
+  "20261013T033931-edit2-dev",
+  "20261013T034105-edit2-dev",
+  "20261013T034139-edit2-frozen"
  ]
 }

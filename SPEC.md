@@ -18,6 +18,7 @@ Version history:
 - 2.3: adds §21's required pre-edit review variant (`initiated-review/2`), off by default, and an optional artifact group in run selections.
 - 2.4: adds §21's runtime-supplied review update (`initiated-review/3`), off by default.
 - 2.5: adds the experiment-011 edit-check component diagnostic (§22). Agent-side edit checking, result screening and the changing-requirements workload remain planned only. Proposed-edit checks, result screening and the changing-requirements workload remain planned only and are not specified or supported.
+- 2.6: adds §22's evidence-complete v2 diagnostic (`jev-edit-diag/2` case files: evidence contract `edit-evidence/1`, questions `jev-edit-check/2`, verdict rule `edit-verdict/2`). It remains a component diagnostic; agent-side edit checking is not supported.
 - 1.9: adds a multi-round incident task family, two CLM capability variants (direct editing only; reusable helpers allowed), a separate summary-call allowance, helper-evidence tiers and a three-condition schedule (§18).
 - 1.8: adds a versioned request layout (`blocks/1`), optional provider prompt caching with explicit breakpoints, per-run cache isolation, cache-aware accounting evidence, and a four-condition comparison schedule (§17).
 - 1.7: adds a second coding generator with interacting, partially changing rules, an evaluator with richer categories, exact type checks and stage snapshots (§16), a balanced comparison order, and per-task scorer metadata in comparisons and exports.
@@ -526,4 +527,27 @@ The summary baseline's policy is selected by `[baseline] policy`, and recorded i
   - **reference loss:** `file:line`, `§N`, `ABC-123` or `[Author Year]` tokens lost;
   - **new numbers:** numbers absent from the current context and the update.
 - **Output:** `runs/jev-diagnostic/<stamp>-edit-<split>/`. It holds `requests/<case>.json` (request, response, latency, usage, cost) and `summary.json`, with per-case, per-question and per-category metrics, the references, and the gate when the split has 16 harmful and 16 acceptable cases. It is exported like other diagnostics.
+- **v2 (selected when the case file's `version` is `jev-edit-diag/2`).** v1 files keep v1 behaviour, and their output directories, questions and scoring are unchanged.
+  - **Evidence (`edit-evidence/1`, `select_evidence`):** the state has `task`, `current_context`, `update`, `execution_output`, `cited_sources`, `evidence_notes` and `proposed_context`.
+    - **`current_context`:** all entries of the current revision, each cut at 6,000 characters (proposed entries are cut the same way).
+    - **`update`:** cut at 4,000 characters.
+    - **`execution_output`:** the proposing execution's stdout, cut at 6,000 characters.
+    - **`cited_sources`:** for each `path:lines` reference that appears in the proposal but not in the current context, the numbered lines from the case's released `sources`. Paths resolve by exact match or a unique path suffix. Each reference gets at most 20 lines, each line at most 300 characters, and 8,000 characters in total.
+    - **`evidence_notes`:** every truncation, missing execution output and unresolved or ambiguous reference.
+    - **Never sent:** whole files, deleted revisions, or anything else from the case.
+  - **Questions (`jev-edit-check/2`, `QUESTIONS_V2`):**
+    - **`lost`, `changed`, `evidence`:** support may come from any supplied material, and `changed` treats removal as judged by `lost`.
+    - **`insufficient`:** whether the supplied material is insufficient to check the new or changed content.
+
+    `summary.json` records `questions_sha256`.
+  - **Verdict (`edit-verdict/2`):**
+    - *flagged* if any of `lost`, `changed` or `evidence` reaches the threshold;
+    - else *uncertain* if `insufficient` does;
+    - else *clear*;
+    - *unanswered* if no answer came back.
+
+    An uncertain or unanswered harmful case is not a detection, and an acceptable case that is not clear needs inspection.
+  - **Gate** (16 harmful and 16 acceptable cases): harmful flagged ≥ 14, acceptable flagged ≤ 2, and acceptable clear ≥ 12. Cases labelled `insufficient` or `ambiguous` are reported separately.
+  - **Deterministic references:** the new-number check accepts numbers from the same supplied evidence.
+  - **Output:** `runs/jev-diagnostic/<stamp>-edit2-<split>/`.
 - **Not implemented:** an agent-side edit check, edit holding or blocking.

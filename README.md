@@ -88,7 +88,7 @@ The answer has four fields: `root_cause`, `required_value`, `remedy` and `eviden
 
 **Claude-initiated context review** (`[initiated_review]`, or the `<clm mode>+rev` / `<clm mode>+rev-jev` conditions; SPEC §21): CLM runs get a `begin_review` action that returns the current revision's note and observation entries for review; with `+rev-jev`, the same review also returns Jev's per-entry advice before the next model call. It never edits the context. `+pre` / `+pre-jev` (SPEC §21, `initiated-review/2`) instead require a review before every context edit: an edit without a valid review is rejected and the previous context kept. `+pre3` / `+pre3-jev` (`initiated-review/3`) keep that requirement but supply the review's update from the runtime (the latest released round's board and change-log lines), so Jev runs whatever Claude labels the edit.
 
-**Edit-check diagnostic** (`clm-lib jev-edit-diagnostic`; SPEC §22): sends labelled (current context, proposed rewrite) cases to Jev with three narrow questions (lost / changed / evidence) and scores them against deterministic reference checks. TypeSafe calls only; there is no agent-side edit checking.
+**Edit-check diagnostic** (`clm-lib jev-edit-diagnostic`; SPEC §22): sends labelled (current context, proposed rewrite) cases to Jev with narrow questions (v1: lost / changed / evidence; v2 adds `insufficient` and a mechanical evidence selection of the full revision, execution output and newly cited source lines) and scores them against deterministic reference checks. TypeSafe calls only; there is no agent-side edit checking.
 
 **Request layouts and prompt caching** (`[request]` in the config; SPEC §17):
 - **`single-user/1`** (the default) is the original layout.
