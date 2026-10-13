@@ -101,6 +101,12 @@ INSTANCES: dict[str, InstanceSpec] = {
         for split, n, seed0 in (("dev", 2, 7100), ("eval", 12, 7200))
         for i in range(1, n + 1)
     },
+    # Experiment 011 agent pilot: the W2 changing-requirements workload (w2.py, export-gen/1).
+    # Two development instances for the pilot and one integration-smoke instance (never part of
+    # an outcome comparison). No held-out evaluation instances are defined yet.
+    "w2-dev-1": InstanceSpec("w2-dev-1", 8101, "export_w2", "w2-dev"),
+    "w2-dev-2": InstanceSpec("w2-dev-2", 8102, "export_w2", "w2-dev"),
+    "w2-smoke-1": InstanceSpec("w2-smoke-1", 8301, "export_w2", "w2-smoke"),
     # Experiment 009: separate instances for diagnostic case text and the integration smoke run
     # (never used for pilot or evaluation comparisons).
     **{
@@ -906,6 +912,10 @@ def generate(name: str) -> TaskInstance:
         from .coding2 import generate_coding2
 
         return generate_coding2(spec)
+    if spec.scenario == "export_w2":
+        from .w2 import generate_w2
+
+        return generate_w2(spec)
     files, truth = _GENERATORS[spec.scenario](spec)
     return TaskInstance(spec=spec, prompt=task_prompt(files), files=files, truth=truth)
 

@@ -19,6 +19,7 @@ Version history:
 - 2.4: adds §21's runtime-supplied review update (`initiated-review/3`), off by default.
 - 2.5: adds the experiment-011 edit-check component diagnostic (§22). Agent-side edit checking, result screening and the changing-requirements workload remain planned only. Proposed-edit checks, result screening and the changing-requirements workload remain planned only and are not specified or supported.
 - 2.6: adds §22's evidence-complete v2 diagnostic (`jev-edit-diag/2` case files: evidence contract `edit-evidence/1`, questions `jev-edit-check/2`, verdict rule `edit-verdict/2`). It remains a component diagnostic; agent-side edit checking is not supported.
+- 2.7: adds the W2 changing-requirements workload (`export-gen/1`, scorer `export-checks/1`) and opt-in proposed-edit checking for CLM runs (`edit-check-pilot/1`, §23), off by default; the §22 diagnostics are unchanged.
 - 1.9: adds a multi-round incident task family, two CLM capability variants (direct editing only; reusable helpers allowed), a separate summary-call allowance, helper-evidence tiers and a three-condition schedule (§18).
 - 1.8: adds a versioned request layout (`blocks/1`), optional provider prompt caching with explicit breakpoints, per-run cache isolation, cache-aware accounting evidence, and a four-condition comparison schedule (§17).
 - 1.7: adds a second coding generator with interacting, partially changing rules, an evaluator with richer categories, exact type checks and stage snapshots (§16), a balanced comparison order, and per-task scorer metadata in comparisons and exports.
@@ -550,4 +551,62 @@ The summary baseline's policy is selected by `[baseline] policy`, and recorded i
   - **Gate** (16 harmful and 16 acceptable cases): harmful flagged ≥ 14, acceptable flagged ≤ 2, and acceptable clear ≥ 12. Cases labelled `insufficient` or `ambiguous` are reported separately.
   - **Deterministic references:** the new-number check accepts numbers from the same supplied evidence.
   - **Output:** `runs/jev-diagnostic/<stamp>-edit2-<split>/`.
-- **Not implemented:** an agent-side edit check, edit holding or blocking.
+- **Not implemented in §22:** an agent-side edit check, edit holding or blocking (see §23 for the agent pilot's opt-in proposals).
+
+## 23. W2 workload and proposed-edit checking (experiment 011 agent pilot)
+
+### 23.1 W2 changing-requirements workload (`export-gen/1`, `w2.py`)
+
+- **Task:** implement `exporter.export_records(records, user, params) -> str` in a seeded package skeleton. Requirements arrive in 5 staged `advance` releases (`w2-dev-1`, `w2-dev-2`; `w2-smoke-1` has 2 stages and an explicit smoke note, and is for integration smoke only).
+- **Rules:**
+  - `FORMAT` (CSV, then JSON in stage 3; which records are exported is unchanged);
+  - `PERM` (viewer raises `PermissionError`, admin sees all, others see their projects);
+  - `STATUS` (active only unless `include_archived`);
+  - `CONF` (confidential records never exported, except for an admin with `purpose == "audit"`);
+  - `SINCE` (date filter);
+  - `OBLIG` (stated in stage 2: if the format leaves CSV, include `exported_by`);
+  - `LIMIT` (stage 5: `max_records` and `truncated`).
+
+  One instance changes `PERM` in part in stage 4 (members also get the records they own) and the other `STATUS` (`include_archived` honoured only for admins). A CHANGED rule names the part it replaces.
+- **Visible material:** immutable, rereadable `stage-N/REQUIREMENTS.md` (each stage's text is also the release observation), and `current-tests/test_stage.py`, replaced at each release. The visible tests cover only the latest stage's new or changed rules, and the task prompt says so.
+- **Evaluator (`export-checks/1`):**
+  - **Generation:** host-side reference checks on inputs different from the visible tests, using only disclosed options. The checks stay in host memory until scoring and are scored in a fresh sandbox.
+  - **Categories:** `retained`, `exception`, `replaced` (with stale-version detection, including raw CSV text), `kept_part`, `deferred`, `final_stage` and `interaction`.
+  - **JSON checks** compare the parsed values of named top-level keys.
+  - **Snapshots** score the workspace at each release, and regressions need an earlier passing snapshot, as in §16.
+  - **Validation:** offline, against an independent correct solution and deliberately faulty ones (tests only).
+
+### 23.2 Proposed-edit checking (`edit-check-pilot/1`)
+
+- **Opt-in:** `[edit_check] enabled` / `advice` (default false), the per-run `edit_check` (`off`, `control` or `jev`), the conditions `<clm mode>+chk` and `<clm mode>+chk-jev`, or `run --edit-check`.
+  - **Scope:** CLM modes only, exclusive with §19–§21.
+  - **Unchanged when off:** every earlier configuration, prompt text, action schema and the direct-edit path.
+- **Proposals (`control` and `jev`):**
+  - `ContextStore.read_back(hold=True)` validates the workspace `context.json` exactly as before. A valid, content-changing candidate is returned as `proposed` and is **not committed**.
+  - The runtime records proposal `P<n>` (base revision and hash, candidate hash, removed, added and rewritten ids, counts), saves `context/proposal-P<n>.json`, and appends the step's action, observation and a receipt describing it.
+  - It mirrors the live context to `context.json` and the candidate to the informational `proposed_context.json`. Acceptance uses the host-held candidate, and the file is excluded from submissions and snapshots.
+  - Model code runs once.
+- **Decisions:** `{"action": "confirm_edit", "proposal": "P<n>", "decision": "accept" | "withdraw"}`.
+  - **Accept** (`ContextStore.accept_proposal`): commits the candidate followed by every entry appended since the base revision (ids renamed on collision). It is refused if the live context differs from the base in any other way (stale) or if the merged result fails validation.
+  - **Withdraw:** discards the proposal. The observation says other file changes remain.
+  - **A wrong or absent id** changes nothing (`confirm_invalid`).
+- **Superseding:** a new content-changing write supersedes a pending proposal (`revised`), and is revalidated and, with `jev`, rechecked.
+- **Never applied by:** unrelated executions, unchanged writes, `final` (`unresolved_at_final`) or the run's end (`unresolved_at_end`). A stage release discards the pending proposal (`expired_at_stage_release`) and says so.
+- **Recovery exception:** while an OVER LIMIT recovery request is active, a write is applied directly (`recovery_exempt_applied`; a pending proposal becomes `superseded_by_recovery_edit`), and its receipt says so. In that state the OVER LIMIT status line also names a still-acceptable pending proposal and the body characters it would leave.
+- **Status line:** `context proposal: P<n> pending (...)` or `none pending`.
+- **Prompt clauses:** `EDIT_CHECK_CLAUSE` (both) and `EDIT_CHECK_JEV_CLAUSE` (`jev`), prompt version `2026-10-13.5`.
+- **Jev check (`jev`):** `jev-edit-check/2` via `build_edit_request_v2` on `edit-evidence/1`, unchanged. The case is built from runtime inputs only:
+  - `task` (the task prompt);
+  - `current` (the live revision at the proposal);
+  - `update` (the current stage's release text);
+  - `exec_output` (the proposing execution's stdout);
+  - `sources` (released fixture files up to the current stage);
+  - `proposed` (the candidate).
+  - **Calls:** one call per proposal, with the `[jev]` retries; every attempt is in the ledger.
+  - **Verdict** at `[edit_check] threshold` (0.5): `flagged` (any harm answer ≥ threshold), `incomplete` (a missing answer), `uncertain` (`insufficient` ≥ threshold), `clear`, or `error`.
+  - **Beyond `max_checks`** (30): `not_checked`.
+  - **Presentation:** the receipt adds the four probabilities, the result and the evidence notes, with fixed caveats. Errors and the limit are explicitly "not a clear result". **Nothing is rejected automatically.**
+- **Evidence:**
+  - **`summary.json → edit_check`:** mode, versions, threshold, proposals by status, recovery-exempt edits, confirm actions and invalid ones, checks, verdicts, reactions by verdict, flagged or uncertain proposals that were accepted, requirement reads and test runs (all conditions), and the proposal and confirm logs.
+  - **Files and events:** `edit_check/P<n>.json` (the exact request and answers), `context_proposal`, `edit_check` and `confirm_edit` events, and `ec_*` export columns.
+

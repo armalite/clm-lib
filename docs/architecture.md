@@ -294,6 +294,31 @@ Ground truth exists only in memory until the run ends, then goes to `evaluator/`
   - **Never supplied by design:** deleted revisions.
   - **Known limit:** short or ambiguous reference paths, such as a bare `ledger-svc.log:14-31` when several rounds have that file, are reported in `evidence_notes`, not guessed.
 
+## W2 workload and proposed-edit checking (experiment 011 agent pilot)
+
+- **W2 (`w2.py`, `export-gen/1` / `export-checks/1`):**
+  - **Structure:** it mirrors `coding2`, with schedules of `(module, version)` per stage, a host-side reference (`ref_export`, with named faults for offline validation only), check generation by purpose (`meaningful`, `changed`, `kept`, `exception`, `interaction`), snapshot checks, and a sandbox `EVAL_RUNNER`.
+  - **JSON checks** compare named top-level keys only (`keys_for(category)`), so one missing key fails only its own category.
+  - **Evaluation:** `_Run.evaluate_coding` dispatches on the generator version.
+- **Proposals (`runner.py`, `edit_check` off/control/jev):**
+  - **Holding:** `execute_step` reads back with `hold=True` (except under an active recovery request). `_propose` records the proposal and, for `jev`, calls `_check_proposal`, which builds the `edit-evidence/1` case from runtime state (the live revision, `stage_updates`, the execution's stdout, `files_upto(stage)`) and goes through `_jev_attempts`, so retries and ledger settlement are those of 008–010.
+  - **Decisions:** `confirm_step` handles accept and withdraw. `ContextStore.accept_proposal` is the only commit path for proposals: the candidate plus entries appended since the base, with a prefix check for staleness and full revalidation.
+  - **Ending a proposal:** `_end_proposal` closes it on revision, withdrawal, stage release, `final`, run end or a recovery edit.
+  - **The proposal file:** `_mirror_proposal` keeps `proposed_context.json` in step after every step. It is informational, and acceptance never reads it.
+- **Invariants and their tests** (`tests/test_edit_check_pilot.py`):
+  - A is unchanged;
+  - proposals are held;
+  - accept keeps appends;
+  - revision and wrong ids;
+  - stale refusal;
+  - withdraw keeps other files;
+  - `final` and stage release never apply;
+  - Jev evidence matches the real inputs (Docker);
+  - tampering with the proposal file has no effect (Docker);
+  - errors, partial answers and the check limit are never clear;
+  - the recovery exception.
+- **Deliberately not built:** a transaction framework, file rollback, automatic rejection, or any change to the §22 component.
+
 ## Design choices
 
 - **JSON-lines transcript with escaping** instead of nonce delimiters: it's simple and can't be forged.

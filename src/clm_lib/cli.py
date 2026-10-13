@@ -389,8 +389,14 @@ def _jev_advisor(cfg: Config) -> tuple[Any, Any]:
 def _live_runner(cfg: Config, max_usd: float | None, need_jev: bool = False) -> Runner:
     ledger = _ledger(cfg, max_usd)
     prov, price, ex = _live_preflight(cfg, ledger)
-    ur, ir = cfg.update_review, cfg.initiated_review
-    wanted = need_jev or cfg.jev.enabled or (ur.enabled and ur.advice) or (ir.enabled and ir.advice)
+    ur, ir, ec = cfg.update_review, cfg.initiated_review, cfg.edit_check
+    wanted = (
+        need_jev
+        or cfg.jev.enabled
+        or (ur.enabled and ur.advice)
+        or (ir.enabled and ir.advice)
+        or (ec.enabled and ec.advice)
+    )
     jev, jev_price = _jev_advisor(cfg) if wanted else (None, None)
     return Runner(
         cfg,
@@ -412,7 +418,8 @@ def cmd_run(args: argparse.Namespace) -> int:
     irev = None if args.initiated_review == "config" else args.initiated_review
     required = None if args.review_required == "config" else args.review_required == "on"
     source = None if args.review_update_source == "config" else args.review_update_source
-    runner = _live_runner(cfg, args.max_usd, need_jev=bool(jev) or "jev" in (upd, irev))
+    echk = None if args.edit_check == "config" else args.edit_check
+    runner = _live_runner(cfg, args.max_usd, need_jev=bool(jev) or "jev" in (upd, irev, echk))
     caching = None if args.caching == "config" else args.caching == "on"
     res = runner.run(
         generate(args.task),
@@ -424,6 +431,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         initiated_review=irev,
         review_required=required,
         review_update_source=source,
+        edit_check=echk,
     )
     _print_result(res)
     return 0
@@ -503,27 +511,29 @@ CONDITION_MODES = ("summary", "clm", "clm_direct", "clm_helpers", "clm_reuse")
 
 # Per-run condition flags after "+": (experiment-008 review action, experiment-009 update
 # review, experiment-010 initiated review, 010 v2 review required before context edits, 010 v3
-# review update source).
-CONDITION_FLAGS: dict[str, tuple[bool, str, str, bool, str]] = {
-    "": (False, "off", "off", False, "stated"),
-    "jev": (True, "off", "off", False, "stated"),
-    "upd": (False, "control", "off", False, "stated"),
-    "upd-jev": (False, "jev", "off", False, "stated"),
-    "rev": (False, "off", "control", False, "stated"),
-    "rev-jev": (False, "off", "jev", False, "stated"),
-    "pre": (False, "off", "control", True, "stated"),
-    "pre-jev": (False, "off", "jev", True, "stated"),
-    "pre3": (False, "off", "control", True, "latest-round"),
-    "pre3-jev": (False, "off", "jev", True, "latest-round"),
+# review update source, experiment-011 pilot proposed-edit checking).
+CONDITION_FLAGS: dict[str, tuple[bool, str, str, bool, str, str]] = {
+    "": (False, "off", "off", False, "stated", "off"),
+    "jev": (True, "off", "off", False, "stated", "off"),
+    "upd": (False, "control", "off", False, "stated", "off"),
+    "upd-jev": (False, "jev", "off", False, "stated", "off"),
+    "rev": (False, "off", "control", False, "stated", "off"),
+    "rev-jev": (False, "off", "jev", False, "stated", "off"),
+    "pre": (False, "off", "control", True, "stated", "off"),
+    "pre-jev": (False, "off", "jev", True, "stated", "off"),
+    "pre3": (False, "off", "control", True, "latest-round", "off"),
+    "pre3-jev": (False, "off", "jev", True, "latest-round", "off"),
+    "chk": (False, "off", "off", False, "stated", "control"),
+    "chk-jev": (False, "off", "off", False, "stated", "jev"),
 }
 
 
 def conditions_need_jev(text: str | None) -> bool:
     for p in (text or "").split(","):
-        jev, upd, irev, _, _ = CONDITION_FLAGS.get(
-            p.split(":")[0].partition("+")[2], (False, "off", "off", False, "stated")
+        jev, upd, irev, _, _, echk = CONDITION_FLAGS.get(
+            p.split(":")[0].partition("+")[2], CONDITION_FLAGS[""]
         )
-        if jev or upd == "jev" or irev == "jev":
+        if jev or "jev" in (upd, irev, echk):
             return True
     return False
 
@@ -534,7 +544,8 @@ def parse_conditions(text: str) -> list[tuple[str, bool]]:
     ``+upd`` / ``+upd-jev`` (experiment 009: update-triggered review, without or with Jev), or
     ``+rev`` / ``+rev-jev`` (experiment 010: Claude-initiated review, without or with Jev), or
     ``+pre`` / ``+pre-jev`` (experiment 010 v2: review required before context edits), or
-    ``+pre3`` / ``+pre3-jev`` (010 v3: the same with the runtime-supplied latest-round update)."""
+    ``+pre3`` / ``+pre3-jev`` (010 v3: the same with the runtime-supplied latest-round update),
+    or ``+chk`` / ``+chk-jev`` (011 pilot: proposed-edit checking, without or with Jev)."""
     out = []
     for part in text.split(","):
         mode, _, cache = part.strip().partition(":")
@@ -542,7 +553,7 @@ def parse_conditions(text: str) -> list[tuple[str, bool]]:
         if flag not in CONDITION_FLAGS:
             raise ValueError(
                 f"bad condition {part!r}; only '+jev', '+upd', '+upd-jev', '+rev', '+rev-jev', "
-                "'+pre', '+pre-jev', '+pre3' or '+pre3-jev' may follow a mode"
+                "'+pre', '+pre-jev', '+pre3', '+pre3-jev', '+chk' or '+chk-jev' may follow a mode"
             )
         if base not in CONDITION_MODES or cache not in ("on", "off"):
             raise ValueError(
@@ -663,9 +674,10 @@ def run_matrix(
             irev = None
             required = None
             source = None
+            echk = None
             if "caching" in cell:  # condition schedules: flags are explicit, otherwise off
                 mode, _, flag = mode.partition("+")
-                jev, upd, irev, required, source = CONDITION_FLAGS[flag]
+                jev, upd, irev, required, source, echk = CONDITION_FLAGS[flag]
             cell["pair"] = pair
             if not stopped and runner.ledger.remaining_usd < cfg.budget.min_run_reserve_usd:
                 stopped = (
@@ -685,6 +697,7 @@ def run_matrix(
                     initiated_review=irev,
                     review_required=required,
                     review_update_source=source,
+                    edit_check=echk,
                 )
                 _print_result(res)
                 m = res.metrics
@@ -885,6 +898,12 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("config", "stated", "latest-round"),
         default="config",
         help="experiment 010 v3: where a required review's update comes from",
+    )
+    r.add_argument(
+        "--edit-check",
+        choices=("config", "off", "control", "jev"),
+        default="config",
+        help="experiment 011 pilot: proposed-edit checking for this run (default: [edit_check])",
     )
     r.set_defaults(func=cmd_run)
 

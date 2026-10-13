@@ -38,12 +38,25 @@ from .context import (
     ContextStore,
     EditOutcome,
     Entry,
+    Revision,
+    content_hash,
+    serialize,
     total_chars,
     unified_diff,
 )
 from .executor import DockerExecutor, ExecResult, Executor, ExecutorUnavailable
 from .jev import QUESTION_VERSION, JevError, ReviewItem, build_request
+from .jev_edit_check import (
+    EVIDENCE_VERSION,
+    HARM_KEYS,
+    QUESTION_VERSION_V2,
+    QUESTIONS_V2,
+    build_edit_request_v2,
+    questions_v2_sha256,
+)
 from .prompts import (
+    EDIT_CHECK_CLAUSE,
+    EDIT_CHECK_JEV_CLAUSE,
     INITIATED_REVIEW_CLAUSE,
     INITIATED_REVIEW_JEV_CLAUSE,
     INITIATED_REVIEW_V2_CLAUSE,
@@ -187,6 +200,15 @@ def with_begin_review_action(schema: dict[str, Any], v2: bool = False) -> dict[s
     return {**schema, "properties": props}
 
 
+def with_confirm_edit_action(schema: dict[str, Any]) -> dict[str, Any]:
+    """Experiment 011 pilot: the action schema plus confirm_edit (both checking conditions)."""
+    props = dict(schema["properties"])
+    props["action"] = {**props["action"], "enum": [*props["action"]["enum"], "confirm_edit"]}
+    props["proposal"] = {"type": "string"}
+    props["decision"] = {"type": "string", "enum": ["accept", "withdraw"]}
+    return {**schema, "properties": props}
+
+
 def parse_action(
     text: str,
     max_code_chars: int,
@@ -196,6 +218,7 @@ def parse_action(
     allow_begin_review: bool = False,
     begin_review_v2: bool = False,
     begin_review_v3: bool = False,
+    allow_confirm: bool = False,
 ) -> tuple[dict[str, Any] | None, str]:
     """Return (action, error). Only a whole-response JSON object is accepted."""
     raw = text.strip()
@@ -210,6 +233,12 @@ def parse_action(
         return None, "response JSON must be an object"
     kind = obj.get("action")
     if kind == "advance" and allow_advance:
+        return obj, ""
+    if kind == "confirm_edit" and allow_confirm:
+        if not isinstance(obj.get("proposal"), str) or not obj["proposal"].strip():
+            return None, "confirm_edit needs a string 'proposal' (for example 'P1')"
+        if obj.get("decision") not in ("accept", "withdraw"):
+            return None, "confirm_edit 'decision' must be 'accept' or 'withdraw'"
         return obj, ""
     if kind == "begin_review" and allow_begin_review and begin_review_v3:
         if obj.get("purpose") not in (None, "update", "compaction"):
@@ -320,6 +349,7 @@ class Runner:
         initiated_review: str | None = None,
         review_required: bool | None = None,
         review_update_source: str | None = None,
+        edit_check: str | None = None,
     ) -> RunResult:
         """``caching`` overrides ``request.prompt_caching`` for this run (four-condition runs);
         ``jev`` overrides ``jev.enabled`` (experiment 008; CLM modes only). ``update_review``
@@ -377,6 +407,17 @@ class Runner:
             raise ValueError(
                 "the latest-round update source needs a required review on rounds tasks"
             )
+        ec = self.cfg.edit_check
+        echk = edit_check or (("jev" if ec.advice else "control") if ec.enabled else "off")
+        if echk not in ("off", "control", "jev"):
+            raise ValueError(f"edit_check must be off, control or jev, not {echk!r}")
+        if echk != "off":
+            if mode not in CLM_MODES:
+                raise ValueError("proposed-edit checking is available to CLM modes only")
+            if jev_on or upd != "off" or irev != "off":
+                raise ValueError("proposed-edit checking is exclusive with the review features")
+            if echk == "jev" and self.jev is None:
+                raise ValueError("edit-check advice requested but no Jev advisor is configured")
         irev_tags = (
             {"off": "", "control": "-pre3", "jev": "-pre3jev"}
             if source == "latest-round"
@@ -387,15 +428,25 @@ class Runner:
         tag = (
             "-jev"
             if jev_on
-            else {"off": "", "control": "-upd", "jev": "-updjev"}[upd] + irev_tags[irev]
+            else {"off": "", "control": "-upd", "jev": "-updjev"}[upd]
+            + irev_tags[irev]
+            + {"off": "", "control": "-chk", "jev": "-chkjev"}[echk]
         )
         run_id = f"{stamp}-{mode}{cond}{tag}-{task.spec.name}-{secrets.token_hex(2)}"
         return _Run(
-            self, task, mode, run_id, label, on, jev_on, upd, irev, required, source
+            self, task, mode, run_id, label, on, jev_on, upd, irev, required, source, echk
         ).execute()
 
 
 REVIEW_REQUIRED = "context edits in this run require a review first"
+# Experiment 011 pilot: the pending proposal's full file (informational; the host holds it).
+PROPOSAL_FILENAME = "proposed_context.json"
+EC_LABELS = {
+    "lost": "lost obligation or exception",
+    "changed": "unsupported change",
+    "evidence": "lost or reassigned evidence",
+    "insufficient": "insufficient evidence to check",
+}
 V3_PAYLOAD_MAX_CHARS = 4000  # 010 v3: the round-files/1 length limit, as in experiment 009
 
 
@@ -452,8 +503,16 @@ class _Run:
         initiated_review: str = "off",
         review_required: bool = False,
         review_update_source: str = "stated",
+        edit_check: str = "off",
     ) -> None:
         self.r = runner
+        # Experiment 011 pilot: "off" (A), "control" (B: proposals) or "jev" (C: proposals + Jev).
+        self.echk = edit_check
+        self.proposal: dict[str, Any] | None = None  # the pending proposal, if any
+        self.proposals: list[dict[str, Any]] = []
+        self.confirms: list[dict[str, Any]] = []
+        self.ec_checks = 0
+        self.code_reads: list[dict[str, Any]] = []
         self.jev_on = jev_on
         self.upd = update_review  # experiment 009: "off", "control" or "jev"
         self.updates: list[dict[str, Any]] = []
@@ -545,6 +604,10 @@ class _Run:
             self.system += INITIATED_REVIEW_CLAUSE
             if self.irev == "jev":
                 self.system += INITIATED_REVIEW_JEV_CLAUSE
+        if self.echk != "off":
+            self.system += EDIT_CHECK_CLAUSE
+            if self.echk == "jev":
+                self.system += EDIT_CHECK_JEV_CLAUSE
         # Request layout, caching and run isolation (SPEC section 17).
         rq = self.cfg.request
         self.layout = rq.layout
@@ -603,6 +666,14 @@ class _Run:
                 else "context edit authorisation: none (start begin_review before editing "
                 "context.json)"
             )
+        if self.echk != "off":
+            p = self.proposal
+            lines.append(
+                f"context proposal: {p['id']} pending (from step {p['step']}; confirm_edit "
+                "accept or withdraw, or write context.json again)"
+                if p
+                else "context proposal: none pending"
+            )
         if pressure and self.clm:
             lines.append(
                 "PRESSURE: the request is above the pressure threshold. Manage your "
@@ -612,6 +683,7 @@ class _Run:
             lines.append(
                 "OVER LIMIT: this request uses the recovery reserve. Your next step must "
                 "shrink context.json below the hard limit, or the run ends."
+                + self._recovery_alternative()
             )
         return "\n".join(lines)
 
@@ -1285,13 +1357,26 @@ class _Run:
             runtime_trace=res.runtime_trace,
         )
         candidates = self._track_files(before, after, code)
+        self._note_reads(code)
         receipt: str | None = None
         outcome: EditOutcome | None = None
         if self.clm:
+            # 011 pilot (B/C): hold a valid change as a proposal, except when the runtime
+            # demands a shrinking edit in this very step (OVER LIMIT recovery).
+            hold = self.echk != "off" and not self.recovery_active
             outcome = self.store.read_back(
-                self.ws, mirrored, self.step, self._authorise_edit if self.ireq else None
+                self.ws,
+                mirrored,
+                self.step,
+                self._authorise_edit if self.ireq else None,
+                hold=hold,
             )
-            receipt = self._record_edit(outcome)
+            if outcome.status == "proposed":
+                receipt = self._propose(outcome, res)
+            else:
+                receipt = self._record_edit(outcome)
+                if self.echk != "off" and outcome.status == "accepted":
+                    receipt = (receipt or "") + self._recovery_applied()
             if self.ireq:
                 self._settle_edit_auth(outcome)
         py_files = {p for p in (*before, *after) if p.endswith(".py")}
@@ -1308,6 +1393,7 @@ class _Run:
         self._save_revision()
         if self.clm:
             self.store.mirror(self.ws)
+            self._mirror_proposal()
 
     def _record_edit(self, out: EditOutcome) -> str | None:
         if out.attempted:
@@ -1404,6 +1490,8 @@ class _Run:
             schema = with_review_action(schema)
         if self.irev != "off":
             schema = with_begin_review_action(schema, v2=self.ireq)
+        if self.echk != "off":
+            schema = with_confirm_edit_action(schema)
         while True:
             self.step += 1
             user, est, pressure, recovery = self.prepare_request()
@@ -1434,6 +1522,7 @@ class _Run:
                 self.irev != "off",
                 self.ireq,
                 self.isrc == "latest-round",
+                self.echk != "off",
             )
             if action is None:
                 self.trace.event(
@@ -1455,6 +1544,7 @@ class _Run:
                     self.irev != "off",
                     self.ireq,
                     self.isrc == "latest-round",
+                    self.echk != "off",
                 )
                 if action is None:
                     self.trace.event("invalid_action", step=self.step, error=err, after_repair=True)
@@ -1469,10 +1559,14 @@ class _Run:
             if action["action"] == "review_context":
                 self.review_step(action)
                 continue
+            if action["action"] == "confirm_edit":
+                self.confirm_step(action)
+                continue
             if action["action"] == "final":
                 if staged and self.stage < self.task.n_stages:
                     self.premature_final_step(action)
                     continue
+                self._end_proposal("unresolved_at_final")
                 self.answer = action["answer"]
                 self.trace.event("final_answer", step=self.step, answer=self.answer)
                 return "completed", "final answer"
@@ -1492,6 +1586,7 @@ class _Run:
             self.stage += 1
             if self.ireq and self.edit_auth:
                 self._end_edit_auth("expired")  # a review covers the evidence available then
+            expired = self._end_proposal("expired_at_stage_release")
             self.task.write_fixtures(self.fx, self.stage)
             released = self.task.stages[self.stage - 1]
             listing = "\n".join(
@@ -1506,6 +1601,12 @@ class _Run:
             )
             if self.upd != "off":
                 obs += self.update_review(released)
+            if expired:
+                obs += (
+                    f"\n\nPending context proposal {expired} was discarded because a new stage "
+                    "was released; the live context is unchanged. Write context.json again if you "
+                    "still want a change."
+                )
         else:
             obs = f"No further evidence: all {self.task.n_stages} stages are already released."
             self.trace.event("advance_noop", step=self.step)
@@ -1522,6 +1623,8 @@ class _Run:
             self.step,
         )
         self._save_revision()
+        if self.clm:
+            self._mirror_proposal()
 
     # ---------------------------------------------------- Jev context review (exp 008)
     def _validate_review(
@@ -2398,6 +2501,320 @@ class _Run:
             "review_records": reviews,
         }
 
+    # ------------------------------------------- proposed-edit checking (011 agent pilot)
+    def _note_reads(self, code: str) -> None:
+        """Rereading evidence (all conditions): executions whose code opens requirement files or
+        runs the visible tests."""
+        reads = "REQUIREMENTS.md" in code or "/task/fixtures/stage-" in code
+        tests = "current-tests" in code or "unittest" in code
+        if reads or tests:
+            self.code_reads.append(
+                {"step": self.step, "stage": self.stage, "requirements": reads, "tests": tests}
+            )
+
+    @staticmethod
+    def _ids_diff(
+        before: tuple[Entry, ...], after: tuple[Entry, ...]
+    ) -> tuple[list[str], list[str], list[str]]:
+        b = {e.id: e.body for e in before}
+        a_ids = [e.id for e in after]
+        removed = [e.id for e in before if e.id not in a_ids]
+        added = [i for i in a_ids if i not in b]
+        rewritten = [e.id for e in after if e.id in b and b[e.id] != e.body]
+        return removed, added, rewritten
+
+    def _propose(self, out: EditOutcome, res: ExecResult) -> str:
+        """Hold a valid, content-changing candidate as the pending proposal (B/C); in C, check it
+        with Jev before the next model call. The live context is not changed."""
+        assert out.before is not None and out.candidate is not None
+        base, cand = out.before, out.candidate
+        replaced = self._end_proposal("revised") if self.proposal else None
+        pid = f"P{len(self.proposals) + 1}"
+        removed, added, rewritten = self._ids_diff(base.entries, cand)
+        rec: dict[str, Any] = {
+            "id": pid,
+            "step": self.step,
+            "stage": self.stage,
+            "base_revision": base.number,
+            "base_sha256": base.sha256,
+            "candidate_sha256": content_hash(cand),
+            "replaces": replaced,
+            "entries_before": len(base.entries),
+            "entries_after": len(cand),
+            "chars_before": total_chars(base.entries),
+            "chars_after": total_chars(cand),
+            "removed": removed,
+            "added": added,
+            "rewritten": rewritten,
+            "status": "pending",
+            "check": None,
+        }
+        self.trace.write_json(
+            f"context/proposal-{pid}.json",
+            {**rec, "candidate": [e.to_dict() for e in cand]},
+        )
+        if self.echk == "jev":
+            rec["check"] = self._check_proposal(pid, base, cand, res.stdout)
+        self.proposals.append(rec)
+        self.proposal = {**rec, "base": base, "candidate": cand}
+        self.trace.event("context_proposal", **{k: v for k, v in rec.items() if k != "check"})
+
+        def ids(xs: list[str]) -> str:
+            return ", ".join(xs[:12]) + (f" (+{len(xs) - 12} more)" if len(xs) > 12 else "")
+
+        text = (
+            f"context.json change at step {self.step} held as proposal {pid} (not applied). Live "
+            f"context: revision {base.number}, unchanged. Proposal versus live: entries "
+            f"{len(base.entries)} -> {len(cand)}; body chars {total_chars(base.entries)} -> "
+            f"{total_chars(cand)}; removes [{ids(removed)}]; adds [{ids(added)}]; rewrites "
+            f"[{ids(rewritten)}]. Full proposed file: /task/workspace/{PROPOSAL_FILENAME}."
+        )
+        if replaced:
+            text += f" It replaces pending proposal {replaced}."
+        text += (
+            f' To apply it reply {{"action": "confirm_edit", "proposal": "{pid}", "decision": '
+            '"accept"} (entries the runtime appends meanwhile are kept after it); "withdraw" '
+            "discards it; writing context.json again replaces it. Other files your code changed "
+            "are not affected by this decision."
+        )
+        if rec["check"] is not None:
+            text += "\n" + self._check_text(pid, rec["check"])
+        return text
+
+    def _check_proposal(
+        self, pid: str, base: Revision, cand: tuple[Entry, ...], stdout: str
+    ) -> dict[str, Any]:
+        """One Jev check (jev-edit-check/2 on edit-evidence/1). Errors, missing answers and the
+        check limit are reported as such, never as a clear result."""
+        ec = self.cfg.edit_check
+        if self.ec_checks >= ec.max_checks:
+            return {"verdict": "not_checked", "reason": f"check limit {ec.max_checks} reached"}
+        self.ec_checks += 1
+        case = {
+            "task": self.task.prompt,
+            "current": [e.to_dict() for e in base.entries],
+            "update": self.task.stage_updates[self.stage - 1] if self.task.staged else "",
+            "exec_output": stdout,
+            "sources": self.task.files_upto(self.stage),
+            "proposed": [e.to_dict() for e in cand],
+        }
+        body, meta = build_edit_request_v2(case, self.cfg.jev.model)
+        t0 = time.monotonic()
+        resp, err = self._jev_attempts(body)
+        answers: dict[str, float | None] = {
+            k: (resp.probabilities.get(k) if resp else None) for k in QUESTIONS_V2
+        }
+        t = ec.threshold
+        harm = [answers[k] for k in HARM_KEYS]
+        if resp is None:
+            verdict = "error"
+        elif any(v is not None and v >= t for v in harm):
+            verdict = "flagged"
+        elif any(v is None for v in answers.values()):
+            verdict = "incomplete"
+        elif (answers["insufficient"] or 0.0) >= t:
+            verdict = "uncertain"
+        else:
+            verdict = "clear"
+        check = {
+            "verdict": verdict,
+            "answers": answers,
+            "error": err,
+            "evidence": meta,
+            "model": resp.model if resp else None,
+            "jev_seq": self.jev_seq,
+            "wall_s": round(time.monotonic() - t0, 4),
+        }
+        self.trace.write_json(f"edit_check/{pid}.json", {"proposal": pid, "request": body, **check})
+        self.trace.event("edit_check", step=self.step, proposal=pid, verdict=verdict)
+        return check
+
+    def _check_text(self, pid: str, check: dict[str, Any]) -> str:
+        """The fixed, compact presentation of a check (C only)."""
+        v = check["verdict"]
+        if v == "not_checked":
+            return (
+                f"Jev check of {pid}: not checked ({check['reason']}). This is not a clear result."
+            )
+        if v == "error":
+            return (
+                f"Jev check of {pid}: unavailable (service error: {str(check['error'])[:120]}). "
+                "This is not a clear result."
+            )
+        a = check["answers"]
+        t = self.cfg.edit_check.threshold
+        parts = [
+            f"{EC_LABELS[k]} {'no answer' if a[k] is None else f'{a[k]:.2f}'}"
+            + (" (flag)" if a[k] is not None and a[k] >= t else "")
+            for k in QUESTIONS_V2
+        ]
+        result = {
+            "flagged": f"FLAGGED for inspection (a harm answer is at least {t})",
+            "uncertain": "UNCERTAIN (the material supplied may be insufficient to check it)",
+            "incomplete": "INCOMPLETE answer (some questions unanswered); not a clear result",
+            "clear": f"clear (every answer below {t})",
+        }[v]
+        notes = check["evidence"].get("notes") or []
+        text = (
+            f"Jev check of {pid} (advice only; {QUESTION_VERSION_V2}): " + " | ".join(parts) + "."
+            f" Result: {result}."
+        )
+        if notes:
+            text += " Evidence notes: " + "; ".join(str(n) for n in notes)[:400] + "."
+        return text + (
+            " A flag means inspect, not proven wrong; missing evidence may explain it. A clear "
+            "result does not guarantee the change is safe."
+        )
+
+    def _mirror_proposal(self) -> None:
+        """Keep the informational proposal file in step with the host-held proposal."""
+        if self.echk == "off":
+            return
+        path = self.ws / PROPOSAL_FILENAME
+        if self.proposal:
+            path.write_text(serialize(self.proposal["candidate"]), encoding="utf-8")
+        elif path.is_file() and not path.is_symlink():
+            path.unlink()
+
+    def _end_proposal(self, status: str, **extra: Any) -> str | None:
+        """Close the pending proposal (revised, withdrawn, expired, unresolved...)."""
+        p = self.proposal
+        if p is None:
+            return None
+        rec = next(r for r in self.proposals if r["id"] == p["id"])
+        rec.update(status=status, decided_step=self.step, **extra)
+        self.trace.event("context_proposal_end", proposal=p["id"], status=status, step=self.step)
+        self.proposal = None
+        return str(p["id"])
+
+    def _recovery_alternative(self) -> str:
+        """B/C: under OVER LIMIT, name a still-acceptable pending proposal and the size it would
+        leave (added after the integration smoke, before the pilot freeze)."""
+        p = self.proposal
+        if self.echk == "off" or p is None:
+            return ""
+        live, n = self.store.entries, len(p["base"].entries)
+        if live[:n] != p["base"].entries:
+            return ""
+        chars = total_chars(p["candidate"]) + total_chars(live[n:])
+        return (
+            f" In this run, accepting pending proposal {p['id']} with confirm_edit also counts: "
+            f"it would leave about {chars} body chars (now {total_chars(live)}) before this "
+            "step's own output. A change you write to context.json instead is applied directly."
+        )
+
+    def _recovery_applied(self) -> str:
+        """An OVER LIMIT recovery edit applied directly in B/C (declared exception)."""
+        superseded = self._end_proposal("superseded_by_recovery_edit")
+        self.proposals.append(
+            {
+                "id": f"R{self.step}",
+                "step": self.step,
+                "stage": self.stage,
+                "status": "recovery_exempt_applied",
+                "supersedes": superseded,
+                "check": None,
+            }
+        )
+        self.trace.event("context_recovery_exempt", step=self.step)
+        return " Applied directly (OVER LIMIT exception; not held as a proposal)" + (
+            f"; pending proposal {superseded} is superseded." if superseded else "."
+        )
+
+    def confirm_step(self, action: dict[str, Any]) -> None:
+        """Accept or withdraw the pending proposal; nothing else applies one."""
+        pid = str(action.get("proposal", "")).strip()
+        decision = action["decision"]
+        thought = str(action.get("thought", ""))[:1000]
+        p = self.proposal
+        rec: dict[str, Any] = {"step": self.step, "proposal": pid, "decision": decision}
+        receipt = ""
+        if p is None or p["id"] != pid:
+            rec["result"] = "no_such_pending_proposal"
+            obs = (
+                f"confirm_edit {decision} {pid}: no such pending proposal "
+                f"({'pending: ' + p['id'] if p else 'none is pending'}). Context unchanged."
+            )
+        elif decision == "withdraw":
+            self._end_proposal("withdrawn")
+            rec["result"] = "withdrawn"
+            obs = (
+                f"Proposal {pid} withdrawn: the live context (revision "
+                f"{self.store.current.number}) is unchanged. Other file changes made by the code "
+                f"of step {p['step']} remain."
+            )
+        else:
+            before = self.store.current
+            after, why = self.store.accept_proposal(p["candidate"], p["base"], self.step)
+            if after is None:
+                self._end_proposal("refused_stale" if why.startswith("stale") else "refused")
+                rec.update(result="refused", reason=why)
+                obs = f"Proposal {pid} cannot be accepted ({why}); context unchanged."
+            else:
+                self._end_proposal("accepted", accepted_revision=after.number)
+                rec.update(result="accepted", revision=after.number)
+                receipt = (
+                    self._record_edit(EditOutcome("accepted", before=before, after=after)) or ""
+                )
+                obs = f"Proposal {pid} accepted. {receipt}"
+        self.confirms.append(rec)
+        self.trace.event("confirm_edit", **rec)
+        self.store.append(
+            [
+                Entry(
+                    f"s{self.step}.act",
+                    "assistant",
+                    f"[step {self.step}] confirm_edit {pid} {decision}\nthought: {thought}",
+                ),
+                Entry(f"s{self.step}.obs", "observation", obs),
+            ],
+            "runtime",
+            self.step,
+        )
+        self._save_revision()
+        self.store.mirror(self.ws)
+        self._mirror_proposal()
+
+    def edit_check_summary(self) -> dict[str, Any]:
+        props = [p for p in self.proposals if not p["id"].startswith("R")]
+        by_status: dict[str, int] = {}
+        for p in props:
+            by_status[p["status"]] = by_status.get(p["status"], 0) + 1
+        checks = [p["check"] for p in props if p["check"]]
+        verdicts: dict[str, int] = {}
+        for c in checks:
+            verdicts[c["verdict"]] = verdicts.get(c["verdict"], 0) + 1
+        reactions: dict[str, dict[str, int]] = {}
+        for p in props:
+            if p["check"]:
+                r = reactions.setdefault(p["check"]["verdict"], {})
+                r[p["status"]] = r.get(p["status"], 0) + 1
+        return {
+            "mode": self.echk,
+            "version": "edit-check-pilot/1",
+            "question_version": QUESTION_VERSION_V2 if self.echk == "jev" else None,
+            "questions_sha256": questions_v2_sha256() if self.echk == "jev" else None,
+            "evidence_version": EVIDENCE_VERSION if self.echk == "jev" else None,
+            "threshold": self.cfg.edit_check.threshold,
+            "max_checks": self.cfg.edit_check.max_checks,
+            "proposals": len(props),
+            "proposals_by_status": by_status,
+            "recovery_exempt_edits": sum(1 for p in self.proposals if p["id"].startswith("R")),
+            "confirm_actions": len(self.confirms),
+            "confirm_invalid": sum(
+                1 for c in self.confirms if c["result"] == "no_such_pending_proposal"
+            ),
+            "checks": len(checks),
+            "verdicts": verdicts,
+            "reactions_by_verdict": reactions,
+            "flagged_then_accepted": reactions.get("flagged", {}).get("accepted", 0),
+            "uncertain_then_accepted": reactions.get("uncertain", {}).get("accepted", 0),
+            "requirement_reads": sum(1 for r in self.code_reads if r["requirements"]),
+            "test_runs": sum(1 for r in self.code_reads if r["tests"]),
+            "proposal_log": self.proposals,
+            "confirm_log": self.confirms,
+        }
+
     def premature_final_step(self, action: dict[str, Any]) -> None:
         self.c.premature_finals += 1
         self.trace.event(
@@ -2519,7 +2936,11 @@ class _Run:
     @staticmethod
     def _submission_ignore() -> Any:
         return shutil.ignore_patterns(
-            CONTEXT_FILENAME, f".{CONTEXT_FILENAME}.host-tmp", "spill", "__pycache__"
+            CONTEXT_FILENAME,
+            f".{CONTEXT_FILENAME}.host-tmp",
+            PROPOSAL_FILENAME,
+            "spill",
+            "__pycache__",
         )
 
     def _sandbox_eval(
@@ -2552,32 +2973,37 @@ class _Run:
 
     def evaluate_coding(self, completed: bool) -> Any:
         """Score the submitted workspace in a fresh sandbox; never run it on the host."""
-        from . import coding, coding2
+        from . import coding, coding2, w2
 
         ev = self.dir / "evaluator"
         shutil.copytree(self.ws, ev / "submission", ignore=self._submission_ignore())
         truth = self.task.truth
         score: Any
-        if self.task.generator_version != coding2.GENERATOR_VERSION:
+        staged_mod: Any = {
+            coding2.GENERATOR_VERSION: coding2,
+            w2.GENERATOR_VERSION: w2,
+        }.get(self.task.generator_version)
+        if staged_mod is None:
             output, error = self._sandbox_eval(
                 coding.EVAL_RUNNER, ev / "submission", coding.checks_json(truth), "eval"
             )
             score = coding.score_coding(truth, output, completed, error)
         else:
             output, error = self._sandbox_eval(
-                coding2.EVAL_RUNNER, ev / "submission", coding2.checks_json(truth), "eval"
+                staged_mod.EVAL_RUNNER, ev / "submission", staged_mod.checks_json(truth), "eval"
             )
             snaps: dict[int, str | None] = {}
             for stage in sorted(truth.snapshot_checks):
                 src = ev / "snapshots" / f"stage-{stage}"
                 if src.is_dir():
                     snaps[stage], _ = self._sandbox_eval(
-                        coding2.EVAL_RUNNER,
+                        staged_mod.EVAL_RUNNER,
                         src,
-                        coding2.snapshot_checks_json(truth, stage),
+                        staged_mod.snapshot_checks_json(truth, stage),
                         f"snapshot_{stage}",
                     )
-            score = coding2.score_coding(truth, output, completed, error, snaps)
+            scorer = coding2.score_coding if staged_mod is coding2 else w2.score_export
+            score = scorer(truth, output, completed, error, snaps)
         self.trace.event(
             "coding_evaluation",
             outcome=score.outcome,
@@ -2589,6 +3015,7 @@ class _Run:
         return score
 
     def finish(self, status: str, reason: str, human: str) -> RunResult:
+        self._end_proposal("unresolved_at_end")  # never applied (011 pilot)
         # Ground truth is written only now, outside the sandbox mounts.
         truth = self.task.truth
         score: Any
@@ -2663,6 +3090,7 @@ class _Run:
             "jev": self.jev_summary(),
             "update_review": self.update_review_summary(),
             "initiated_review": self.initiated_review_summary(),
+            "edit_check": self.edit_check_summary(),
             "request": self.request_summary(),
             "peak_working_context_chars": self.peak_ctx_chars,
             "context_revisions": len(self.store.revisions) - 1,

@@ -133,10 +133,11 @@ def parse_candidate(raw: bytes, limits: ContextLimits) -> tuple[Entry, ...]:
 class EditOutcome:
     """Result of reading back the context file after one execution."""
 
-    status: str  # "not_written" | "unchanged_write" | "accepted" | "rejected"
+    status: str  # "not_written" | "unchanged_write" | "accepted" | "rejected" | "proposed"
     reason: str = ""
     before: Revision | None = None
     after: Revision | None = None
+    candidate: tuple[Entry, ...] | None = None  # "proposed": the validated, uncommitted entries
 
     @property
     def attempted(self) -> bool:
@@ -228,10 +229,13 @@ class ContextStore:
         mirrored_text: str,
         step: int,
         authorise: Callable[[tuple[Entry, ...]], str | None] | None = None,
+        hold: bool = False,
     ) -> EditOutcome:
         """Validate the workspace file after execution and accept it if valid. ``authorise``
         (experiment 010 v2) is asked about a valid, content-changing candidate before it is
-        committed; a returned message rejects it like any invalid candidate."""
+        committed; a returned message rejects it like any invalid candidate. With ``hold``
+        (experiment 011 pilot) a valid, content-changing candidate is returned as "proposed"
+        and not committed; the accepted context stays authoritative."""
         before = self.current
         try:
             raw = read_workspace_file(workspace, CONTEXT_FILENAME, self.limits.max_file_bytes)
@@ -249,8 +253,39 @@ class ContextStore:
             refused = authorise(entries)
             if refused:
                 return EditOutcome("rejected", refused, before=before)
+        if hold:
+            return EditOutcome("proposed", before=before, candidate=entries)
         after = self.commit(entries, "model_edit", step)
         return EditOutcome("accepted", before=before, after=after)
+
+    def accept_proposal(
+        self, candidate: tuple[Entry, ...], base: Revision, step: int
+    ) -> tuple[Revision | None, str]:
+        """Commit ``candidate`` (proposed against revision ``base``) followed by every entry the
+        runtime appended to the live context since ``base``, so accepting never drops
+        intervening actions, observations or receipts. Refused (None, reason) when the live
+        context changed in any other way since ``base`` (a stale proposal) or when the merged
+        result would break the format limits."""
+        live = self.entries
+        n = len(base.entries)
+        if live[:n] != base.entries:
+            return None, (
+                f"stale: the live context changed since revision {base.number} in a way other "
+                "than runtime appends"
+            )
+        taken = {e.id for e in candidate}
+        merged = list(candidate)
+        for e in live[n:]:
+            eid, k = e.id, 2
+            while eid in taken:
+                eid, k = f"{e.id}~{k}", k + 1
+            taken.add(eid)
+            merged.append(Entry(eid, e.role, e.body))
+        try:
+            parse_candidate(serialize(merged).encode("utf-8"), self.limits)
+        except ContextValidationError as exc:
+            return None, f"the accepted context would be invalid: {exc}"
+        return self.commit(tuple(merged), "model_edit", step), ""
 
 
 def unified_diff(a: Revision, b: Revision) -> str:

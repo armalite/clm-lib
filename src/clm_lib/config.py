@@ -131,6 +131,20 @@ class InitiatedReviewConfig:
 
 
 @dataclass
+class EditCheckConfig:
+    # Experiment 011 agent pilot: proposed-edit checking (off by default). With `enabled`, a
+    # valid, content-changing context.json write is held as a proposal that Claude must accept,
+    # revise or withdraw (condition B); with `advice` too, Jev checks each proposal with the
+    # frozen jev-edit-check/2 questions and edit-evidence/1 evidence (condition C).
+    # `compare --conditions <mode>+chk[-jev]:on` overrides enabled/advice. Jev client settings
+    # (model, timeout, retries) come from [jev].
+    enabled: bool = False
+    advice: bool = False
+    max_checks: int = 30  # Jev checks per run; later proposals are shown as not checked
+    threshold: float = 0.5  # the frozen reporting threshold of edit-verdict/2
+
+
+@dataclass
 class BudgetConfig:
     ceiling_usd: float = 10.0
     min_run_reserve_usd: float = 0.75
@@ -157,6 +171,7 @@ class Config:
     jev: JevConfig = field(default_factory=JevConfig)
     update_review: UpdateReviewConfig = field(default_factory=UpdateReviewConfig)
     initiated_review: InitiatedReviewConfig = field(default_factory=InitiatedReviewConfig)
+    edit_check: EditCheckConfig = field(default_factory=EditCheckConfig)
     runs_dir: str = "runs"
 
     def to_dict(self) -> dict[str, Any]:
@@ -185,6 +200,7 @@ def load_config(path: Path | None) -> Config:
         "jev": JevConfig,
         "update_review": UpdateReviewConfig,
         "initiated_review": InitiatedReviewConfig,
+        "edit_check": EditCheckConfig,
     }
     kwargs: dict[str, Any] = {}
     for key, cls in sections.items():

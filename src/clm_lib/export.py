@@ -351,6 +351,28 @@ def _metrics_row(run_id: str, role: str, src: Path, charged: float) -> dict[str,
                     ir_reviews_repeat_round=ir["reviews_repeat_round"],
                     ir_reviews_by_label=json.dumps(ir["reviews_by_label"]),
                 )
+    ec = m.get("edit_check")
+    if ec is not None:  # experiment 011 agent pilot (summaries from before it have no block)
+        st = ec["proposals_by_status"]
+        row.update(
+            ec_mode=ec["mode"],
+            ec_proposals=ec["proposals"],
+            ec_accepted=st.get("accepted", 0),
+            ec_revised=st.get("revised", 0),
+            ec_withdrawn=st.get("withdrawn", 0),
+            ec_expired=st.get("expired_at_stage_release", 0),
+            ec_refused=st.get("refused_stale", 0) + st.get("refused", 0),
+            ec_unresolved=st.get("unresolved_at_final", 0) + st.get("unresolved_at_end", 0),
+            ec_recovery_exempt=ec["recovery_exempt_edits"],
+            ec_confirm_actions=ec["confirm_actions"],
+            ec_confirm_invalid=ec["confirm_invalid"],
+            ec_checks=ec["checks"],
+            ec_verdicts=json.dumps(ec["verdicts"], sort_keys=True),
+            ec_flagged_then_accepted=ec["flagged_then_accepted"],
+            ec_uncertain_then_accepted=ec["uncertain_then_accepted"],
+            ec_requirement_reads=ec["requirement_reads"],
+            ec_test_runs=ec["test_runs"],
+        )
     by_provider = (m.get("cost") or {}).get("by_provider")
     if by_provider:
         row["cost_anthropic_usd"] = by_provider["anthropic"]

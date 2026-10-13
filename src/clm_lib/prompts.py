@@ -23,7 +23,9 @@ from .context import Entry
 # unchanged.
 # 2026-10-13.4 adds the experiment-010 v3 clauses (INITIATED_REVIEW_V3_CLAUSE for both review
 # conditions, INITIATED_REVIEW_V3_JEV_CLAUSE for the Jev condition); all other texts unchanged.
-PROMPT_VERSION = "2026-10-13.4"
+# 2026-10-13.5 adds the experiment-011 pilot clauses (EDIT_CHECK_CLAUSE for both checking
+# conditions, EDIT_CHECK_JEV_CLAUSE for the Jev condition); all other texts unchanged.
+PROMPT_VERSION = "2026-10-13.5"
 
 PROTOCOL = """You are {agent_role} working through a strict JSON protocol.
 
@@ -274,6 +276,36 @@ INITIATED_REVIEW_V3_JEV_CLAUSE = """- In this run, each review also asks a fast 
   assertion or planned action in it. The advice is probabilistic and can be wrong, and it never
   edits your context. A low probability is not a reason to delete an entry, and a high one does
   not mean the entry is wrong. You decide whether and how to edit.
+"""
+
+# Experiment 011 agent pilot, both checking conditions (B and C).
+EDIT_CHECK_CLAUSE = """
+CONTEXT CHANGES ARE PROPOSED, THEN CONFIRMED (this run; this replaces the rule that a change to
+context.json takes effect after your step):
+- A valid change you write to context.json is not applied at once. The runtime holds it as a
+  proposal (P1, P2, ...), keeps the live context unchanged, and describes the proposal in that
+  step's receipt. The full proposed file is /task/workspace/proposed_context.json.
+- To apply it, reply {"action": "confirm_edit", "proposal": "<id>", "decision": "accept"}.
+  Entries the runtime appended meanwhile (actions, observations, receipts) are kept after the
+  accepted entries. To discard it, use "decision": "withdraw". To revise it, write context.json
+  again in a later step; the new proposal replaces the pending one.
+- Only an explicit accept applies a proposal. Any other action, including final, leaves it
+  unapplied; a stage release discards it; a proposal whose base context has since changed in
+  another way cannot be accepted.
+- Accepting or withdrawing affects only the context; other files your code wrote stay as they
+  are. A decision uses one model call. Exception: when the runtime status says OVER LIMIT, a
+  change you write in that step is applied directly.
+"""
+
+# Experiment 011 agent pilot, Jev condition only (C).
+EDIT_CHECK_JEV_CLAUSE = """- In this run, each proposal is also checked by a fast classifier (Jev) before your next step.
+  It sees the task, the live context, the latest stage's requirements, what your proposing code
+  printed and any requirement lines the proposal newly cites, and answers four questions: does
+  the proposal drop an active obligation or exception, state something differently without
+  support, or remove or reassign evidence; and is the supplied material insufficient to check
+  it. The scores are advice and can be wrong. A flag means "inspect", not "wrong" (missing
+  evidence may explain it), and a clear result does not guarantee the change is safe. You decide
+  whether to accept, revise or withdraw; you never need to change a proposal or lower a score.
 """
 
 SUMMARY_SYSTEM_TOKEN_TAIL_ROUNDS = """You compress an agent's working transcript. The agent is
