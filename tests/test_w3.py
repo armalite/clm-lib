@@ -35,7 +35,7 @@ from .test_jev_primitive import ScriptedJev, cfg_prim, runner_with
 from .w2_solutions import write_core_code
 from .w3_solutions import INDEPENDENT_SOURCE, faulty_core, independent_core
 
-DEV = ["w3-dev-1", "w3-dev-2"]
+DEV = ["w3-dev-1", "w3-dev-2", "w3-dev-3", "w3-dev-4"]
 ALL = [n for n in INSTANCES if n.startswith("w3-")]
 ADVANCE = {"action": "advance"}
 FINAL = {"action": "final", "answer": {"summary": "done"}}
@@ -585,8 +585,11 @@ def test_replay_attributes_register_changes_to_jev_answers(
     )
     if expected == "substantive":
         assert out["stages_substantive_under_valid_substitution"]
+        assert out["stages_substantive_last_request"]  # the R1 pilot's primary intervention
     else:
         assert out["stages_substantive_under_valid_substitution"] == []
+        assert out["stages_substantive_last_request"] == []
+    assert all(st["last_request_items"] for st in out["steps"])
 
 
 def test_replay_classifies_a_crash_without_answers_separately() -> None:

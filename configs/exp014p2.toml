@@ -1,0 +1,104 @@
+# Experiment 014 R1 matched development pilot (w3-dev-3, w3-dev-4; A ordinary CLM vs B R1).
+# Identical to configs/exp014r1.toml (and exp014c.toml) except the ceiling: settled spend at start
+# USD 86.457271 + USD 3 authorised for these four runs (both providers, all attempts) = 89.457271;
+# earlier unused allowances are not stacked. context_budget_tokens 12000 is shared by A and B:
+# this pilot tests requirements-register maintenance through CLM context edits under that budget,
+# not the benefits of compaction under tight context pressure; pressure, spill and recovery events
+# are retained and reported. [jev_primitive] stays 8/40/20 and is switched on for B only.
+runs_dir = "runs"
+
+[provider]
+name = "anthropic"
+model = "claude-opus-5-5"     # verified via the models endpoint by `clm-lib doctor --probe`
+base_url = ""                 # empty: SDK default (or ANTHROPIC_BASE_URL)
+effort = "low"                # output_config.effort; thinking cannot be disabled on this model
+structured_output = true      # output_config.format json_schema for actions
+timeout_s = 120
+api_retries = 2               # runtime-level retries; SDK retries are disabled
+
+[limits]
+max_calls = 90                # per task: actions + repairs + API retries (summaries separate)
+max_output_tokens = 4096
+exec_timeout_s = 30
+output_cap_chars = 6000       # per stream
+context_budget_tokens = 12000 # whole request input (exp014c: see header)
+pressure_ratio = 0.70
+recovery_reserve_tokens = 1000
+spill_min_chars = 1500
+initial_chars_per_token = 3.0
+max_code_chars = 20000
+summary_calls_in_max_calls = false
+max_summary_calls = 20
+spill_past_receipt = true     # defect fix (initial-calibration finding)
+recheck_after_notice = true   # defect fix (revised-calibration finding)
+status_shows_revision = true  # both arms (as experiment 008)
+
+[baseline]
+policy = "token-tail/1"     # experiment 003; experiments 001/002 used "fixed-tail/1"
+tail_entries = 4
+summary_max_chars = 3000
+summary_retries = 1
+tail_ratio = 0.15            # token-tail/1: verbatim recent-entry allowance (fraction of budget)
+newest_ratio = 0.25          # token-tail/1: newest entry kept verbatim if it fits this fraction
+target_ratio = 0.50          # token-tail/1: desired request size after compaction
+summary_min_chars = 600
+
+[budget]
+ceiling_usd = 89.457271            # total live-validation ceiling; ledger keeps the lowest ever set
+min_run_reserve_usd = 2.00    # compare: do not start a run with less remaining
+ledger = "runs/ledger.json"
+prices = "configs/prices.toml"
+
+[sandbox]
+image = "python:3.12-slim"
+memory = "512m"
+cpus = 1.0
+pids_limit = 128
+
+[request]
+layout = "blocks/1"           # stable task first, one block per context entry, status last
+prompt_caching = true         # on for both arms
+cache_ttl = "5m"
+run_isolation = "run-tag/1"   # random 32-hex tag as the first system block of every request
+
+[jev]
+enabled = false               # the experiment-008 review_context action: off in 010
+model = "jev-1.13.0"          # pinned (jev-latest is an alias that can move)
+base_url = "https://api.typesafe.ai/v1/systemone"
+timeout_s = 15.0
+retries = 1                   # runtime retries for 429/529/5xx/timeouts; each attempt in the ledger
+max_reviews = 12              # review_context actions per run (each also uses a main-model call)
+max_entries = 40
+batch_size = 20
+max_update_chars = 4000
+
+[update_review]
+enabled = false               # experiment-009 update review: off in 010
+advice = false
+payload = "round-files/1"
+max_payload_chars = 4000
+max_candidates = 60
+max_batch_chars = 60000
+
+[initiated_review]
+enabled = false               # per run: "+pre3" (B) or "+pre3-jev" (C)
+advice = false
+required = false              # per run: "+pre3"/"+pre3-jev" require a review before context edits
+update_source = "stated"      # per run: "+pre3"/"+pre3-jev" use "latest-round"
+max_reviews = 40
+max_info_chars = 2000
+max_candidates = 60
+max_batch_chars = 60000
+candidate_roles = ["note", "observation", "summary"]
+
+[edit_check]
+enabled = false               # per run: "+chk" (B) or "+chk-jev" (C)
+advice = false
+max_checks = 30               # Jev checks per run; later proposals are shown as not checked
+threshold = 0.5               # the frozen edit-verdict/2 reporting threshold
+
+[jev_primitive]
+enabled = false               # per run: run --jev-primitive on (B only)
+max_calls_per_execution = 8
+max_calls_per_run = 40
+max_items = 20

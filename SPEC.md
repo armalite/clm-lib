@@ -1,6 +1,6 @@
 # clm-lib: Technical Specification
 
-Version: 2.13 | 14 October 2026
+Version: 2.14 | 14 October 2026
 
 Repository: `clm-lib` | Python package: `clm_lib` | CLI: `clm-lib`
 
@@ -26,6 +26,7 @@ Version history:
 - 2.11: adds §25's per-run extra instruction (`run --extra-instruction-file`), used for experiment 014's prompted demonstration; off unless given.
 - 2.12: adds §26, the W3 register workload (`export-gen/2`, code scorer `export-checks/2`, register scorer `register-checks/1`) and offline replay attribution for jev-primitive runs (`jev-replay/1`, `replay-jev`), for experiment 014's comparison phase; opt-in (W3 tasks and the command only).
 - 2.13: updates §26's replay attribution to `jev-replay/2` (item-level answer matching, valid inverted and permuted substitutions with logs, unsupported-counterfactual detection, a supporting code audit, and post-hoc last-request variants), used for experiment 014's development revision R1.
+- 2.14: adds §26's W3 instances `w3-dev-3` and `w3-dev-4` (fresh seeds of the dev-1 and dev-2 schedules) and the replay's neutral `last_request` keys, for experiment 014's R1 matched development pilot.
 - 1.9: adds a multi-round incident task family, two CLM capability variants (direct editing only; reusable helpers allowed), a separate summary-call allowance, helper-evidence tiers and a three-condition schedule (§18).
 - 1.8: adds a versioned request layout (`blocks/1`), optional provider prompt caching with explicit breakpoints, per-run cache isolation, cache-aware accounting evidence, and a four-condition comparison schedule (§17).
 - 1.7: adds a second coding generator with interacting, partially changing rules, an evaluator with richer categories, exact type checks and stage snapshots (§16), a balanced comparison order, and per-task scorer metadata in comparisons and exports.
@@ -703,7 +704,7 @@ The summary baseline's policy is selected by `[baseline] policy`, and recorded i
 
 - **Workload** (`w3.py`, generator `export-gen/2`, code scorer `export-checks/2`): W2's records-export task extended to 7 stages (smoke: 5). Stages 1–2 are initial requirements and stages 3–7 change notices; every item has a visible id `S<stage>.<n>`, and notice items do not name the items they affect.
   - **Relationships:** full replacements, partial amendments (including an amendment of an amendment), a withdrawal, an exception that survives, two obligations triggered by later items without being restated, decision records and information items.
-  - **Instances:** `w3-smoke-1` (8701), `w3-dev-1` (8501), `w3-dev-2` (8502). No evaluation instances are defined.
+  - **Instances:** `w3-smoke-1` (8701), `w3-dev-1` (8501), `w3-dev-2` (8502), and `w3-dev-3` (8503) and `w3-dev-4` (8504), which are fresh seeds of the dev-1 and dev-2 schedules. No evaluation instances are defined.
   - **Code scoring:** W2's sandbox evaluator and score structure, with the categories retained, exception, replaced, amended, kept_part, deferred and interaction, plus snapshots at each release.
 - **Register objective:** the W3 task prompt asks for a register in the working context, made of items starting `CURRENT` or `HISTORY` that cite item ids. It prescribes neither a helper nor an algorithm.
 - **Register scoring** (`register_score.py`, `register-checks/1`), host-side after the run, on accepted revisions only:
@@ -723,5 +724,6 @@ The summary baseline's policy is selected by `[baseline] policy`, and recorded i
     - **Unsupported counterfactuals:** a request the original run never made gets no answer, and the step's counterfactual is reported as `unsupported_counterfactual`.
     - **Withholding** tests the fallback path only.
     - **`inverted_last` and `permuted_last`** substitute only an execution's last request (a post-hoc diagnostic).
+    - **The same classes under neutral names:** `last_request`, plus the run-level `stages_substantive_last_request`, with `last_request_items` listing the decisions the intervention tests. This is the primary, pre-registered intervention of the R1 matched pilot, where it was post hoc for the R1 smoke.
     - **Each step also carries a static audit:** register-item literals, and ids of existing items in the caller and helper code. It is supporting evidence only.
 - **Unchanged:** W2 and every earlier task, prompt and config. `configs/exp014c.toml` is the comparison phase's config.

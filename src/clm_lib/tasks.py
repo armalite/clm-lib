@@ -113,6 +113,10 @@ INSTANCES: dict[str, InstanceSpec] = {
     "w3-dev-1": InstanceSpec("w3-dev-1", 8501, "export_w3", "w3-dev"),
     "w3-dev-2": InstanceSpec("w3-dev-2", 8502, "export_w3", "w3-dev"),
     "w3-smoke-1": InstanceSpec("w3-smoke-1", 8701, "export_w3", "w3-smoke"),
+    # Experiment 014 R1 matched development pilot: fresh seeds of the dev-1 and dev-2 schedules,
+    # registered before any run of that pilot.
+    "w3-dev-3": InstanceSpec("w3-dev-3", 8503, "export_w3", "w3-dev"),
+    "w3-dev-4": InstanceSpec("w3-dev-4", 8504, "export_w3", "w3-dev"),
     # Experiment 012: document-search question answering (handbook.py, handbook-gen/1). Two
     # development instances for the pilot, one integration-smoke instance, and separate
     # diagnostic instances for the component diagnostic (never used for agent runs). No

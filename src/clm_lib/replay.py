@@ -375,11 +375,18 @@ def replay_run(
                 v: classify_substitution(pre_entries, variants["recorded"], variants[v])
                 for v in LAST_ONLY
             }
+            # The same classes under a neutral name: the primary, pre-registered intervention of
+            # the 014 R1 matched pilot (post hoc only for the R1 smoke).
+            rec["last_request"] = rec["post_hoc_last_request"]
+            last = (variants["recorded"]["substitution_log"] or [{}])[-1]
+            rec["last_request_items"] = [i["key"] for i in last.get("items", [])]
         else:
             rec["dependence"] = {"class": "not_reproduced"}
             rec["substitutions"] = {}
             rec["substantive_under_valid_substitution"] = False
             rec["post_hoc_last_request"] = {}
+            rec["last_request"] = {}
+            rec["last_request_items"] = []
         out["steps"].append(rec)
         (out_dir / f"step-{step:03d}").mkdir(parents=True, exist_ok=True)
         for v, d in variants.items():
@@ -413,6 +420,7 @@ def replay_run(
             if any(x.get("class") == "substantive" for x in s["post_hoc_last_request"].values())
         }
     )
+    out["stages_substantive_last_request"] = out["post_hoc_stages_substantive_last_request"]
     out["note"] = (
         "Dependence of the helper's behaviour on its Jev inputs: recorded vs withheld answers "
         "(fallback behaviour) and recorded vs valid substituted answers (inverted, permuted). "

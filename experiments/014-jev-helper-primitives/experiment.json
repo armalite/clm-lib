@@ -1,6 +1,6 @@
 {
  "id": "014-jev-helper-primitives",
- "title": "Experiment 014: Jev as a primitive inside model-written context helpers (prompted live demonstration; W3 comparison-phase development pilot; development revision R1 delegation smoke)",
+ "title": "Experiment 014: Jev as a primitive inside model-written context helpers (demonstration; W3 comparison pilot; R1 delegation smoke; R1 matched development pilot)",
  "provenance": {
   "source_repo": "https://github.com/armalite/clm-lib",
   "base_commit": "024fc76",
@@ -37,6 +37,14 @@
    "config": "configs/exp014r1.toml (= exp014c.toml except ceiling 87.182345; context budget 12000 to isolate the mechanism)",
    "budget": "ledger ceiling set explicitly from USD 87.535602 to USD 87.182345 (settled spend USD 86.182345 + USD 1 new for R1, both providers); earlier unused allowances not stacked",
    "status": "one configured R1 smoke on w3-smoke-1: code 42/42, register harm 0; contract held (callers passed only the stage; helper selection driven by answers >= 0.6); 11 Jev calls; recorded replay reproduced all 5 Jev-using executions; frozen criterion NOT met (valid substitutions unsupported at the change notices because requests are sequential); post-hoc last-request substitutions substantive at stages 3-5 (exploratory)."
+  },
+  "r1_pilot": {
+   "protocol": "experiments/014-jev-helper-primitives/protocol-r1-pilot.md in the results repository (frozen before the first paid call; freeze record 1)",
+   "tree_state": "HEAD 8309a27 plus instance registration (w3-dev-3 seed 8503 = dev-1 schedule, w3-dev-4 seed 8504 = dev-2 schedule), replay last_request keys, tests, configs/exp014p2.toml",
+   "instruction_b": "experiments/014-jev-helper-primitives/r1-instruction-b.txt (SHA-256 prefix 69440997d89fdcab; unchanged from the R1 smoke); A has no extra instruction",
+   "config": "configs/exp014p2.toml (shared context budget 12000; jev_primitive 8/40/20; ceiling 89.457271)",
+   "budget": "ledger ceiling set explicitly from USD 87.182345 to USD 89.457271 (settled spend USD 86.457271 + USD 3 new for the four runs, both providers); earlier unused allowances not stacked",
+   "status": "4 runs once each in the frozen order: all code-correct (64/64); B used the delegation mechanism (last-request replay substantive at notice stages 3,6 on dev-3 and 4-7 on dev-4) but cost about 1.8x A on average; see the results repository write-up."
   }
  },
  "settings": {
@@ -55,13 +63,24 @@
    ],
    "order": "w3-dev-1: A then B; w3-dev-2: B then A",
    "repetitions": 1
+  },
+  "r1_pilot": {
+   "config": "configs/exp014p2.toml",
+   "tasks": [
+    "w3-dev-3",
+    "w3-dev-4"
+   ],
+   "order": "w3-dev-3: A then B; w3-dev-4: B then A",
+   "repetitions": 1,
+   "command": "run --task <instance> --mode clm_helpers --jev-primitive off (A) | --jev-primitive on --extra-instruction-file r1-instruction-b.txt (B)"
   }
  },
  "phases": {
   "prompted-demonstration": "one live run on w2-dev-1 with the configured demonstration instruction; run once, not a comparison",
   "comparison-smoke": "one configured B run on w3-smoke-1; excluded from comparisons",
   "comparison-pilot": "W3 development pilot: 2 instances x A/B, once per cell, in the frozen order",
-  "r1-smoke": "development revision R1: one configured delegation smoke on w3-smoke-1 (B only; no comparison)"
+  "r1-smoke": "development revision R1: one configured delegation smoke on w3-smoke-1 (B only; no comparison)",
+  "r1-pilot": "R1 matched development pilot: 2 fresh instances x A/B, once per cell"
  },
  "runs": [
   {
@@ -112,6 +131,34 @@
    "phase": "r1-smoke",
    "group": "r1-smoke",
    "note": "014 development revision R1: configured Jev-delegated register maintenance smoke on w3-smoke-1; not a comparison"
+  },
+  {
+   "run_id": "20261014T041357-clm_helpers-cacheon-w3-dev-3-89e5",
+   "role": "calibration",
+   "phase": "r1-pilot",
+   "group": "r1-pilot",
+   "note": "R1 pilot w3-dev-3 position 0: A (ordinary CLM with helpers, register objective)"
+  },
+  {
+   "run_id": "20261014T041616-clm_helpers-cacheon-jprim-w3-dev-3-a692",
+   "role": "calibration",
+   "phase": "r1-pilot",
+   "group": "r1-pilot",
+   "note": "R1 pilot w3-dev-3 position 1: B (frozen R1 instruction + jev primitive)"
+  },
+  {
+   "run_id": "20261014T041952-clm_helpers-cacheon-jprim-w3-dev-4-7abc",
+   "role": "calibration",
+   "phase": "r1-pilot",
+   "group": "r1-pilot",
+   "note": "R1 pilot w3-dev-4 position 0: B (frozen R1 instruction + jev primitive)"
+  },
+  {
+   "run_id": "20261014T042247-clm_helpers-cacheon-w3-dev-4-32ed",
+   "role": "calibration",
+   "phase": "r1-pilot",
+   "group": "r1-pilot",
+   "note": "R1 pilot w3-dev-4 position 1: A (ordinary CLM with helpers, register objective)"
   }
  ]
 }

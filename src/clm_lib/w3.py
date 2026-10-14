@@ -310,8 +310,14 @@ Schedule = list[list[Item]]
 Config = dict[str, int]
 
 
+# Experiment 014 R1 matched pilot: fresh seeds of the two development schedules (new values,
+# records, visible tests and hidden checks; the same item structure as w3-dev-1 and w3-dev-2).
+SCHEDULE_ALIASES = {"dev-3": "dev-1", "dev-4": "dev-2"}
+
+
 def schedule_for(name: str) -> Schedule:
-    return SCHEDULES[name.split("-", 1)[1]]
+    key = name.split("-", 1)[1]
+    return SCHEDULES[SCHEDULE_ALIASES.get(key, key)]
 
 
 def values_for(seed: int) -> dict[str, Any]:
