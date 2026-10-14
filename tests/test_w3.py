@@ -20,7 +20,15 @@ import pytest
 from clm_lib import register_score as rs
 from clm_lib import w3
 from clm_lib.config import Config
-from clm_lib.replay import classify, replay_run
+from clm_lib.jev_primitive import build_body
+from clm_lib.replay import (
+    _Scripted,
+    answer_table,
+    audit_code,
+    classify,
+    classify_substitution,
+    replay_run,
+)
 from clm_lib.tasks import INSTANCES, generate
 
 from .test_jev_primitive import ScriptedJev, cfg_prim, runner_with
@@ -568,6 +576,17 @@ def test_replay_attributes_register_changes_to_jev_answers(
     assert all(c in (expected, "no_register_dependence") for c in classes), classes
     dep = next(s["dependence"] for s in out["steps"] if s["dependence"]["class"] == expected)
     assert dep["edits_independent_of_answers"]["removed_either_way"]  # transcript removal
+    # Valid substituted answers (same shape, keys, matching) are logged and classified.
+    subs = [x["class"] for st in out["steps"] for x in st["substitutions"].values()]
+    assert expected in subs, subs
+    logged = out["steps"][0]["variants"]["inverted"]["substitution_log"]
+    assert logged and all(
+        i["served"] == round(1 - i["recorded"], 6) for r in logged for i in r["items"]
+    )
+    if expected == "substantive":
+        assert out["stages_substantive_under_valid_substitution"]
+    else:
+        assert out["stages_substantive_under_valid_substitution"] == []
 
 
 def test_replay_classifies_a_crash_without_answers_separately() -> None:
@@ -587,3 +606,96 @@ def test_replay_classifies_a_crash_without_answers_separately() -> None:
         "entries": rec["entries"] + [{"id": "s9.obs", "role": "observation", "body": "x"}],
     }
     assert classify(pre, rec, same)["class"] == "no_register_dependence"
+
+
+def _exchange(question: str, items: dict[str, float]) -> dict[str, Any]:
+    req = {
+        "question": question,
+        "background": "B",
+        "items": [{"key": k, "text": "t" + k} for k in items],
+    }
+    return {"request": req, "answers": dict(items), "status": "ok"}
+
+
+def _body(question: str, keys: list[str]) -> dict[str, Any]:
+    req = {
+        "version": "jev-primitive/1",
+        "id": "ab12cd34",
+        "question": question,
+        "background": "B",
+        "items": [{"key": k, "text": "t" + k} for k in keys],
+    }
+    return build_body(req, "m")
+
+
+def test_answers_are_matched_per_item_and_substitutions_are_valid() -> None:
+    table = answer_table(
+        [_exchange("Q1", {"a": 0.9, "b": 0.2, "c": 0.4}), _exchange("Q2", {"a": 0.1})]
+    )
+    assert table[next(k for k in table if '"Q1"' in k and '"a"' in k)]["permuted"] == 0.2  # rotated
+    assert table[next(k for k in table if '"Q2"' in k)]["permuted"] == 0.1  # one item: unchanged
+    # A recombined request of recorded items is answerable item by item...
+    sub = _Scripted("inverted", table)
+    out, err = sub(_body("Q1", ["c", "a"]))
+    assert err is None and out.probabilities == {"i0": 0.6, "i1": 0.1}
+    assert sub.log[0]["items"] == [
+        {"key": "c", "recorded": 0.4, "served": 0.6},
+        {"key": "a", "recorded": 0.9, "served": 0.1},
+    ]
+    # ...but a question the original run never asked about an item has no valid answer.
+    out, err = sub(_body("Q2", ["b"]))
+    assert out is None and sub.unmatched == 1
+
+
+def test_substitution_classes_keep_failures_apart_from_selection() -> None:
+    pre = [{"id": "r1", "role": "note", "body": "CURRENT [S1.1] csv"}]
+    rec = {
+        "exit_code": 0,
+        "timed_out": False,
+        "entries": [{"id": "r1", "role": "note", "body": "HISTORY [S1.1] csv"}],
+    }
+
+    def sub(**kw: Any) -> dict[str, Any]:
+        return {
+            "exit_code": 0,
+            "timed_out": False,
+            "entries": pre,
+            "unmatched": 0,
+            "answers_changed": True,
+            **kw,
+        }
+
+    assert (
+        classify_substitution(pre, rec, sub(unmatched=1))["class"] == "unsupported_counterfactual"
+    )
+    assert (
+        classify_substitution(pre, rec, sub(answers_changed=False))["class"]
+        == "substitution_identical"
+    )
+    assert classify_substitution(pre, rec, sub(exit_code=1))["class"] == "crash_under_substitution"
+    assert classify_substitution(pre, rec, sub())["class"] == "no_edit_under_substitution"
+    moved = [
+        {"id": "r1", "role": "note", "body": "CURRENT [S1.1] csv"},
+        {"id": "r2", "role": "note", "body": "CURRENT [S3.1] json"},
+    ]
+    assert classify_substitution(pre, rec, sub(entries=moved))["class"] == "substantive"
+
+
+def test_code_audit_flags_register_literals_and_existing_item_ids() -> None:
+    caller = "regmgr.apply(c, [], {'reg.S1.2': 'HISTORY [S1.2] replaced by S5.2'})\nupdate(5, notes={'S5.1': 'x'})"
+    a = audit_code(caller, stage=5)
+    assert a["register_literals"] == 1 and a["earlier_item_ids"] == ["S1.2"]  # S5.x are new items
+    assert audit_code("import h\nh.update(5)\n", stage=5) == {
+        "register_literals": 0,
+        "earlier_item_ids": [],
+    }
+
+
+def test_last_request_substitution_serves_recorded_answers_before_it() -> None:
+    """Post-hoc diagnostic: only the execution's last request gets substituted values."""
+    table = answer_table([_exchange("Q1", {"a": 0.9, "b": 0.2}), _exchange("Q2", {"a": 0.3})])
+    sub = _Scripted("inverted_last", table, substitute_from=2)
+    first, _ = sub(_body("Q1", ["a", "b"]))
+    second, _ = sub(_body("Q2", ["a"]))
+    assert first.probabilities == {"i0": 0.9, "i1": 0.2}  # recorded
+    assert second.probabilities == {"i0": 0.7}  # inverted

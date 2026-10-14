@@ -1,6 +1,6 @@
 {
  "id": "014-jev-helper-primitives",
- "title": "Experiment 014: Jev as a primitive inside model-written context helpers (prompted live demonstration; W3 comparison-phase development pilot)",
+ "title": "Experiment 014: Jev as a primitive inside model-written context helpers (prompted live demonstration; W3 comparison-phase development pilot; development revision R1 delegation smoke)",
  "provenance": {
   "source_repo": "https://github.com/armalite/clm-lib",
   "base_commit": "024fc76",
@@ -27,7 +27,16 @@
    "instruction_b": "experiments/014-jev-helper-primitives/comparison-instruction-b.txt in the results repository (SHA-256 prefix 1064862cd4246ffe); A has no extra instruction",
    "config": "configs/exp014c.toml (context budget 12000, jev_primitive 8/40/20, ceiling 87.535602)",
    "budget": "ledger ceiling set explicitly from USD 85.351732 to USD 87.535602 (settled spend USD 84.535602 + USD 3 new for the comparison smoke and pilot, both providers); earlier unused allowances not stacked",
-   "status": "B smoke and 4-run development pilot run once each: all 5 runs code-correct (smoke 42/42, pilot 64/64), register harm 0; Jev called in every B run (9, 17, 11 calls) but replay found no register change that depended on the answers in any of 15 Jev-using executions (answers were printed and Claude wrote the edits); B cost +18% and +32% vs A. Mechanism not exercised; evaluation not run (not authorised)."
+   "status": "B smoke and 4-run development pilot run once each: all 5 runs code-correct (smoke 42/42, pilot 64/64), register harm 0; Jev called in every B run (9, 17, 11 calls) but replay found no register change that depended on the answers in any of 15 Jev-using executions (answers were printed and Claude wrote the edits); B cost +18.5% and +32% vs A (dev-1: +18.5%; elsewhere rounded to +19%). Mechanism not exercised; evaluation not run (not authorised)."
+  },
+  "r1": {
+   "protocol": "experiments/014-jev-helper-primitives/protocol-r1.md in the results repository (frozen before the smoke; freeze record 1, record 2 after the run)",
+   "design": "experiments/014-jev-helper-primitives/revision-delegation.md",
+   "tree_state": "HEAD 602128d plus replay.py jev-replay/2 (item-level answer matching, valid inverted/permuted substitutions with logs, unsupported-counterfactual detection, code audit; post-hoc last-request variants added after the run), its tests, configs/exp014r1.toml",
+   "instruction": "experiments/014-jev-helper-primitives/r1-instruction-b.txt (SHA-256 prefix 69440997d89fdcab)",
+   "config": "configs/exp014r1.toml (= exp014c.toml except ceiling 87.182345; context budget 12000 to isolate the mechanism)",
+   "budget": "ledger ceiling set explicitly from USD 87.535602 to USD 87.182345 (settled spend USD 86.182345 + USD 1 new for R1, both providers); earlier unused allowances not stacked",
+   "status": "one configured R1 smoke on w3-smoke-1: code 42/42, register harm 0; contract held (callers passed only the stage; helper selection driven by answers >= 0.6); 11 Jev calls; recorded replay reproduced all 5 Jev-using executions; frozen criterion NOT met (valid substitutions unsupported at the change notices because requests are sequential); post-hoc last-request substitutions substantive at stages 3-5 (exploratory)."
   }
  },
  "settings": {
@@ -51,7 +60,8 @@
  "phases": {
   "prompted-demonstration": "one live run on w2-dev-1 with the configured demonstration instruction; run once, not a comparison",
   "comparison-smoke": "one configured B run on w3-smoke-1; excluded from comparisons",
-  "comparison-pilot": "W3 development pilot: 2 instances x A/B, once per cell, in the frozen order"
+  "comparison-pilot": "W3 development pilot: 2 instances x A/B, once per cell, in the frozen order",
+  "r1-smoke": "development revision R1: one configured delegation smoke on w3-smoke-1 (B only; no comparison)"
  },
  "runs": [
   {
@@ -95,6 +105,13 @@
    "phase": "comparison-pilot",
    "group": "comparison-dev",
    "note": "comparison pilot w3-dev-2 position 1: A (ordinary CLM with helpers, register objective)"
+  },
+  {
+   "run_id": "20261014T020047-clm_helpers-cacheon-jprim-w3-smoke-1-5bae",
+   "role": "smoke",
+   "phase": "r1-smoke",
+   "group": "r1-smoke",
+   "note": "014 development revision R1: configured Jev-delegated register maintenance smoke on w3-smoke-1; not a comparison"
   }
  ]
 }

@@ -344,6 +344,7 @@ Ground truth exists only in memory until the run ends, then goes to `evaluator/`
 - **Comparison phase (W3; SPEC §26):**
   - **The register is scored host-side** from the store's in-memory revisions at assessment points the runner records at each stage release and at the final answer. So the timing is fixed by the runtime, not inferred afterwards from the logs.
   - **Replay reuses the live mailbox broker** (`JevBroker`) with a scripted `call`, so the code under replay sees exactly the same client and protocol. It needs only the pre-execution workspace snapshot that W3 runs record, and the regenerated fixtures (checked against `fixture_sha256`).
+  - **Replay `jev-replay/2` matches recorded answers per item, not per request:** a sequential helper re-asks items in new combinations, and Jev judges each item independently against the shared background. When substituted answers make the code ask something never asked, no answer is invented and the counterfactual is reported as unsupported. That is why R1's frozen test could not be completed at the change notices, and why a last-request-only diagnostic exists.
 
 ## Design choices
 

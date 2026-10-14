@@ -1,42 +1,47 @@
-"""Offline replay attribution for jev-primitive/1 runs (experiment 014 comparison phase).
+"""Offline replay attribution for jev-primitive/1 runs (experiment 014; ``jev-replay/2``).
 
 For each execution of a recorded run in which model-written code called ``clm_jev.judge``, the
 step script is re-executed in the normal sandbox (DockerExecutor, no network) on an isolated
 copy of the recorded pre-execution workspace (``workspace_pre/step-NNN.json``, written by the
-runtime for W3 runs) and the fixtures as released at that step, with scripted Jev responses:
-
-- ``recorded``: the recorded answers, served for requests that match a recorded request
-  exactly (question, background, items). This must reproduce the accepted context revision;
-- ``withheld``: every request is answered ``status: "error"`` with no answers (the code's own
-  no-answer path);
-- ``inverted``: each recorded probability p is served as 1 - p (a sensitivity check).
-
+runtime for W3 runs) and the fixtures as released at that step, with scripted Jev responses.
 No paid call is made and no original artifact is modified; output goes to a separate folder.
 
-The comparison of ``recorded`` and ``withheld`` says which context changes the helper's
-behaviour made **dependent on its Jev inputs**. It is not evidence that an edit was correct or
-that it improved the task. Classes per step:
+Responses are matched **per judged item** (question, background, item key, item text): Jev
+judges each item separately against the shared background, so an item the original run asked
+about can be answered wherever the replayed code asks it again. Variants:
 
-- ``substantive``: with answers withheld the execution still exits 0 and writes context, and
-  the register differs in at least one item's label (CURRENT/HISTORY) or content (cited ids or
-  text beyond one constant string);
-- ``marker_only``: the only register differences are one constant string added to or removed
-  from items;
-- ``no_register_dependence``: the register is the same either way (other entries may differ);
-- ``crash_without_answers`` / ``no_edit_without_answers``: withholding the answers made the code
-  fail or leave the context unchanged; this is reported separately and is not counted as
-  substantive selection;
-- ``not_reproduced``: the recorded replay did not reproduce the accepted revision (the step is
-  then not classified).
+- ``recorded``: the recorded probabilities. It must reproduce the accepted revision; otherwise
+  the step is ``not_reproduced`` (a nondeterminism or reconstruction problem, reported with
+  its logs, never classified as dependence);
+- ``withheld``: every request is answered ``status: "error"`` (tests the code's fallback
+  path; a clean no-edit fallback is not, by itself, evidence that Jev selected the edits);
+- ``inverted`` and ``permuted``: **valid substituted probabilities** of the same shape, keys
+  and matching (1 - p; each recorded request's answers rotated by one position). Every
+  served value is logged. If the substituted answers make the code ask something the
+  original run never asked, no valid answer exists: the step's counterfactual is
+  ``unsupported_counterfactual`` for that variant.
+- ``inverted_last`` and ``permuted_last`` (post-hoc diagnostic, added after the R1 smoke and
+  not part of its frozen criteria): the same substitutions applied only to the execution's last
+  Jev request, so no later request can depend on them and the counterfactual is supported.
+
+Classes (register-level comparison with the recorded outcome): ``substantive`` (an item's
+CURRENT/HISTORY label or content changes), ``marker_only`` (only one constant short string
+differs), ``no_register_dependence``; and, kept apart, ``crash_without_answers`` /
+``no_edit_without_answers`` (withheld) and ``crash_under_substitution`` /
+``no_edit_under_substitution`` / ``substitution_identical`` / ``unsupported_counterfactual``
+(substitutions). A step shows **judgment-dependent selection** only if a valid substitution is
+``substantive``. A static audit of the caller and helper code (register-item literals, ids of
+existing items) is supporting evidence only. None of this shows an edit was correct.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import re
 import shutil
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -47,12 +52,21 @@ from .jev_primitive import JevBroker, PrimitiveLimits
 from .register_score import CITE, parse_register
 from .tasks import generate
 
-VERSION = "jev-replay/1"
-VARIANTS = ("recorded", "withheld", "inverted")
+VERSION = "jev-replay/2"
+VARIANTS = ("recorded", "withheld", "inverted", "permuted", "inverted_last", "permuted_last")
+SUBSTITUTIONS = ("inverted", "permuted")  # valid probabilities, same shape, keys and matching
+# Post-hoc diagnostic (added after the R1 smoke; not part of R1's frozen criteria): substitute
+# only the execution's last Jev request, so no later request can depend on the change and the
+# counterfactual is always supported. Earlier requests get their recorded answers.
+LAST_ONLY = ("inverted_last", "permuted_last")
 
 
 def _canon(question: str, background: str, items: list[dict[str, str]]) -> str:
     return json.dumps([question, background, items], sort_keys=True)
+
+
+def _item_key(question: str, background: str, item: dict[str, str]) -> str:
+    return json.dumps([question, background, item["key"], item["text"]])
 
 
 def _from_body(body: dict[str, Any]) -> tuple[str, str, list[dict[str, str]]]:
@@ -61,29 +75,84 @@ def _from_body(body: dict[str, Any]) -> tuple[str, str, list[dict[str, str]]]:
     return first["instructions"]["question"], body["state"]["background"], body["state"]["items"]
 
 
+def answer_table(exchanges: list[dict[str, Any]]) -> dict[str, dict[str, float | None]]:
+    """Per judged item (question, background, key, text): the recorded probability and the
+    predefined substitutes. Jev judges each item separately against the shared background,
+    so an item seen in any recorded request can be answered wherever it is asked again.
+    ``permuted`` rotates each recorded request's answers by one position (a request with one
+    item keeps its answer); ``inverted`` serves 1 - p."""
+    table: dict[str, dict[str, float | None]] = {}
+    for x in exchanges:
+        q, bg, items = (
+            x["request"]["question"],
+            x["request"].get("background", ""),
+            x["request"]["items"],
+        )
+        ps = [x["answers"].get(it["key"]) for it in items]
+        for n, it in enumerate(items):
+            p, rot = ps[n], ps[(n + 1) % len(ps)]
+            table[_item_key(q, bg, it)] = {
+                "recorded": p,
+                "inverted": None if p is None else round(1 - p, 6),
+                "permuted": rot,
+            }
+    return table
+
+
 @dataclass
 class _Scripted:
-    """The broker's ``call``: serve scripted answers for one variant."""
+    """The broker's ``call``: serve scripted answers for one variant, item by item."""
 
     variant: str
-    answers: dict[str, dict[str, float | None]]  # canonical request -> answers by item key
-    mismatches: int = 0
+    table: dict[str, dict[str, float | None]]
+    substitute_from: int = 1  # 1-based request number from which the variant's values are served
+    unmatched: int = 0
     served: int = 0
+    log: list[dict[str, Any]] = field(default_factory=list)
 
     def __call__(self, body: dict[str, Any]) -> tuple[Any, str | None]:
         self.served += 1
         if self.variant == "withheld":
+            self.log.append({"request": self.served, "served": "error (withheld)"})
             return None, "replay: answers withheld"
         q, bg, items = _from_body(body)
-        rec = self.answers.get(_canon(q, bg, items))
-        if rec is None:
-            self.mismatches += 1
+        rows = [self.table.get(_item_key(q, bg, it)) for it in items]
+        if any(r is None for r in rows):
+            # Not a request the original run made (the substituted answers changed what the
+            # code asked): no valid answer exists, so the counterfactual is unsupported.
+            self.unmatched += 1
+            self.log.append(
+                {
+                    "request": self.served,
+                    "served": "error (unmatched request)",
+                    "unmatched_keys": [
+                        it["key"] for it, r in zip(items, rows, strict=True) if r is None
+                    ],
+                }
+            )
             return None, "replay: request differs from every recorded request"
-        probs = {}
-        for n, it in enumerate(items):
-            p = rec.get(it["key"])
-            probs[f"i{n}"] = None if p is None else (1 - p if self.variant == "inverted" else p)
+        probs, logged = {}, []
+        for n, (it, r) in enumerate(zip(items, rows, strict=True)):
+            assert r is not None
+            col = (
+                self.variant.removesuffix("_last")
+                if self.served >= self.substitute_from
+                else "recorded"
+            )
+            probs[f"i{n}"] = r[col]
+            logged.append({"key": it["key"], "recorded": r["recorded"], "served": r[col]})
+        self.log.append({"request": self.served, "question": q[:200], "items": logged})
         return SimpleNamespace(probabilities=probs, model="replay"), None
+
+
+AUDIT_LITERAL = re.compile(r"""["'](?:CURRENT|HISTORY)\s*\[""")
+
+
+def audit_code(code: str, stage: int) -> dict[str, Any]:
+    """Supporting static evidence (not proof): register-item string literals, and ids of items
+    released before ``stage`` (existing items), named in code."""
+    earlier = sorted({f"S{a}.{b}" for a, b in CITE.findall(code) if int(a) < stage})
+    return {"register_literals": len(AUDIT_LITERAL.findall(code)), "earlier_item_ids": earlier}
 
 
 def _entries(ws: Path) -> list[dict[str, Any]] | None:
@@ -167,6 +236,22 @@ def classify(
     }
 
 
+def classify_substitution(
+    pre: list[dict[str, Any]] | None, rec: dict[str, Any], sub: dict[str, Any]
+) -> dict[str, Any]:
+    """Recorded answers vs valid substituted answers for one step."""
+    if sub["unmatched"]:
+        return {"class": "unsupported_counterfactual", "unmatched_requests": sub["unmatched"]}
+    if not sub["answers_changed"]:
+        return {"class": "substitution_identical"}
+    if sub["exit_code"] != 0 or sub["timed_out"]:
+        return {"class": "crash_under_substitution"}
+    if rec["entries"] != pre and sub["entries"] == pre:
+        return {"class": "no_edit_under_substitution"}
+    out = classify(pre, rec, sub)
+    return out
+
+
 def replay_run(
     run_dir: Path, out_dir: Path, executor: DockerExecutor | None = None
 ) -> dict[str, Any]:
@@ -192,15 +277,10 @@ def replay_run(
         stage = 1 + sum(1 for s, _ in released if s < step)
         pre_files = json.loads((run_dir / "workspace_pre" / f"step-{step:03d}.json").read_text())
         incomplete = [p for p, t in pre_files.items() if t.startswith("<") and t.endswith(">")]
-        answers = {
-            _canon(
-                p["request"]["question"], p["request"].get("background", ""), p["request"]["items"]
-            ): p["answers"]
-            for p in prim
-            if p["step"] == step and p.get("status") == "ok"
-        }
+        table = answer_table([p for p in prim if p["step"] == step and p.get("status") == "ok"])
         code = (run_dir / "scripts" / f"step-{step:03d}.py").read_text()
         pre_entries = None
+        audit: dict[str, Any] = {}
         variants: dict[str, Any] = {}
         for variant in VARIANTS:
             tmp = Path(tempfile.mkdtemp(prefix=f"clm-replay-{step}-{variant}-"))
@@ -218,20 +298,45 @@ def replay_run(
                     task.write_fixtures(fx, k)
                 if pre_entries is None:
                     pre_entries = _entries(ws)
-                call = _Scripted(variant, answers)
+                n_recorded = sum(1 for p in prim if p["step"] == step and p.get("called"))
+                call = _Scripted(variant, table, n_recorded if variant in LAST_ONLY else 1)
                 broker = JevBroker(ws, call, lambda rec: None, "replay", limits)
                 res = ex.run(code, ws, fx, broker=broker)
                 broker.finish()
                 entries = _entries(ws)
+                served = [i["served"] for r in call.log for i in r.get("items", [])]
+                recorded = [i["recorded"] for r in call.log for i in r.get("items", [])]
+                out_text = res.stdout or ""
                 variants[variant] = {
                     "exit_code": res.exit_code,
                     "timed_out": res.timed_out,
                     "requests_served": call.served,
-                    "request_mismatches": call.mismatches,
+                    "request_mismatches": call.unmatched if variant == "recorded" else 0,
+                    "unmatched": call.unmatched,
+                    "answers_changed": served != recorded,
+                    "fallback_lines": sum(
+                        1 for x in out_text.splitlines() if x.startswith("FALLBACK:")
+                    ),
+                    "override_lines": sum(
+                        1 for x in out_text.splitlines() if x.startswith("OVERRIDE:")
+                    ),
+                    "substitution_log": call.log,
                     "entries": entries,
                     "entries_sha": _sha(entries),
                     "stderr_tail": (res.stderr or "")[-400:],
                 }
+                if variant == "recorded":
+                    helpers = {
+                        str(f.relative_to(ws)): f.read_text(errors="replace")
+                        for f in ws.rglob("*.py")
+                        if f.name != "clm_jev.py"
+                        and "exporter" not in f.parts
+                        and "__pycache__" not in f.parts
+                    }
+                    audit = {
+                        "caller": audit_code(code, stage),
+                        "helpers": {k: audit_code(v, stage) for k, v in helpers.items()},
+                    }
             finally:
                 shutil.rmtree(tmp, ignore_errors=True)
         edit = edits.get(step)
@@ -252,15 +357,29 @@ def replay_run(
             "edit_status": edit.get("status") if edit else "not_written",
             "reproduced": reproduced and variants["recorded"]["request_mismatches"] == 0,
             "incomplete_snapshot_files": incomplete,
+            "audit": audit,
             "variants": {
                 v: {k: x for k, x in d.items() if k != "entries"} for v, d in variants.items()
             },
         }
         if rec["reproduced"]:
             rec["dependence"] = classify(pre_entries, variants["recorded"], variants["withheld"])
-            rec["inverted"] = classify(pre_entries, variants["recorded"], variants["inverted"])
+            rec["substitutions"] = {
+                v: classify_substitution(pre_entries, variants["recorded"], variants[v])
+                for v in SUBSTITUTIONS
+            }
+            rec["substantive_under_valid_substitution"] = any(
+                x["class"] == "substantive" for x in rec["substitutions"].values()
+            )
+            rec["post_hoc_last_request"] = {
+                v: classify_substitution(pre_entries, variants["recorded"], variants[v])
+                for v in LAST_ONLY
+            }
         else:
             rec["dependence"] = {"class": "not_reproduced"}
+            rec["substitutions"] = {}
+            rec["substantive_under_valid_substitution"] = False
+            rec["post_hoc_last_request"] = {}
         out["steps"].append(rec)
         (out_dir / f"step-{step:03d}").mkdir(parents=True, exist_ok=True)
         for v, d in variants.items():
@@ -269,9 +388,35 @@ def replay_run(
             )
     classes = [s["dependence"]["class"] for s in out["steps"]]
     out["summary"] = {c: classes.count(c) for c in sorted(set(classes))}
+    out["substitution_summary"] = {
+        v: dict(
+            sorted(
+                {
+                    c: sum(
+                        1 for s in out["steps"] if s["substitutions"].get(v, {}).get("class") == c
+                    )
+                    for c in {
+                        s["substitutions"].get(v, {}).get("class", "none") for s in out["steps"]
+                    }
+                }.items()
+            )
+        )
+        for v in SUBSTITUTIONS
+    }
+    out["stages_substantive_under_valid_substitution"] = sorted(
+        {s["stage"] for s in out["steps"] if s["substantive_under_valid_substitution"]}
+    )
+    out["post_hoc_stages_substantive_last_request"] = sorted(
+        {
+            s["stage"]
+            for s in out["steps"]
+            if any(x.get("class") == "substantive" for x in s["post_hoc_last_request"].values())
+        }
+    )
     out["note"] = (
-        "Dependence of the helper's behaviour on its Jev inputs (recorded vs withheld answers), "
-        "not evidence that an edit was correct or improved the task."
+        "Dependence of the helper's behaviour on its Jev inputs: recorded vs withheld answers "
+        "(fallback behaviour) and recorded vs valid substituted answers (inverted, permuted). "
+        "Not evidence that an edit was correct or improved the task."
     )
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "replay.json").write_text(json.dumps(out, indent=1), encoding="utf-8")

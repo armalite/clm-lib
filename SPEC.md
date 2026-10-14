@@ -1,6 +1,6 @@
 # clm-lib: Technical Specification
 
-Version: 2.12 | 14 October 2026
+Version: 2.13 | 14 October 2026
 
 Repository: `clm-lib` | Python package: `clm_lib` | CLI: `clm-lib`
 
@@ -25,6 +25,7 @@ Version history:
 - 2.10: adds §25, Jev as a primitive inside model-written code (`jev-primitive/1`), opt-in and off by default (experiment 014).
 - 2.11: adds §25's per-run extra instruction (`run --extra-instruction-file`), used for experiment 014's prompted demonstration; off unless given.
 - 2.12: adds §26, the W3 register workload (`export-gen/2`, code scorer `export-checks/2`, register scorer `register-checks/1`) and offline replay attribution for jev-primitive runs (`jev-replay/1`, `replay-jev`), for experiment 014's comparison phase; opt-in (W3 tasks and the command only).
+- 2.13: updates §26's replay attribution to `jev-replay/2` (item-level answer matching, valid inverted and permuted substitutions with logs, unsupported-counterfactual detection, a supporting code audit, and post-hoc last-request variants), used for experiment 014's development revision R1.
 - 1.9: adds a multi-round incident task family, two CLM capability variants (direct editing only; reusable helpers allowed), a separate summary-call allowance, helper-evidence tiers and a three-condition schedule (§18).
 - 1.8: adds a versioned request layout (`blocks/1`), optional provider prompt caching with explicit breakpoints, per-run cache isolation, cache-aware accounting evidence, and a four-condition comparison schedule (§17).
 - 1.7: adds a second coding generator with interacting, partially changing rules, an evaluator with richer categories, exact type checks and stage snapshots (§16), a balanced comparison order, and per-task scorer metadata in comparisons and exports.
@@ -716,4 +717,11 @@ The summary baseline's policy is selected by `[baseline] policy`, and recorded i
   - **Safeguards:** no API calls; the run folder is not modified.
   - **Classes:** `substantive`, `marker_only`, `no_register_dependence`, `crash_without_answers`, `no_edit_without_answers`, `not_reproduced`.
   - **What it reports:** dependence of the helper's behaviour on its inputs, not correctness.
+  - **Version 2** (`jev-replay/2`, experiment 014 R1):
+    - **Answer matching:** answers are matched per judged item (question, background, item key and text).
+    - **Valid substitutions:** `inverted` (1 − p) and `permuted` (answers rotated within each recorded request) serve valid probabilities of the same shape, and every served value is logged.
+    - **Unsupported counterfactuals:** a request the original run never made gets no answer, and the step's counterfactual is reported as `unsupported_counterfactual`.
+    - **Withholding** tests the fallback path only.
+    - **`inverted_last` and `permuted_last`** substitute only an execution's last request (a post-hoc diagnostic).
+    - **Each step also carries a static audit:** register-item literals, and ids of existing items in the caller and helper code. It is supporting evidence only.
 - **Unchanged:** W2 and every earlier task, prompt and config. `configs/exp014c.toml` is the comparison phase's config.
