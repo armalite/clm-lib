@@ -36,17 +36,21 @@ def summarise(run_dir: Path) -> dict[str, Any]:
     session = json.loads((run_dir / "session.json").read_text(encoding="utf-8"))
     attempts = read_jsonl(run_dir / "attempts.jsonl")
     finished = [a for a in attempts if a["event"] == "finished"]
-    return {
+    provenance = session["provenance"]
+    out: dict[str, Any] = {
         "format": EXPORT_FORMAT,
         "session_format": session["format"],
         "run_id": session["run_id"],
         "evidence": session["evidence"],
         "mode": session.get("mode"),
+        # Sessions of the paper and summary arms do not use guarded-clm, and record no guarded-clm provenance.
         "guarded_clm": {
-            k: session["provenance"]["guarded_clm"].get(k)
+            k: provenance["guarded_clm"].get(k)
             for k in ("version", "install", "git", "source_sha256")
-        },
-        "harness": {k: session["provenance"]["harness"].get(k) for k in ("git", "source_sha256")},
+        }
+        if "guarded_clm" in provenance
+        else None,
+        "harness": {k: provenance["harness"].get(k) for k in ("git", "source_sha256")},
         "turns": session["turns"],
         "attempts": {
             "started": sum(1 for a in attempts if a["event"] == "started"),
@@ -57,6 +61,24 @@ def summarise(run_dir: Path) -> dict[str, Any]:
         "trace_records": _count(r["type"] for r in read_jsonl(run_dir / "trace.jsonl")),
         "tool_events": _count(r["event"] for r in read_jsonl(run_dir / "tools.jsonl")),
     }
+    if "arm" in session:  # absent from guarded-clm sessions, whose manifests are unchanged
+        out["arm"] = session["arm"]
+        out["attempts"]["by_category"] = _count(a.get("category", "main") for a in finished)
+        out["attempts"]["charged_usd_by_category"] = {
+            c: round(
+                sum(a.get("charged_usd", 0.0) for a in finished if a.get("category", "main") == c),
+                6,
+            )
+            for c in sorted({a.get("category", "main") for a in finished})
+        }
+        # Confirmed (provider-reported usage at the dated price) apart from charges assumed at the reservation.
+        out["attempts"]["charged_usd_by_basis"] = {
+            b: round(
+                sum(a.get("charged_usd", 0.0) for a in finished if a.get("cost_basis") == b), 6
+            )
+            for b in sorted({a["cost_basis"] for a in finished if "cost_basis" in a})
+        }
+    return out
 
 
 def _count(items: Any) -> dict[str, int]:

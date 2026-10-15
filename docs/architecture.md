@@ -387,7 +387,7 @@ arm execution policy   which calls run, and in what order (not decided here); ta
 - edit-only turns (the mirror changed, nothing printed, exit 0) are free for `max_steps` but count toward `lm_call_cap`;
 - neither source describes `context_read`/`context_apply`, so `paper_clm_tools` is this project's adaptation.
 
-**Library-first sequencing (2026-10-15):** programme 015's lite arms will use the separate guarded-clm library, imported at a pinned version (SPEC §27.7). clm-lib keeps the harness concerns only: the paper arms' transport, counters, the output cap, the runner, the sandbox, accounting and exports. It does not copy the library's logic. **Update (2026-10-15):** the library is a Pydantic AI capability (`clm_context()`), a faithful port of a tested implementation. Hosting it is clm-lib's integration work (decisions G1 to G8 below, SPEC §28), tracked in clm-lib and the results repository, not in the library's plan.
+**Library-first sequencing (2026-10-15):** programme 015's lite arms will use the separate guarded-clm library, imported at a pinned version (SPEC §27.7). clm-lib keeps the harness concerns only: the paper arms' transport, counters, the output cap, the runner, the sandbox, accounting and exports. It does not copy the library's logic. **Update (2026-10-15):** the library is a Pydantic AI capability (`clm_context()`). Hosting it is clm-lib's integration work (decisions G1 to G8 below, SPEC §28), tracked in clm-lib and the results repository, not in the library's plan.
 
 **A pre-existing executor edge, noted but not changed:** the runtime-evidence line in stderr is removed from the captured head only when the whole line is inside the head. When stderr fills the capture to within the record's length, a partial record could appear in the captured stderr. The historical path is unchanged; for `tool-output-cap/1` the larger capture makes this rarer, not impossible.
 
@@ -424,6 +424,16 @@ arm execution policy   which calls run, and in what order (not decided here); ta
   - **The pin:** the p015 group pins `anthropic==0.125.0`, the newest SDK that works with it, verified only offline through an in-memory transport. The historical environment keeps 1.11.0.
   - **Before any live use:** a live smoke would still have to confirm provider compatibility.
 
+**Workload (2026-10-16):** `src/clm_lib/p015/docthread/` holds the incident-thread workload (SPEC §29). It uses only the p015 interfaces: its tools are `tooling.Tool`s bridged by `tools.bridge`, and it runs through `GuardedSession`. It adds nothing to guarded-clm.
+
+**The paper and summary arms (2026-10-16, SPEC §30):** `paper_clm_shell` (`paper-clm-shell/1`) and the summary baseline (`token-tail-p015/1`) run through `ArmSession`, a separate runner, so `GuardedSession` and its verified transcripts stay unchanged. The choices:
+- **The capability owns the conversation.** Each arm is a Pydantic AI capability whose `before_model_request` sends its own message list, which Pydantic AI then adopts as the history. The pinned first request (system prompt and question 1) leads every request. Notices are added to the outgoing copy only, never to the arm's state.
+- **The paper arm's shell** is a fresh Docker container per command, with the executor's isolation, mounting only the mirror directory and a per-session `/work`. `bash` is a Pydantic AI `sequential` tool, so it runs alone among a response's calls. Without Docker, the command is refused, and the turn ends as `sandbox_unavailable`.
+- **The summary arm reuses** `baseline.SummaryPolicy` and the `token-tail/1` summariser layout as they are. Only the unit of history, the summary's placement and the summariser's system text are new. These are versioned as `token-tail-p015/1`.
+- **Summariser accounting:** a second `AccountedModel` (category `summary`) shares the ledger, recorder and attempt numbers, so the summariser's calls, tokens, cache figures, latency and cost are recorded apart and obey the same refusals.
+- **Estimation:** both arms use `p015-ratio-estimate/1`, not guarded-clm's estimator. This is a recorded difference between arms, not an attempt to match it.
+- **Adaptations** to the public descriptions are listed, element by element, in the results repository (`paper-clm-shell-fidelity.md` and `arm-settings.md`). The departures from the paper's README include: the last mirror block must stay unchanged; rollback is limited to the current turn; the nudge percentages are taken of the limit; and the shared answer contract replaces `submit`.
+
 **Files:**
 
 ```
@@ -434,6 +444,12 @@ src/clm_lib/p015/
   records.py      SessionRecorder (session.json, attempts/trace/tools/turns JSONL)
   session.py      GuardedSession, GuardedSettings, TurnOutcome, ending classification
   export.py       guarded-session-export/1 (python -m clm_lib.p015.export RUN_DIR DEST_DIR)
+  arms.py         ArmSession: the paper and summary arms' runner (SPEC §30)
+  arm_errors.py   ArmContextLimit, ArmStepLimit, SummaryCallCap
+  estimate.py     p015-ratio-estimate/1 (request characters over a ratio)
+  paper/          mirror.py (ctx-turn-mirror/1), shell.py (ShellSandbox), capability.py (PaperShellContext)
+  summary/        capability.py (TokenTailSummary, token-tail-p015/1)
+  docthread/      the workload (SPEC §29); plain_agent.py and arms_offline.py for the two arms' offline sessions
 tests/p015/       comparison harness and tests (skipped outside the p015 environment; network blocked)
 ```
 
@@ -442,6 +458,7 @@ tests/p015/       comparison harness and tests (skipped outside the p015 environ
 ```bash
 UV_PROJECT_ENVIRONMENT=.venv-p015 uv sync --no-config --frozen --no-dev --group p015 --python 3.13
 .venv-p015/bin/python -m pytest -q tests/p015
+.venv-p015/bin/python -m clm_lib.p015.docthread.arms_offline OUT_DIR --matrix
 ```
 
 

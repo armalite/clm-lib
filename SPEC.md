@@ -1,6 +1,6 @@
 # clm-lib: Technical Specification
 
-Version: 2.16 | 15 October 2026
+Version: 2.18 | 16 October 2026
 
 Repository: `clm-lib` | Python package: `clm_lib` | CLI: `clm-lib`
 
@@ -29,6 +29,8 @@ Version history:
 - 2.14: adds §26's W3 instances `w3-dev-3` and `w3-dev-4` (fresh seeds of the dev-1 and dev-2 schedules) and the replay's neutral `last_request` keys, for experiment 014's R1 matched development pilot.
 - 2.15: adds §27, shared foundations for programme 015 (opt-in, not yet wired into the runner): the native-tool transport `native-tools/1`, tool interfaces, versioned counters `session-counters/1`, the task-tool output cap `tool-output-cap/1` and accounted native dispatch. No arm, workload or live path uses them yet; §27.6 lists what is pending.
 - 2.16: adds §28, the programme 015 guarded-clm integration path (`clm_lib.p015`): opt-in, in a separate environment, verified offline with scripted and mocked models only.
+- 2.18: adds §30, the programme 015 paper and summary arms (`paper-clm-shell/1`, `token-tail-p015/1`) on a shared runner, `ArmSession`, verified offline with scripted sessions only.
+- 2.17: adds §29, the programme 015 incident-thread workload `docthread` (generator `docthread-gen/1`, task `docthread-task/1`, scorer `docthread-score/1`), verified offline with scripted sessions only.
 - 1.9: adds a multi-round incident task family, two CLM capability variants (direct editing only; reusable helpers allowed), a separate summary-call allowance, helper-evidence tiers and a three-condition schedule (§18).
 - 1.8: adds a versioned request layout (`blocks/1`), optional provider prompt caching with explicit breakpoints, per-run cache isolation, cache-aware accounting evidence, and a four-condition comparison schedule (§17).
 - 1.7: adds a second coding generator with interacting, partially changing rules, an evaluator with richer categories, exact type checks and stage snapshots (§16), a balanced comparison order, and per-task scorer metadata in comparisons and exports.
@@ -832,7 +834,7 @@ Dispatch follows §4.2 and the existing runner, with two differences: the tool d
 - **What changed:** the lite arms' context-management runtime (`clm_lite_*`) is now being built as the separate library [guarded-clm](https://github.com/armalite/guarded-clm). clm-lib will import it at a pinned version and record that version in run provenance; that is guarded-clm's plan chunk 5. The library's behaviour is specified in its own SPEC and is not repeated here.
 - **What it supersedes:** the earlier next step, building the incident-thread generator and task tools straight after §27's foundations. The generator and the scorer are still needed, but the library chunks come first.
 - **What it does not change:** the §27 foundations (the native transport for the paper arms, the counters and the output cap). How `clm_lite_v2` and `clm_lite_v3_1` map onto the library's configuration is an open decision.
-- **Correction (2026-10-15, later the same day):** guarded-clm no longer reconstructs the design. It is a faithful port of an existing, tested implementation: a Pydantic AI capability, `ClmContext`, built by `clm_context()`. The library's own SPEC.md defines its behaviour. Integrating it into clm-lib has not started; because clm-lib's runner is not Pydantic AI based, how the harness hosts the capability is its first design question. **Update:** done offline, see §28. The integration is tracked here and in the results repository; guarded-clm's own plan covers library work only.
+- **Correction (2026-10-15, later the same day):** guarded-clm's design changed: it is now a Pydantic AI capability, `ClmContext`, built by `clm_context()`. The library's own SPEC.md defines its behaviour. Integrating it into clm-lib has not started; because clm-lib's runner is not Pydantic AI based, how the harness hosts the capability is its first design question. **Update:** done offline, see §28. The integration is tracked here and in the results repository; guarded-clm's own plan covers library work only.
 
 ## 28. Programme 015 guarded-clm integration path (offline-verified; opt-in)
 
@@ -890,3 +892,70 @@ A session directory holds:
   - there are no live calls, and there is no live authorisation;
   - the paper and summary arms, the scenario generators, paid-run scheduling and analysis are not implemented;
   - provider compatibility is unverified until an authorised smoke (G8).
+
+## 29. Programme 015 incident-thread workload: `docthread` (offline-verified)
+
+**Where it lives:** `clm_lib.p015.docthread`. It runs on the §28 path, and the design rationale and parameters are in the results repository (`experiments/015-public-clm-comparison/docthread-workload.md`). It is an independently written public scenario; it supersedes an earlier, abandoned plan for this workload.
+
+**The modules:**
+- **`fixture.py` (`docthread-gen/1`):** a seeded fictional document-processing pipeline incident, built from an instance definition (seed and mechanism) and fully determined by it.
+  - **Contents:** job-event journals by component, hour and page (58 events per page); configuration change logs; queue statistics in ten-minute rows; a playbook.
+  - **Mechanisms:** a lease, memory or page-cap setting lowered by one change.
+  - **Distractors:** a legitimate rejection burst earlier, an unrelated change shortly before, an index backlog, and decoy playbook symptoms.
+  - **Unique support:** `uniqueness_problems` checks that every scored fact is held by its declared outputs and no others, over all 171 calls, and that every output stays under 7,800 characters.
+- **`tools.py`:** `EvidenceService`, four read-only `tooling.Tool`s (`read_journal`, `list_changes`, `queue_stats`, `read_playbook`). They are bridged by §28.3, which applies schema validation and the 8,000-code-point cap. Every call is logged under a canonical key, so refetches are counted, never refused. Errors are neutral.
+- **`task.py` (`docthread-task/1`):** eight questions with ten values; questions 5, 7 and 8 recall facts seen only while answering 2, 1 and 3. Each user turn ends with the same reply format, a fenced `json` block with the named fields.
+- **`scoring.py` (`docthread-score/1`):** per-value exact or numeric rules, and a quote rule (a substring of a real incident-hour line of the failing component, of at least 24 characters, containing the setting at its new value).
+  - **Diagnostics,** separate from correctness: a status (`missing`, `malformed`, `distractor`, `other_evidence`, `not_in_evidence`, and for quotes `too_short`, `not_a_journal_line`, `wrong_line`); and, for recall values, `carried_in_turn` and `refetched`.
+- **`agent.py`:** a scripted investigator (`tidy` and `keep` policies) used only for offline checks.
+- **`offline.py`:** runs sessions through `GuardedSession` and records the task versions, score and measurements in `session.json`.
+
+**Instances:**
+- **Development:** `docthread-dev-1` (7301, lease) and `docthread-dev-2` (7302, memory).
+- **Confirmation:** defined at freeze time only.
+
+**Status:** offline verification only. There are no model results. See docs/results.md.
+
+## 30. Programme 015 paper and summary arms (offline-verified)
+
+**Where they live:** `clm_lib.p015.paper`, `clm_lib.p015.summary` and `clm_lib.p015.arms`. They run on the §28 path's interfaces and do not use guarded-clm. The fidelity mapping, the settings table and the offline sessions are in the results repository (`experiments/015-public-clm-comparison/`: `paper-clm-shell-fidelity.md`, `arm-settings.md`, `arms-offline.md`).
+
+### 30.1 Runner (`arms.py`)
+
+`ArmSession` hosts one of the two arms the way `GuardedSession` (§28.1, unchanged) hosts guarded-clm: one Pydantic AI `Agent` per session, the bridged task tools (§28.3), the accounting wrapper (§28.2), the recorder and export (§28.4), and one `agent.run` per user turn with the previous turn's messages and the same `conversation_id`. Each arm is a capability that owns the model-visible message list: Pydantic AI adopts the request the capability sends as its history.
+
+**Endings** are §28.1's, with the arms' own errors: `context_limit` (`ArmContextLimit`), `step_limit` (`ArmStepLimit`), `call_cap`, `summary_call_cap` (`SummaryCallCap`), and `sandbox_unavailable` (no isolated container could start; nothing ran on the host).
+
+**Records:** `session.json` gains `arm` and the arm's settings, and records no guarded-clm provenance. The export manifest (`guarded-session-export/1`) gains `arm`, attempts by category, and charges by category and by cost basis. These appear only for arm sessions, so guarded-clm sessions' manifests are unchanged.
+
+### 30.2 `paper_clm_shell` (`paper-clm-shell/1`)
+
+- **The mirror** (`mirror.py`, `ctx-turn-mirror/1`): the editable conversation (everything after the pinned first request) as `/tmp/.live_ctx/LIVE_CTX_MAIN.txt`, one `[[CTX_TURN i role=user|assistant|tool]]` block per message. Calls and results are sections inside their blocks. `parse` rebuilds changed blocks, reuses unchanged ones, and rejects invalid conversations with a reason.
+- **The shell** (`shell.py`): `ShellSandbox` runs each `bash` command in a fresh Docker container, with the executor's isolation flags (no network, non-root, no capabilities, `no-new-privileges`, memory, CPU and process limits, read-only root, private `/tmp`, `HOME=/tmp`). It mounts only the mirror directory and a per-session `/work`. It refuses to run without Docker; there is no host fallback.
+- **The capability** (`capability.py`, `PaperShellContext`):
+  - the `fit` edit gate, applied after each command, and a one-line receipt;
+  - nudges at 25, 50 and 75% of the limit, and the adaptive persistent nudge;
+  - rollback of the current turn's newest steps when over the limit (2,048-token margin, up to 50 per turn), then one final over-limit request;
+  - free edit-only steps; 60 task steps and 144 calls per turn;
+  - only the first `bash` call of a response runs, and the others get an explicit not-run result.
+- **Settings:** `PaperSettings`. The defaults are the 015 standard (budget 32,000; limit 29,952) and the README's (margins, ratios, retries).
+
+### 30.3 The summary arm (`token-tail-p015/1`)
+
+`TokenTailSummary` applies §14's `token-tail/1` to the p015 conversation. It reuses `baseline.SummaryPolicy` unchanged for the trigger, tail split, summary length and acceptance, and `prompts.summary_user`'s layout for the summariser request.
+
+**What changed for p015:**
+- units of one reply and the following request replace entries;
+- the summary goes into the pinned first request, and the current turn's question is restated if it was summarised;
+- the summariser's system text is a docthread-neutral version of `SUMMARY_SYSTEM_TOKEN_TAIL`;
+- there is no spill to a file.
+
+**Summariser calls** go through a second `AccountedModel` (category `summary`, ledger kind `p015:summary`), which shares the ledger, recorder and attempt numbering (`AttemptCounter`). They have their own per-turn cap (`summary_call_cap`, 24, provisional). They are not task steps, and they do not count towards the 144-call cap.
+
+### 30.4 Shared pieces
+
+- **`estimate.py` (`p015-ratio-estimate/1`):** request characters over a ratio (fixed 4 for scripted models; otherwise starting at 3 and moving halfway towards each main call's observed ratio). No token-counting call is made.
+- **`AccountedModel`** takes a `category` (default `main`) and an optional shared `AttemptCounter`. Behaviour with the defaults is unchanged.
+- **`docthread/plain_agent.py`:** a scripted investigator for requests in plain message form. Its paper policies are `tidy`, `keep`, `never` and bad edits; for the summary arm it uses `none` and also acts as an extractive summariser. `docthread/arms_offline.py` runs the sessions, and `--matrix` runs the reported offline matrix.
+
+**Status:** offline verification only, with scripted models and the real sandbox. There are no model results. See docs/results.md.

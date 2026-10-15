@@ -58,6 +58,21 @@ class AccountingBoundViolated(RuntimeError):
     """Reported usage exceeded the reservation bound; reservations are unsafe (a harness defect, not a result)."""
 
 
+class AttemptCounter:
+    """Attempt numbers, shared by the wrappers of one session (the agent's and a summariser's), so that every
+    provider attempt of the session has a distinct number."""
+
+    def __init__(self) -> None:
+        self.value = 0
+        self._lock = threading.Lock()
+
+    def next(self) -> int:
+        with self._lock:
+            index = self.value
+            self.value += 1
+            return index
+
+
 class AttemptSink(Protocol):
     def attempt_started(self, entry: dict[str, Any]) -> None: ...
 
@@ -118,6 +133,8 @@ class AccountedModel(WrapperModel):
         sink: AttemptSink | None = None,
         mode: Mode = "scripted",
         live_authorised: bool = False,
+        category: str = "main",
+        counter: AttemptCounter | None = None,
     ) -> None:
         super().__init__(wrapped)
         self.ledger = ledger
@@ -126,8 +143,9 @@ class AccountedModel(WrapperModel):
         self.sink = sink
         self.mode = mode
         self.live_authorised = live_authorised
-        self.attempts = 0
-        self._lock = threading.Lock()
+        self.category = category  # "main" for the agent's calls; "summary" for a summariser's
+        self.counter = counter or AttemptCounter()
+        self.attempts = 0  # this wrapper's attempts
 
     def _refuse_if_not_allowed(self, max_tokens: int | None) -> None:
         scripted_model = isinstance(self.wrapped, FunctionModel | TestModel)
@@ -155,10 +173,9 @@ class AccountedModel(WrapperModel):
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
         max_tokens = (model_settings or {}).get("max_tokens")
-        with self._lock:
-            index = self.attempts
-            self.attempts += 1
-        entry: dict[str, Any] = {"attempt": index, "category": "main", "mode": self.mode}
+        index = self.counter.next()
+        self.attempts += 1
+        entry: dict[str, Any] = {"attempt": index, "category": self.category, "mode": self.mode}
         try:
             self._refuse_if_not_allowed(max_tokens)
         except SpendRefused as exc:
@@ -169,7 +186,7 @@ class AccountedModel(WrapperModel):
         bound = request_input_bound(messages, model_request_parameters)
         reserve = self.price.max_cost(bound, max_tokens or 0) if self.price is not None else 0.0
         try:
-            reservation = self.ledger.reserve(reserve, self.run_id, "p015:main", bound)
+            reservation = self.ledger.reserve(reserve, self.run_id, f"p015:{self.category}", bound)
         except BudgetExhausted as exc:
             entry.update(
                 outcome="refused",

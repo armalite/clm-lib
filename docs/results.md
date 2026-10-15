@@ -27,7 +27,7 @@
 
 **Jev programme status (2026-10-14): paused after 014; no further paid work is authorised.** The cross-experiment summary and the reopening criteria are in the results repository, in `experiments/jev-programme-review.md`.
 
-**Programme 015 (public CLM comparison) status (2026-10-15): implementation only, no runs and no results.** The first milestone is a five-arm comparison on an eight-turn incident thread (`paper_clm_shell`, `paper_clm_tools`, `clm_lite_v2`, `clm_lite_v3_1`, and the `token-tail/1` summary baseline); the wider programme is deferred. Chunk 1 adds opt-in shared foundations (SPEC §27): the native-tool transport `native-tools/1`, tool interfaces, `session-counters/1`, `tool-output-cap/1` and accounted native dispatch. They are not wired into the runner; historical configurations are unchanged. No API calls were made and no experimental spending ceiling has been agreed. The draft protocol and the open decisions are in the results repository, under `experiments/015-public-clm-comparison/`. **Library-first sequencing (2026-10-15):** the lite arms' context-management runtime will come from the separate [guarded-clm](https://github.com/armalite/guarded-clm) library, which clm-lib will import at a pinned version; clm-lib will not hold a duplicate implementation. **Correction (2026-10-15):** guarded-clm is now a faithful port of an existing, tested Pydantic AI capability (`ClmContext`, `ClmStepLimit`, `clm_context()`). It replaces that library's earlier independent reconstruction, and its five-chunk plan is superseded. The port was verified offline against an untouched reference copy; its own docs/results.md has the details. **Integration (2026-10-15):** the library now runs on an opt-in clm-lib path (`clm_lib.p015`, SPEC §28), in a separate environment, verified offline with scripted and mocked-provider models only. There are no paid results.
+**Programme 015 (public CLM comparison) status (2026-10-15): implementation only, no runs and no results.** The first milestone is a five-arm comparison on an eight-turn incident thread (`paper_clm_shell`, `paper_clm_tools`, `clm_lite_v2`, `clm_lite_v3_1`, and the `token-tail/1` summary baseline); the wider programme is deferred. Chunk 1 adds opt-in shared foundations (SPEC §27): the native-tool transport `native-tools/1`, tool interfaces, `session-counters/1`, `tool-output-cap/1` and accounted native dispatch. They are not wired into the runner; historical configurations are unchanged. No API calls were made and no experimental spending ceiling has been agreed. The draft protocol and the open decisions are in the results repository, under `experiments/015-public-clm-comparison/`. **Library-first sequencing (2026-10-15):** the lite arms' context-management runtime will come from the separate [guarded-clm](https://github.com/armalite/guarded-clm) library, which clm-lib will import at a pinned version; clm-lib will not hold a duplicate implementation. **Correction (2026-10-15):** guarded-clm's design changed: it is now a Pydantic AI capability (`ClmContext`, `ClmStepLimit`, `clm_context()`). It replaces that library's earlier, unreleased core, and its five-chunk plan is superseded. Its offline verification is described in its own docs/results.md. **Integration (2026-10-15):** the library now runs on an opt-in clm-lib path (`clm_lib.p015`, SPEC §28), in a separate environment, verified offline with scripted and mocked-provider models only. There are no paid results.
 
 The previous, longer version of this file is archived verbatim in the results repository as [`notes/clm-lib-results-log-2026-10-04.md`](https://github.com/armalite/clm-lib-test-results/blob/main/notes/clm-lib-results-log-2026-10-04.md). The draft blog notes moved there too, to [`notes/blog-notes.md`](https://github.com/armalite/clm-lib-test-results/blob/main/notes/blog-notes.md).
 
@@ -111,6 +111,38 @@ Phases 2–4 (smoke, guided dev run, frozen comparison) were **not run**. `ANTHR
 Verification: `ruff check`, `ruff format --check` and `mypy src` are clean; **56 passed**. `doctor --sandbox` is unchanged.
 
 Live phases: **still not run**. `ANTHROPIC_API_KEY` is still unset in the agent process (`doctor`). Live spend $0.00; cumulative $0.00 of $10.00.
+
+## Programme 015 paper and summary arms (2026-10-16, offline)
+
+**What was built:** `paper_clm_shell` (`paper-clm-shell/1`) and the summary baseline (`token-tail-p015/1`), on a shared runner, `ArmSession` (SPEC §30). The fidelity mapping, the settings table and the full session table are in the results repository, under `experiments/015-public-clm-comparison/` (`paper-clm-shell-fidelity.md`, `arm-settings.md` and `arms-offline.md`).
+
+**Checks:**
+- **The suite:** the p015 suite has **122 passed** (88 before, plus 34 arm tests), with network blocked. Four of the new tests use the real Docker sandbox.
+- **Sessions:** 21 scripted docthread sessions, reproducible with `python -m clm_lib.p015.docthread.arms_offline OUT --matrix`:
+  - every ordinary session completed 8 questions and scored 10/10;
+  - the stress sessions reached their target paths: rejected edits, rollbacks, a final over-limit request, the step limit, summary retries, summary overflow and the summariser cap;
+  - provider failures and spend refusals ended explicitly.
+- **Exports:** all 21 sessions were exported and verified.
+- **Fairness:** the three arms show the model the same task: the prompts, the task tools' schemas, argument handling, results and the output contract.
+- **The historical suite** (dev environment): 349 passed, unchanged, including the isolation tests.
+
+**Not shown:** anything about model performance. No provider was called, and the ledger is unchanged.
+
+## Programme 015 incident-thread workload `docthread` (2026-10-16, offline)
+
+**What was built:** the generator, tools, task, scorer and a scripted investigator (SPEC §29). The design, parameters and full session table are in the results repository (`experiments/015-public-clm-comparison/docthread-workload.md`).
+
+**Checks:**
+- **The suite:** the p015 suite has **88 passed** (68 before, plus 20 workload tests), with network blocked.
+- **Scripted sessions** on both development instances, with both policies and both usage paths:
+  - all 8 questions completed and 10/10 scored, because the script answers with the true values;
+  - a non-tidying policy peaked at about 27,200 estimated tokens against the 29,952 limit, with PRESSURE and one held-back output;
+  - a tidying policy stayed near 6,200 tokens and refetched all three recall facts;
+  - a provider failure and a spend refusal ended explicitly, and their unfinished questions were scored as missing.
+- **Exports** verified (`guarded-session-export/1`).
+- **The historical suite** (dev environment): 349 passed, unchanged.
+
+**Not shown:** anything about model performance. No provider was called.
 
 ## Programme 015 guarded-clm integration (2026-10-15, offline)
 
