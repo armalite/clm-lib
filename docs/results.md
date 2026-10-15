@@ -27,7 +27,7 @@
 
 **Jev programme status (2026-10-14): paused after 014; no further paid work is authorised.** The cross-experiment summary and the reopening criteria are in the results repository, in `experiments/jev-programme-review.md`.
 
-**Programme 015 (public CLM comparison) status (2026-10-15): implementation only, no runs and no results.** The first milestone is a five-arm comparison on an eight-turn incident thread (`paper_clm_shell`, `paper_clm_tools`, `clm_lite_v2`, `clm_lite_v3_1`, and the `token-tail/1` summary baseline); the wider programme is deferred. Chunk 1 adds opt-in shared foundations (SPEC §27): the native-tool transport `native-tools/1`, tool interfaces, `session-counters/1`, `tool-output-cap/1` and accounted native dispatch. They are not wired into the runner; historical configurations are unchanged. No API calls were made and no experimental spending ceiling has been agreed. The draft protocol and the open decisions are in the results repository, under `experiments/015-public-clm-comparison/`. **Library-first sequencing (2026-10-15):** the lite arms' context-management runtime will come from the separate [guarded-clm](https://github.com/armalite/guarded-clm) library, which clm-lib will import at a pinned version; clm-lib will not hold a duplicate implementation. **Correction (2026-10-15):** guarded-clm is now a faithful port of an existing, tested Pydantic AI capability (`ClmContext`, `ClmStepLimit`, `clm_context()`). It replaces that library's earlier independent reconstruction, and its five-chunk plan is superseded. The port was verified offline against an untouched reference copy; its own docs/results.md has the details. The library is not wired into clm-lib's runner yet; that is the library plan's step 3, not started.
+**Programme 015 (public CLM comparison) status (2026-10-15): implementation only, no runs and no results.** The first milestone is a five-arm comparison on an eight-turn incident thread (`paper_clm_shell`, `paper_clm_tools`, `clm_lite_v2`, `clm_lite_v3_1`, and the `token-tail/1` summary baseline); the wider programme is deferred. Chunk 1 adds opt-in shared foundations (SPEC §27): the native-tool transport `native-tools/1`, tool interfaces, `session-counters/1`, `tool-output-cap/1` and accounted native dispatch. They are not wired into the runner; historical configurations are unchanged. No API calls were made and no experimental spending ceiling has been agreed. The draft protocol and the open decisions are in the results repository, under `experiments/015-public-clm-comparison/`. **Library-first sequencing (2026-10-15):** the lite arms' context-management runtime will come from the separate [guarded-clm](https://github.com/armalite/guarded-clm) library, which clm-lib will import at a pinned version; clm-lib will not hold a duplicate implementation. **Correction (2026-10-15):** guarded-clm is now a faithful port of an existing, tested Pydantic AI capability (`ClmContext`, `ClmStepLimit`, `clm_context()`). It replaces that library's earlier independent reconstruction, and its five-chunk plan is superseded. The port was verified offline against an untouched reference copy; its own docs/results.md has the details. **Integration (2026-10-15):** the library now runs on an opt-in clm-lib path (`clm_lib.p015`, SPEC §28), in a separate environment, verified offline with scripted and mocked-provider models only. There are no paid results.
 
 The previous, longer version of this file is archived verbatim in the results repository as [`notes/clm-lib-results-log-2026-10-04.md`](https://github.com/armalite/clm-lib-test-results/blob/main/notes/clm-lib-results-log-2026-10-04.md). The draft blog notes moved there too, to [`notes/blog-notes.md`](https://github.com/armalite/clm-lib-test-results/blob/main/notes/blog-notes.md).
 
@@ -111,6 +111,38 @@ Phases 2–4 (smoke, guided dev run, frozen comparison) were **not run**. `ANTHR
 Verification: `ruff check`, `ruff format --check` and `mypy src` are clean; **56 passed**. `doctor --sandbox` is unchanged.
 
 Live phases: **still not run**. `ANTHROPIC_API_KEY` is still unset in the agent process (`doctor`). Live spend $0.00; cumulative $0.00 of $10.00.
+
+## Programme 015 guarded-clm integration (2026-10-15, offline)
+
+**What was checked:** the `clm_lib.p015` path (SPEC §28), in the p015 environment (Python 3.13.15; pydantic-ai-slim 2.27.1, pydantic 2.14.1, pydantic-core 2.50.1, anthropic 0.125.0; guarded-clm from the sibling checkout). No provider was called. Network connections were blocked in every p015 test.
+
+**The p015 suite: 68 passed**, in these files:
+- **`tests/p015/test_equivalence.py`:** 11 synthetic cases run directly through guarded-clm's `clm_context()` and through `GuardedSession` give identical transcripts. That covers every model request (messages, instructions, tool definitions, settings, usage), every trace record, and every output, history or error. The cases:
+  - an ordinary read and answer, on both the fixed-ratio and the provider-like usage paths;
+  - accepted, rejected, unchanged and protected-refused edits;
+  - several calls in one response;
+  - a dense burst being held back, an edit freeing room, and a refetch;
+  - PRESSURE and the reserve, re-arming within a turn, and the new-turn reset;
+  - earlier answers retained;
+  - the step limit and the call cap;
+  - tool retry and tool failure;
+  - provider failure.
+- **`test_library_scenarios.py`:** guarded-clm's 32 public scenarios, with every model wrapped in `AccountedModel`, match the library's stored transcripts, with one settled attempt per request.
+- **`test_accounting.py`:**
+  - every attempt is reserved and settled once;
+  - failures are billed at the reservation (5xx) or at 0 (429);
+  - a mid-session budget refusal is its own ending, and nothing is dispatched;
+  - live requests are refused without an authorisation, a price or `max_tokens`;
+  - a real `AnthropicModel` runs over an in-memory transport. Its cache reads and writes are priced separately, and the capability's next estimate is anchored on the total reported input.
+- **`test_tools.py`:** the bridge preserves the tool's name, description and schema. Invalid arguments get a retry and never run the tool. Results are capped. A raising tool is a `tool_failure`. Calls stay concurrent.
+- **`test_export.py`:** the export round trip is complete, checksummed, immutable and tamper-evident, and refusals are exported too.
+- **`test_provenance.py`:** fingerprints and git dirty flags.
+
+**What it does not show:** live compatibility, the effect of real-model latency on concurrency, or any task result.
+
+**Historical compatibility (dev environment, unchanged):**
+- `tests/test_p015_isolation.py`: the runner, CLI and exporters load neither the new path nor Pydantic AI; no config selects it; the environment still has pydantic 2.13.5 and anthropic 1.11.0 and lacks guarded-clm.
+- The full historical suite: **349 passed** (346 before, plus the 3 isolation tests). The p015 tests are not collected in this environment. Ruff, format and mypy are clean in both environments.
 
 ## Programme 015 shared foundations (2026-10-15)
 

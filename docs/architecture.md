@@ -391,6 +391,60 @@ arm execution policy   which calls run, and in what order (not decided here); ta
 
 **A pre-existing executor edge, noted but not changed:** the runtime-evidence line in stderr is removed from the captured head only when the whole line is inside the head. When stderr fills the capture to within the record's length, a partial record could appear in the captured stderr. The historical path is unchanged; for `tool-output-cap/1` the larger capture makes this rarer, not impossible.
 
+## Programme 015 guarded-clm integration (decision, 2026-10-15)
+
+**The boundary:**
+
+| Owner | Responsibility |
+| --- | --- |
+| guarded-clm (imported, never copied) | the context-management capability: `clm_context()` = `ClmStepLimit` then `ClmContext`; request rebuilding, the edit tool, the guard, estimators, recovery, step and call limits, trace records |
+| Pydantic AI (`pydantic-ai-slim` 2.27.1, the tested stack) | the model and tool lifecycle: `Agent.run`, message history, tool execution (including its concurrency), retries of tool calls, output handling |
+| clm-lib (`clm_lib.p015`) | scheduling turns, synthetic task tools, financial accounting, recording, provenance and export |
+
+**The decisions:**
+
+- **G1. A dedicated runner path:** `clm_lib.p015.session.GuardedSession` hosts a Pydantic AI `Agent` with `clm_context()`. It is not the single-action JSON loop. Historical modes and experiments are not migrated, and they never import `clm_lib.p015`.
+- **G2. A separate environment:** the `p015` dependency group conflicts with `dev`, and the `dev` group pins the historical pydantic. So the historical environment resolves exactly as before, while the p015 environment (`.venv-p015`) carries the tested Pydantic AI stack. guarded-clm is a local editable dependency on the sibling checkout during development. Recorded runs should pin a public revision. The run provenance records the version, the git revision, the dirty state and a content fingerprint of the source actually loaded.
+- **G3. Accounting at the model boundary:** `AccountedModel` is a Pydantic AI `WrapperModel` around the real model.
+  - **Per call:** each `request()` call is one provider attempt. It is reserved before dispatch (refused if the reservation doesn't fit, a price is missing, or live use isn't authorised), and settled exactly once from the response's usage or the failure's billing class.
+  - **Delegation:** `WrapperModel` forwards `system`, `profile` and request preparation, so the capability's choice between estimating from real usage and its scripted fixed ratio is unchanged.
+  - **Usage:** Pydantic AI's `RequestUsage.input_tokens` already includes cache reads and writes. Uncached input is therefore `input_tokens - cache_read_tokens - cache_write_tokens`, and is never summed again.
+  - **Retries:** Pydantic AI does not retry model requests. Provider-SDK retries must be disabled for live use (for example an Anthropic client with `max_retries=0`), so every attempt passes through the wrapper. Tool-call retries (`ModelRetry`, validation) are Pydantic AI's own; they cause later model requests, each of which is an attempt.
+  - **Counter separation:** the library's step and call counters and the harness's financial attempt counters are separate.
+- **G4. Reuse of earlier foundations:** `native-tools/1` (`transport.py`, `native_call.py`) is **not** used on this path. Pydantic AI builds the provider requests, so reusing it would replace the tested request construction. Reused as they are: the ledger and price model (`budget.py`), the tool interfaces (`tooling.py`) and the task-tool output cap (`output_cap.py`).
+- **G5. Tool bridge:** `clm_lib.p015.tools.bridge()` turns a `tooling.ToolSpec` plus its implementation into a Pydantic AI tool.
+  - **Model-visible content:** the tool's name, description and argument schema exactly as given.
+  - **Invalid arguments:** these come back as a `ModelRetry` naming the problems; the wording differs from Pydantic AI's own validation messages.
+  - **Results:** capped by `tool-output-cap/1`. Results are never annotated.
+  - **Concurrency:** functions are plain synchronous callables, so Pydantic AI runs them concurrently as usual.
+- **G6. Observation only:** the recorder writes requests, responses, attempts, tool calls, trace records, answers and endings outside the model's view. It never adds messages or instructions.
+- **G7. Distinguishable endings:** financial refusal, context limits, step or call limits, provider failure, tool failure, task failure and harness defects are recorded as different kinds.
+
+- **G8. A provider SDK finding (live path, not yet exercised):** Pydantic AI 2.27.1's `AnthropicModel` always passes `temperature`, `top_p` and `top_k`, and Anthropic SDK 1.x (1.0 to 1.14) no longer accepts them, so it fails with a `TypeError`.
+  - **The pin:** the p015 group pins `anthropic==0.125.0`, the newest SDK that works with it, verified only offline through an in-memory transport. The historical environment keeps 1.11.0.
+  - **Before any live use:** a live smoke would still have to confirm provider compatibility.
+
+**Files:**
+
+```
+src/clm_lib/p015/
+  provenance.py   library and harness provenance: version, install kind, git revision and dirty flags, source fingerprint
+  accounting.py   AccountedModel (reserve, dispatch, settle per attempt; refusals; usage split)
+  tools.py        bridge(): tooling.ToolSpec + implementation -> pydantic_ai.Tool
+  records.py      SessionRecorder (session.json, attempts/trace/tools/turns JSONL)
+  session.py      GuardedSession, GuardedSettings, TurnOutcome, ending classification
+  export.py       guarded-session-export/1 (python -m clm_lib.p015.export RUN_DIR DEST_DIR)
+tests/p015/       comparison harness and tests (skipped outside the p015 environment; network blocked)
+```
+
+**Commands:**
+
+```bash
+UV_PROJECT_ENVIRONMENT=.venv-p015 uv sync --no-config --frozen --no-dev --group p015 --python 3.13
+.venv-p015/bin/python -m pytest -q tests/p015
+```
+
+
 ## Design choices
 
 - **JSON-lines transcript with escaping** instead of nonce delimiters: it's simple and can't be forged.

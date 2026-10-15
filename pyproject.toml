@@ -12,7 +12,32 @@ dependencies = ["anthropic>=0.60"]
 clm-lib = "clm_lib.cli:main"
 
 [dependency-groups]
-dev = ["pytest>=8", "ruff>=0.6", "mypy>=1.10"]
+# The historical environment keeps the pydantic versions it was verified with; the pins make the conflicting
+# p015 group resolve separately instead of upgrading them.
+dev = ["pytest>=8", "ruff>=0.6", "mypy>=1.10", "pydantic==2.13.5", "pydantic-core==2.46.5"]
+# Programme 015 harness path (opt-in, separate environment): the guarded-clm capability on the Pydantic AI stack it
+# was tested on. It conflicts with `dev` so the historical environment's resolution stays exactly as it was
+# (docs/architecture.md, "Programme 015 guarded-clm integration").
+p015 = [
+    "guarded-clm",
+    "pydantic-ai-slim==2.27.1",
+    "pydantic==2.14.1",
+    "pydantic-core==2.50.1",
+    # Pydantic AI 2.27.1's AnthropicModel passes temperature/top_p/top_k, which anthropic>=1.0 no longer accepts;
+    # 0.125.0 is the newest SDK it works with (verified offline only; architecture.md, G8).
+    "anthropic==0.125.0",
+    "pytest>=8",
+    "ruff>=0.6",
+    "mypy>=1.10",
+]
+
+[tool.uv]
+conflicts = [[{ group = "dev" }, { group = "p015" }]]
+
+[tool.uv.sources]
+# Local development dependency on the sibling checkout. For recorded runs, pin a public revision instead, e.g.
+# guarded-clm = { git = "https://github.com/armalite/guarded-clm", rev = "<commit>" } (docs/architecture.md).
+guarded-clm = { path = "../guarded-clm", editable = true }
 
 [build-system]
 requires = ["uv_build>=0.12.7,<0.13.0"]

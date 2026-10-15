@@ -224,3 +224,6 @@ runs/
 
 # Local session handoff (not published)
 /docs/HANDOFF.md
+
+# Programme 015 harness environment (uv sync --group p015)
+.venv-p015/

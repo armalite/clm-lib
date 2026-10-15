@@ -1,6 +1,6 @@
 # clm-lib: Technical Specification
 
-Version: 2.15 | 15 October 2026
+Version: 2.16 | 15 October 2026
 
 Repository: `clm-lib` | Python package: `clm_lib` | CLI: `clm-lib`
 
@@ -28,6 +28,7 @@ Version history:
 - 2.13: updates §26's replay attribution to `jev-replay/2` (item-level answer matching, valid inverted and permuted substitutions with logs, unsupported-counterfactual detection, a supporting code audit, and post-hoc last-request variants), used for experiment 014's development revision R1.
 - 2.14: adds §26's W3 instances `w3-dev-3` and `w3-dev-4` (fresh seeds of the dev-1 and dev-2 schedules) and the replay's neutral `last_request` keys, for experiment 014's R1 matched development pilot.
 - 2.15: adds §27, shared foundations for programme 015 (opt-in, not yet wired into the runner): the native-tool transport `native-tools/1`, tool interfaces, versioned counters `session-counters/1`, the task-tool output cap `tool-output-cap/1` and accounted native dispatch. No arm, workload or live path uses them yet; §27.6 lists what is pending.
+- 2.16: adds §28, the programme 015 guarded-clm integration path (`clm_lib.p015`): opt-in, in a separate environment, verified offline with scripted and mocked models only.
 - 1.9: adds a multi-round incident task family, two CLM capability variants (direct editing only; reusable helpers allowed), a separate summary-call allowance, helper-evidence tiers and a three-condition schedule (§18).
 - 1.8: adds a versioned request layout (`blocks/1`), optional provider prompt caching with explicit breakpoints, per-run cache isolation, cache-aware accounting evidence, and a four-condition comparison schedule (§17).
 - 1.7: adds a second coding generator with interacting, partially changing rules, an evaluator with richer categories, exact type checks and stage snapshots (§16), a balanced comparison order, and per-task scorer metadata in comparisons and exports.
@@ -832,3 +833,60 @@ Dispatch follows §4.2 and the existing runner, with two differences: the tool d
 - **What it supersedes:** the earlier next step, building the incident-thread generator and task tools straight after §27's foundations. The generator and the scorer are still needed, but the library chunks come first.
 - **What it does not change:** the §27 foundations (the native transport for the paper arms, the counters and the output cap). How `clm_lite_v2` and `clm_lite_v3_1` map onto the library's configuration is an open decision.
 - **Correction (2026-10-15, later the same day):** guarded-clm no longer reconstructs the design. It is a faithful port of an existing, tested implementation: a Pydantic AI capability, `ClmContext`, built by `clm_context()`. The library's own SPEC.md defines its behaviour. Integrating it into clm-lib (guarded-clm plan step 3) has not started. Because clm-lib's runner is not Pydantic AI based, how the harness hosts the capability is that step's first design question.
+
+## 28. Programme 015 guarded-clm integration path (offline-verified; opt-in)
+
+**What it is:** `clm_lib.p015` hosts the real guarded-clm capability, imported and never copied. It runs on its own Pydantic AI 2.27.1 environment (the `p015` dependency group), and the historical paths never import it.
+- **The boundary** is in docs/architecture.md, decisions G1 to G8.
+- **The behaviour** of the capability is defined by guarded-clm's own SPEC and is not restated here.
+
+### 28.1 Runner
+
+`GuardedSession(model, ...)` builds one `Agent` with `clm_context()` (`ClmStepLimit`, then `ClmContext`), the system prompt, any instructions, the bridged task tools and any framework tools. That agent is kept for the session.
+- **Each turn:** `run_turn(prompt)` calls `agent.run(prompt, message_history=<previous result.all_messages()>, conversation_id=<the session's>, usage_limits=UsageLimits(request_limit=call_cap))`.
+- **Not done:** nothing is reset between turns, and no prompt text, instruction or output schema is added for scoring.
+- **Endings:** `completed`, `spend_refused`, `budget_exceeded`, `context_limit`, `step_limit`, `call_cap`, `provider_failure`, `tool_failure`, `model_behaviour`, `harness_defect` or `unclassified_error`. A financial refusal is never a context-management ending.
+
+### 28.2 Accounting (`p015-accounting/1`)
+
+`AccountedModel` wraps the model, and each `request()` is one provider attempt.
+- **Refused before dispatch:**
+  - in `scripted` mode, any model that isn't a `FunctionModel` or `TestModel`;
+  - in `live` mode, a session that isn't authorised, a model without a price, or a request without `max_tokens`;
+  - any attempt whose ledger reservation doesn't fit.
+- **The reservation** prices a byte-based input bound over the messages, instructions and tool definitions, plus `max_tokens`.
+- **Settlement:**
+  - provider usage at the dated price;
+  - 0 for HTTP 4xx and 429;
+  - the reservation for any other failure or interruption.
+- **Usage split:** uncached input = `input_tokens − cache_read_tokens − cache_write_tokens`, because Pydantic AI's `input_tokens` already includes cached tokens.
+- **Disabled:** token counting and streaming are refused.
+- **Retries:** none are added. Provider-SDK retries must be off for live use.
+- **Counter separation:** the financial attempt counts are separate from the library's step and call counts.
+
+### 28.3 Tool bridge
+
+`bridge(task_tool)` exposes a read-only task tool (`category == "task"`, `side_effects == "none"`) to the model with its exact name, description and schema.
+- **Invalid arguments:** these are rejected in Pydantic AI's `args_validator` hook with a `ModelRetry` ("invalid arguments: ..."), before the tool runs.
+- **Results:** capped by `tool-output-cap/1`, with nothing else added.
+- **Exceptions** propagate and end the run (`tool_failure`).
+- **Concurrency:** calls of one response run concurrently, as for any synchronous Pydantic AI tool.
+
+### 28.4 Records and export
+
+A session directory holds:
+- `session.json`: the format `guarded-session/1`, the evidence label `scripted-offline`, settings, and the provenance of guarded-clm and of the harness (version, install kind, git revision and dirty flags, source fingerprint, dependency versions; no absolute paths);
+- `attempts.jsonl`: each request as sent, and each outcome, usage, latency and settlement;
+- `trace.jsonl`: the capability's records;
+- `tools.jsonl`;
+- `turns.jsonl`.
+
+**Export:** `python -m clm_lib.p015.export` copies the session to `guarded-session-export/1`, with a manifest and `SHA256SUMS`. The export is immutable and checked for consistency. The historical exporter is unchanged.
+
+### 28.5 Status
+
+- **The integration is done and verified offline only** (results in docs/results.md).
+- **Not done:**
+  - there are no live calls, and there is no live authorisation;
+  - the paper and summary arms, the scenario generators, paid-run scheduling and analysis are not implemented;
+  - provider compatibility is unverified until an authorised smoke (G8).
