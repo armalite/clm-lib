@@ -1,6 +1,6 @@
 # clm-lib: Technical Specification
 
-Version: 2.14 | 14 October 2026
+Version: 2.15 | 15 October 2026
 
 Repository: `clm-lib` | Python package: `clm_lib` | CLI: `clm-lib`
 
@@ -27,6 +27,7 @@ Version history:
 - 2.12: adds §26, the W3 register workload (`export-gen/2`, code scorer `export-checks/2`, register scorer `register-checks/1`) and offline replay attribution for jev-primitive runs (`jev-replay/1`, `replay-jev`), for experiment 014's comparison phase; opt-in (W3 tasks and the command only).
 - 2.13: updates §26's replay attribution to `jev-replay/2` (item-level answer matching, valid inverted and permuted substitutions with logs, unsupported-counterfactual detection, a supporting code audit, and post-hoc last-request variants), used for experiment 014's development revision R1.
 - 2.14: adds §26's W3 instances `w3-dev-3` and `w3-dev-4` (fresh seeds of the dev-1 and dev-2 schedules) and the replay's neutral `last_request` keys, for experiment 014's R1 matched development pilot.
+- 2.15: adds §27, shared foundations for programme 015 (opt-in, not yet wired into the runner): the native-tool transport `native-tools/1`, tool interfaces, versioned counters `session-counters/1`, the task-tool output cap `tool-output-cap/1` and accounted native dispatch. No arm, workload or live path uses them yet; §27.6 lists what is pending.
 - 1.9: adds a multi-round incident task family, two CLM capability variants (direct editing only; reusable helpers allowed), a separate summary-call allowance, helper-evidence tiers and a three-condition schedule (§18).
 - 1.8: adds a versioned request layout (`blocks/1`), optional provider prompt caching with explicit breakpoints, per-run cache isolation, cache-aware accounting evidence, and a four-condition comparison schedule (§17).
 - 1.7: adds a second coding generator with interacting, partially changing rules, an evaluator with richer categories, exact type checks and stage snapshots (§16), a balanced comparison order, and per-task scorer metadata in comparisons and exports.
@@ -727,3 +728,106 @@ The summary baseline's policy is selected by `[baseline] policy`, and recorded i
     - **The same classes under neutral names:** `last_request`, plus the run-level `stages_substantive_last_request`, with `last_request_items` listing the decisions the intervention tests. This is the primary, pre-registered intervention of the R1 matched pilot, where it was post hoc for the R1 smoke.
     - **Each step also carries a static audit:** register-item literals, and ids of existing items in the caller and helper code. It is supporting evidence only.
 - **Unchanged:** W2 and every earlier task, prompt and config. `configs/exp014c.toml` is the comparison phase's config.
+
+## 27. Programme 015 shared foundations (implementation chunk 1; opt-in)
+
+Programme 015's first milestone is a five-arm comparison on an eight-turn incident thread: `paper_clm_shell`, `paper_clm_tools`, `clm_lite_v2`, `clm_lite_v3_1` and the existing `token-tail/1` summary baseline. **This section specifies only the shared foundations implemented so far.** None of the arms, the incident-thread generator or scorer, the output guard or the launcher exists. Nothing here changes any historical configuration, prompt, schema, request or runtime path: the single-action protocol (§3.3) remains the only protocol the runner uses, and a test checks that the runner, CLI and exporter do not even import the new modules.
+
+**A departure from §3.3, for 015 only:** §3.3 renders each request fresh with no native tool calls, so that editing history cannot break tool-call/result pairing. Programme 015 needs native tools, because the paper arms keep a tool-call message history. The new transport therefore makes pairing explicit and validated (§27.1). The old protocol is kept unchanged for all earlier work.
+
+### 27.1 Transport `native-tools/1` (`transport.py`)
+
+- **Requests** (`NativeRequest`) carry system blocks, the complete message list the arm chooses, the tool definitions, `max_tokens`, a purpose (`main` or `summary`), an optional `tool_choice`, and optional cache breakpoints (message indices). The transport never adds, drops or reorders messages, and never mutates the caller's history.
+- **Responses** (`NativeResponse`) keep every provider content block exactly as returned and in order, including `thinking` blocks with their signatures, so a history-replaying arm can pass them back unchanged (`assistant_message()`).
+- **Tool calls** are extracted in emission order with their ID, name and arguments. Arguments are never coerced.
+- **Classification** (`interpret`):
+  - `tool_calls`: one or more pairable calls;
+  - `completion`: no call and a normal stop;
+  - `malformed`, with explicit reasons: a call or output cut off by `max_tokens`; a `tool_use` stop without calls; calls with a normal stop; duplicate or missing IDs; an unknown block type; an unexpected stop reason.
+  - Each call is also checked on its own: unknown tool, arguments not an object, or arguments failing the tool's schema.
+  - Calls in a malformed response are reported but must not run.
+- **Results:** `results_message` requires exactly one result per emitted call, in the calls' order. Any runtime text blocks come after the results. A call that is not run (invalid, or declined by the arm's policy) gets an explicit error result (`not_executed_result`), so a batch is never silently cut to its first call. `validate_history` checks a whole history: alternating roles, every call answered in the next user message, results first and in order, and unique IDs.
+- **Execution policy is not part of the transport.** Each arm will define whether several calls per response may run and how.
+- **Context representation is not part of the transport.** Paper arms will keep their message history; lite arms will rebuild each request from their working context. Both only supply a message list.
+- **Providers:**
+  - `AnthropicNativeProvider` uses the same credential handling, disabled SDK retries and error classification as the single-action adapter. The classification is now one shared function, `classify_anthropic_error`, whose behaviour is unchanged.
+  - `ScriptedNativeProvider` is the test double. It is refused by live entry points.
+  - The real adapter has been tested only against a fake client. Live compatibility, including replaying blocks, is **unverified**.
+
+### 27.2 Tool interfaces (`tooling.py`)
+
+- **Category:** a tool is either a shared `task` tool, which every arm gets unchanged (the planned incident search and page-read tools), or a `context` tool, which only some arms get (`context_read`, `context_apply`).
+- **Side effects** are declared independently: `none`, `workspace` (for example a general shell, which is a task tool) or `context`. Neither property is sent to the model.
+- **Registry:** a `ToolRegistry` fixes the tool order, which is part of the cached prefix.
+- **Argument validation:** `validate_arguments` checks arguments against a documented JSON-Schema subset, and refuses unsupported keywords rather than under-checking.
+
+### 27.3 Counters `session-counters/1` (`counters.py`)
+
+These counters are derived from an append-only event list, per session and per user turn. The increments are tabulated in the module docstring:
+- **Logical calls vs attempts:** a logical call counts +1 at its first attempt. Each dispatched attempt counts +1, whatever its outcome. Each retry counts +1, and a call that fails with no retry left counts as a failed call. All of these are kept separately for the `main` and `summary` roles.
+- **Responses:** counted by kind.
+- **Tool calls:** requested (by category, including calls in malformed responses), executed (a run that failed still counts as executed, and as failed) and not executed (with a reason).
+- **Steps:** task steps and editing steps.
+- **Edits:** accepted, rejected and unchanged edits.
+
+Which steps are free editing steps is **not** decided. The arm supplies each step's kind.
+
+**Limits:** the proposed limits are recorded, not enforced (`PROPOSED_LIMITS`):
+- 60 task steps per user turn;
+- a 144-call session cap. Which calls count is **pending**; `call_totals()` reports four candidate definitions.
+
+**The existing meaning of a call** (§4.3, `limits.max_calls`): one provider attempt, covering actions, repairs, summaries and API retries. Summaries are excluded when `summary_calls_in_max_calls` is false. Adopting it unchanged, or choosing another definition, changes what the cap bounds in the comparison, so the decision is left for review.
+
+### 27.4 Task-tool output cap `tool-output-cap/1` (`output_cap.py`)
+
+- **The cap:** at most 8,000 Unicode code points of content per task-tool result.
+- **What counts as content:** a tool's result text, or a command's stdout and stderr together. Error text counts too.
+- **What does not count:** fixed framing (the exit-status line and stream labels) and truncation notices. Their size is recorded separately.
+- **Streams:** stdout keeps its head. stderr keeps its tail, with up to 2,000 code points reserved when both streams overflow.
+- **Encoding:** truncation is by code point, so the delivered text is always valid. A grapheme cluster may be split.
+- **Records:** raw and delivered sizes, plus whether the executor's byte capture was complete.
+- **Capture size:** command capping requires the executor to capture at least `4 × cap + 4` bytes per stream.
+- **Historical path unchanged:** the executor's byte caps and observation format stay as they were for every historical configuration.
+- **Not covered:** context-tool results. This is also not v3_1's output guard, which is not implemented.
+
+### 27.5 Accounted native dispatch (`native_call.py`)
+
+Dispatch follows §4.2 and the existing runner, with two differences: the tool definitions, `tool_choice` and `thinking` are included in the input bound, and the latency of failed attempts is recorded.
+- **Reservation:** a bound is reserved before every attempt.
+- **Settlement:**
+  - provider usage at the dated price;
+  - zero only for provably unbilled failures;
+  - the full reservation when the outcome is unknown or the call was interrupted;
+  - a refusal from its returned usage.
+- **Retries:** each retry is its own attempt.
+- **Bound check:** usage above the bound stops dispatch.
+- **Usage kept per attempt and per role:** uncached input, 5-minute and 1-hour cache writes, cache reads, output and latency.
+- **Prices:** without a dated price, live dispatch is refused. **`claude-sonnet-5` has no configured price**, and none has been guessed.
+
+### 27.6 Pending before any live 015 work
+
+- **Decisions:**
+  - which calls the 144-call cap counts, and whether a separate cap on total billable attempts is added for financial bounding;
+  - the free-editing-step policy for each arm;
+  - the multiple-call execution policy for each arm;
+  - caching placement and TTL;
+  - recovery semantics, in particular v2's exact reset semantics relative to the current code;
+  - the output guard's ordering and fit rules;
+  - context-tool output limits.
+- **Model and price:**
+  - the `claude-sonnet-5` price and model settings (effort, thinking, `max_tokens`), from official sources and with a retrieval date;
+  - the fit of the reservation bound to the model's tokenizer.
+- **Fidelity:** a source-by-source fidelity mapping for `paper_clm_shell`, and the explicit differences between it and `paper_clm_tools`. The paper and the reference README describe only the shell design; `context_read`/`context_apply` is this project's adaptation.
+- **Components still to build:**
+  - the incident-thread generator and scorer;
+  - the arms;
+  - resumable background launching with spending guards;
+  - exports and paired analysis;
+  - offline proof through the real runner.
+- **Spending:** no experimental spending ceiling has been agreed.
+
+### 27.7 Library-first sequencing (2026-10-15)
+
+- **What changed:** the lite arms' context-management runtime (`clm_lite_*`) is now being built as the separate library [guarded-clm](https://github.com/armalite/guarded-clm). clm-lib will import it at a pinned version and record that version in run provenance; that is guarded-clm's plan chunk 5. The library's behaviour is specified in its own SPEC and is not repeated here.
+- **What it supersedes:** the earlier next step, building the incident-thread generator and task tools straight after §27's foundations. The generator and the scorer are still needed, but the library chunks come first.
+- **What it does not change:** the §27 foundations (the native transport for the paper arms, the counters and the output cap). How `clm_lite_v2` and `clm_lite_v3_1` map onto the library's configuration is an open decision.

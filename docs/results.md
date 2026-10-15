@@ -27,6 +27,8 @@
 
 **Jev programme status (2026-10-14): paused after 014; no further paid work is authorised.** The cross-experiment summary and the reopening criteria are in the results repository, in `experiments/jev-programme-review.md`.
 
+**Programme 015 (public CLM comparison) status (2026-10-15): implementation only, no runs and no results.** The first milestone is a five-arm comparison on an eight-turn incident thread (`paper_clm_shell`, `paper_clm_tools`, `clm_lite_v2`, `clm_lite_v3_1`, and the `token-tail/1` summary baseline); the wider programme is deferred. Chunk 1 adds opt-in shared foundations (SPEC §27): the native-tool transport `native-tools/1`, tool interfaces, `session-counters/1`, `tool-output-cap/1` and accounted native dispatch. They are not wired into the runner; historical configurations are unchanged. No API calls were made and no experimental spending ceiling has been agreed. The draft protocol and the open decisions are in the results repository, under `experiments/015-public-clm-comparison/`. **Library-first sequencing (2026-10-15):** the lite arms' context-management runtime will come from the separate [guarded-clm](https://github.com/armalite/guarded-clm) library, which clm-lib will import at a pinned version; clm-lib will not hold a duplicate implementation. guarded-clm's chunk 1 (its configuration, context store, transactional edits and protected turns) is done offline. The library is not wired into the runner yet.
+
 The previous, longer version of this file is archived verbatim in the results repository as [`notes/clm-lib-results-log-2026-10-04.md`](https://github.com/armalite/clm-lib-test-results/blob/main/notes/clm-lib-results-log-2026-10-04.md). The draft blog notes moved there too, to [`notes/blog-notes.md`](https://github.com/armalite/clm-lib-test-results/blob/main/notes/blog-notes.md).
 
 ## Spend
@@ -109,6 +111,19 @@ Phases 2–4 (smoke, guided dev run, frozen comparison) were **not run**. `ANTHR
 Verification: `ruff check`, `ruff format --check` and `mypy src` are clean; **56 passed**. `doctor --sandbox` is unchanged.
 
 Live phases: **still not run**. `ANTHROPIC_API_KEY` is still unset in the agent process (`doctor`). Live spend $0.00; cumulative $0.00 of $10.00.
+
+## Programme 015 shared foundations (2026-10-15)
+
+The opt-in modules in SPEC §27 (`transport.py`, `tooling.py`, `counters.py`, `output_cap.py`, `native_call.py`) are tested with scripted providers and temporary test ledgers in `tests/test_native_transport.py`, `tests/test_native_accounting.py` and `tests/test_output_cap.py`. One test uses the real Docker sandbox, with no network. The tests cover:
+- single and multiple tool calls, with their IDs, order and pairing;
+- malformed responses and per-call errors;
+- identical error classification in both adapters;
+- counter increments;
+- retries and summaries, accounted separately;
+- the Unicode output cap;
+- historical compatibility: the single-action payload, the observation format and executor caps, and the runner, CLI and exporter not importing the new modules.
+
+With ruff, format and mypy clean, **346 passed** (297 before), in about 12 minutes. **No API calls were made.** The scripted tests do not establish compatibility with the live API.
 
 ## Multi-round incidents and helper conditions (2026-10-05)
 

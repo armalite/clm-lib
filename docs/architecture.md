@@ -346,6 +346,51 @@ Ground truth exists only in memory until the run ends, then goes to `evaluator/`
   - **Replay reuses the live mailbox broker** (`JevBroker`) with a scripted `call`, so the code under replay sees exactly the same client and protocol. It needs only the pre-execution workspace snapshot that W3 runs record, and the regenerated fixtures (checked against `fixture_sha256`).
   - **Replay `jev-replay/2` matches recorded answers per item, not per request:** a sequential helper re-asks items in new combinations, and Jev judges each item independently against the shared background. When substituted answers make the code ask something never asked, no answer is invented and the counterfactual is reported as unsupported. That is why R1's frozen test could not be completed at the change notices, and why a last-request-only diagnostic exists.
 
+## Programme 015 shared foundations (chunk 1)
+
+The new modules are opt-in and not yet wired into the runner. They are `transport.py`, `tooling.py`, `counters.py`, `output_cap.py` and `native_call.py`; see SPEC §27. A test checks that the runner, CLI and exporter do not import them, so every historical configuration keeps its exact request construction and runtime path. The only change to existing code is that `provider.py`'s error classification and usage parsing were extracted into shared functions (`classify_anthropic_error`, `usage_from_sdk`), with identical behaviour. Both adapters are tested to classify errors identically.
+
+**The transport boundary:**
+
+```
+arm (later)            context representation: message history (paper arms)
+                       or working context rebuilt per request (lite arms)
+   |  messages[], tools (ToolRegistry), purpose
+   v
+native_call.dispatch   reserve -> provider.complete -> settle, per attempt; retries; bound check
+   |                   -> NativeAccounting (per attempt and role), SessionCounters
+   v
+transport              NativeRequest -> payload; NativeResponse (blocks verbatim)
+                       interpret() -> tool_calls | completion | malformed (+ per-call checks)
+                       results_message() / not_executed_result() / validate_history()
+   ^
+arm execution policy   which calls run, and in what order (not decided here); task-tool
+(later)                results capped by output_cap (tool-output-cap/1)
+```
+
+**Decision record:**
+
+| # | Decision | Why | Experimental implication |
+| --- | --- | --- | --- |
+| D1 | Use a native-tool transport (`native-tools/1`), separate from the single-action protocol | The public docs for `claude-sonnet-5` document native tool use with several `tool_use` blocks per response by default, results paired by `tool_use_id`, and thinking blocks passed back in tool loops. The paper arms need a tool-call history. No compatibility problem was found, so no action-array substitute was needed | The paper arms can keep a real tool-call history. Lite arms may still rebuild requests. Live compatibility is unverified until an authorised smoke call |
+| D2 | Keep response blocks verbatim (`model_dump`, `None` fields dropped) | Thinking signatures and block order must survive a history replay | Saved responses are exact and replayable. Arms that rebuild requests decide separately what they keep |
+| D3 | Answer every emitted call, in order. A declined call gets an explicit error result | Never execute only the first call or rewrite a batch silently | The batch policy becomes a visible, per-arm variable, and its effects show in the counters (`tool_calls_not_executed` by reason) |
+| D4 | Validate arguments locally and refuse unsupported schema keywords | No strict-mode guarantee is assumed | Invalid calls become explicit error results, not crashes or silent coercions |
+| D5 | Counters separate logical calls, attempts, retries and roles; limits are recorded, not enforced | The existing `max_calls` counts provider attempts, summaries included by default. The reference README's `lm_call_cap` (2 × steps + 24, which gives 144 at 60 steps) counts free editing turns but does not say whether it counts retries or summaries | The meaning of the 144-call cap is **pending**. Choosing `all_attempts` matches the existing runner; `main_calls` is closer to a per-request model budget. The choice changes how much work each arm can do |
+| D6 | The output cap counts code points of content; framing and notices are excluded but recorded; stdout keeps its head and stderr its tail (2,000 reserved) | It applies one unit to every task tool, keeps text valid, and keeps error messages visible | The model may see up to 8,000 content code points plus a short, bounded framing. The rule is the same for every arm's task tools |
+| D7 | Native dispatch includes tools, `tool_choice` and `thinking` in the input bound | Tool definitions are billed input, and the single-action bound did not count them | Reservations stay conservative. The bound's fit to the Sonnet 5 tokenizer still needs checking before live work |
+| D8 | No price or model settings for `claude-sonnet-5` | No guessed prices; no API probing | Live dispatch is refused until a dated price is configured from the official pricing page |
+
+**Reference interface facts used** (README of the reference harness at the pinned commit, and the paper; no source code was read):
+- one `bash` tool, with one command per turn;
+- the context mirrored to a file, with one block per message;
+- edit-only turns (the mirror changed, nothing printed, exit 0) are free for `max_steps` but count toward `lm_call_cap`;
+- neither source describes `context_read`/`context_apply`, so `paper_clm_tools` is this project's adaptation.
+
+**Library-first sequencing (2026-10-15):** programme 015's lite arms will use the separate guarded-clm library, imported at a pinned version (SPEC §27.7). clm-lib keeps the harness concerns only: the paper arms' transport, counters, the output cap, the runner, the sandbox, accounting and exports. It does not copy the library's logic.
+
+**A pre-existing executor edge, noted but not changed:** the runtime-evidence line in stderr is removed from the captured head only when the whole line is inside the head. When stderr fills the capture to within the record's length, a partial record could appear in the captured stderr. The historical path is unchanged; for `tool-output-cap/1` the larger capture makes this rarer, not impossible.
+
 ## Design choices
 
 - **JSON-lines transcript with escaping** instead of nonce delimiters: it's simple and can't be forged.
@@ -362,3 +407,4 @@ Ground truth exists only in memory until the run ends, then goes to `evaluator/`
 3. **Live validation** ran after the build session, once a credential file was provided (results.md). Added beyond the planned sequence: one **dev-only calibration run** in summary mode, to check SPEC §6's pressure condition before freezing. It showed pressure, so no adjustment was made.
 4. **Model choice.** `claude-opus-5-5` (effort `low`) follows current Anthropic guidance. It's configurable, and it was used for every live run.
 5. **Post-hoc scorer correction (score/2).** After the comparison, `required_value` also accepts `<identifier>=<value>`, the form used in the authoritative change records. score/1 results are preserved in each run, and `report` shows both. This was prompted by one held-out answer and is disclosed in results.md.
+6. **Native tool calls for programme 015.** §3.3 avoids native tool calls. Programme 015's opt-in transport (`native-tools/1`, SPEC §27) uses them, with explicit pairing validation. Historical configurations still use only the single-action protocol.

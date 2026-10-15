@@ -242,67 +242,12 @@ class AnthropicProvider:
         return body
 
     def complete(self, req: ModelRequest) -> ModelResponse:
-        import anthropic
-
         client = self._get_client()
         try:
             msg = client.messages.create(**self.payload(req))
-        except anthropic.AuthenticationError as exc:
-            raise ProviderError("auth", _safe(exc), retryable=False, billing="none") from exc
-        except anthropic.PermissionDeniedError as exc:
-            raise ProviderError("permission", _safe(exc), retryable=False, billing="none") from exc
-        except anthropic.NotFoundError as exc:
-            raise ProviderError("not_found", _safe(exc), retryable=False, billing="none") from exc
-        except anthropic.BadRequestError as exc:
-            raise ProviderError("bad_request", _safe(exc), retryable=False, billing="none") from exc
-        except anthropic.RateLimitError as exc:
-            raise ProviderError("rate_limit", _safe(exc), retryable=True, billing="none") from exc
-        except anthropic.APITimeoutError as exc:
-            raise ProviderError(
-                "timeout", "request timed out", retryable=True, billing="unknown"
-            ) from exc
-        except anthropic.APIConnectionError as exc:
-            raise ProviderError(
-                "connection", "connection error", retryable=True, billing="unknown"
-            ) from exc
-        except anthropic.APIStatusError as exc:
-            # A 5xx after dispatch may still have consumed tokens: treat as potentially billed.
-            server = exc.status_code >= 500
-            raise ProviderError(
-                "server" if server else "other",
-                _safe(exc),
-                retryable=server,
-                billing="unknown" if server else "none",
-            ) from exc
-        except Exception as exc:  # credential-chain failures (e.g. expired profile) and similar
-            text = f"{type(exc).__name__}: {exc}"
-            auth = any(
-                k in text.lower() for k in ("credential", "oauth", "token", "identity", "auth")
-            )
-            # Credential-chain failures happen before any request is sent; anything else
-            # unexpected might have happened after dispatch, so its cost is unknown.
-            raise ProviderError(
-                "auth" if auth else "other",
-                text[:300],
-                retryable=False,
-                billing="none" if auth else "unknown",
-            ) from exc
-        u = msg.usage
-        details = getattr(u, "output_tokens_details", None)
-        creation = getattr(u, "cache_creation", None)
-        usage = Usage(
-            input_tokens=u.input_tokens or 0,
-            output_tokens=u.output_tokens or 0,
-            cache_read_input_tokens=getattr(u, "cache_read_input_tokens", None) or 0,
-            cache_creation_input_tokens=getattr(u, "cache_creation_input_tokens", None) or 0,
-            thinking_tokens=getattr(details, "thinking_tokens", None) if details else None,
-            cache_creation_5m=getattr(creation, "ephemeral_5m_input_tokens", None)
-            if creation
-            else None,
-            cache_creation_1h=getattr(creation, "ephemeral_1h_input_tokens", None)
-            if creation
-            else None,
-        )
+        except Exception as exc:
+            raise classify_anthropic_error(exc) from exc
+        usage = usage_from_sdk(msg.usage)
         text = "".join(b.text for b in msg.content if getattr(b, "type", None) == "text")
         if msg.stop_reason == "refusal":
             err = ProviderError(
@@ -313,6 +258,70 @@ class AnthropicProvider:
         return ModelResponse(
             text, usage, msg.stop_reason, msg.model, getattr(msg, "_request_id", None)
         )
+
+
+def usage_from_sdk(u: Any) -> Usage:
+    """Provider-reported usage from an SDK ``usage`` object (shared by both adapters)."""
+    details = getattr(u, "output_tokens_details", None)
+    creation = getattr(u, "cache_creation", None)
+    return Usage(
+        input_tokens=u.input_tokens or 0,
+        output_tokens=u.output_tokens or 0,
+        cache_read_input_tokens=getattr(u, "cache_read_input_tokens", None) or 0,
+        cache_creation_input_tokens=getattr(u, "cache_creation_input_tokens", None) or 0,
+        thinking_tokens=getattr(details, "thinking_tokens", None) if details else None,
+        cache_creation_5m=getattr(creation, "ephemeral_5m_input_tokens", None)
+        if creation
+        else None,
+        cache_creation_1h=getattr(creation, "ephemeral_1h_input_tokens", None)
+        if creation
+        else None,
+    )
+
+
+def classify_anthropic_error(exc: Exception) -> ProviderError:
+    """Map an exception raised by the Anthropic SDK's request call to a ProviderError.
+
+    Shared by the single-action adapter and the native-tool adapter (``transport.py``), so both
+    classify retryability and billing identically. The order of the checks matters: the specific
+    status errors are subclasses of ``APIStatusError``.
+    """
+    import anthropic
+
+    if isinstance(exc, anthropic.AuthenticationError):
+        return ProviderError("auth", _safe(exc), retryable=False, billing="none")
+    if isinstance(exc, anthropic.PermissionDeniedError):
+        return ProviderError("permission", _safe(exc), retryable=False, billing="none")
+    if isinstance(exc, anthropic.NotFoundError):
+        return ProviderError("not_found", _safe(exc), retryable=False, billing="none")
+    if isinstance(exc, anthropic.BadRequestError):
+        return ProviderError("bad_request", _safe(exc), retryable=False, billing="none")
+    if isinstance(exc, anthropic.RateLimitError):
+        return ProviderError("rate_limit", _safe(exc), retryable=True, billing="none")
+    if isinstance(exc, anthropic.APITimeoutError):
+        return ProviderError("timeout", "request timed out", retryable=True, billing="unknown")
+    if isinstance(exc, anthropic.APIConnectionError):
+        return ProviderError("connection", "connection error", retryable=True, billing="unknown")
+    if isinstance(exc, anthropic.APIStatusError):
+        # A 5xx after dispatch may still have consumed tokens: treat as potentially billed.
+        server = exc.status_code >= 500
+        return ProviderError(
+            "server" if server else "other",
+            _safe(exc),
+            retryable=server,
+            billing="unknown" if server else "none",
+        )
+    # Credential-chain failures (e.g. expired profile) and similar.
+    text = f"{type(exc).__name__}: {exc}"
+    auth = any(k in text.lower() for k in ("credential", "oauth", "token", "identity", "auth"))
+    # Credential-chain failures happen before any request is sent; anything else
+    # unexpected might have happened after dispatch, so its cost is unknown.
+    return ProviderError(
+        "auth" if auth else "other",
+        text[:300],
+        retryable=False,
+        billing="none" if auth else "unknown",
+    )
 
 
 def _safe(exc: Exception) -> str:
