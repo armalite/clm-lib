@@ -127,6 +127,8 @@ Live phases: **still not run**. `ANTHROPIC_API_KEY` is still unset in the agent 
   - the step limit and the call cap;
   - tool retry and tool failure;
   - provider failure.
+- **guarded-clm's own test suite** (57 tests, run from its checkout with the p015 interpreter): all pass on this environment's Python 3.13.15 and pinned stack.
+- **Library version metadata:** the loaded `guarded_clm.__version__` is `0.1.0` while its distribution metadata says `0.1.0.dev0`. The provenance records both, and the source fingerprint identifies the exact code. The library has this as an open question for itself.
 - **`test_library_scenarios.py`:** guarded-clm's 32 public scenarios, with every model wrapped in `AccountedModel`, match the library's stored transcripts, with one settled attempt per request.
 - **`test_accounting.py`:**
   - every attempt is reserved and settled once;
