@@ -387,7 +387,7 @@ arm execution policy   which calls run, and in what order (not decided here); ta
 - edit-only turns (the mirror changed, nothing printed, exit 0) are free for `max_steps` but count toward `lm_call_cap`;
 - neither source describes `context_read`/`context_apply`, so `paper_clm_tools` is this project's adaptation.
 
-**Library-first sequencing (2026-10-15):** programme 015's lite arms will use the separate guarded-clm library, imported at a pinned version (SPEC §27.7). clm-lib keeps the harness concerns only: the paper arms' transport, counters, the output cap, the runner, the sandbox, accounting and exports. It does not copy the library's logic.
+**Library-first sequencing (2026-10-15):** programme 015's lite arms will use the separate guarded-clm library, imported at a pinned version (SPEC §27.7). clm-lib keeps the harness concerns only: the paper arms' transport, counters, the output cap, the runner, the sandbox, accounting and exports. It does not copy the library's logic. **Update (2026-10-15):** the library is a Pydantic AI capability (`clm_context()`), a faithful port of a tested implementation. How clm-lib's own runner will host it is open (guarded-clm plan step 3).
 
 **A pre-existing executor edge, noted but not changed:** the runtime-evidence line in stderr is removed from the captured head only when the whole line is inside the head. When stderr fills the capture to within the record's length, a partial record could appear in the captured stderr. The historical path is unchanged; for `tool-output-cap/1` the larger capture makes this rarer, not impossible.
 
