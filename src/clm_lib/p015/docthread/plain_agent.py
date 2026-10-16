@@ -171,7 +171,7 @@ class PlainInvestigator:
             )
         notices = "\n".join(self._notices(messages))
         rolled = "rolled back" in notices
-        pressed = rolled or "only about" in notices or "over the" in notices
+        pressed = rolled or "only about" in notices or "over the" in notices or "within" in notices
         answered = {p.tool_call_id for p in messages[-1].parts if isinstance(p, ToolReturnPart)}
         if self.last_id is not None and self.last_id in answered:
             if self.last_kind == "read":

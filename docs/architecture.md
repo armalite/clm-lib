@@ -434,6 +434,14 @@ arm execution policy   which calls run, and in what order (not decided here); ta
 - **Estimation:** both arms use `p015-ratio-estimate/1`, not guarded-clm's estimator. This is a recorded difference between arms, not an attempt to match it.
 - **Adaptations** to the public descriptions are listed, element by element, in the results repository (`paper-clm-shell-fidelity.md` and `arm-settings.md`). The departures from the paper's README include: the last mirror block must stay unchanged; rollback is limited to the current turn; the nudge percentages are taken of the limit; and the shared answer contract replaces `submit`.
 
+**Comparison settings and the launcher (2026-10-16, SPEC §31):**
+- **One shared model configuration** (`live.py`). It is applied in the same way by every runner, so the arms differ only in their context capability. The wire shape is checked offline; the model's acceptance is a smoke item.
+- **Retries live in the accounting wrapper,** never in the SDK. Each retry is a visible, reserved attempt, and a logical call stays one call for Pydantic AI's request limit and guarded-clm's own counters, which are unchanged.
+- **The spending gate is a hook in the wrapper.** It reads the authorisation from disk before every attempt. The launcher adds a check before each turn. The gate never writes an authorisation or a ceiling.
+- **The launcher is a separate process with all state on disk:** a contract, status files, an event log and recorder directories. Restarting it never repeats a finished session and never redispatches one whose outcome is unknown. A session cannot resume mid-conversation, because the arms' state is in memory, so an interrupted session needs an explicit resolution.
+- **Concurrency:** one launcher at a time per launch directory (an `flock`). Sessions run one after another. The gate still counts open and other-process pending reservations.
+- **The paper arm's profiles:** `paper` (the default) and `readme`. These come from the source-priority review recorded in the results repository.
+
 **Files:**
 
 ```
@@ -447,6 +455,9 @@ src/clm_lib/p015/
   arms.py         ArmSession: the paper and summary arms' runner (SPEC §30)
   arm_errors.py   ArmContextLimit, ArmStepLimit, SummaryCallCap
   estimate.py     p015-ratio-estimate/1 (request characters over a ratio)
+  live.py         ModelConfig p015-model/1, tagged system prompt, live_model() (SDK retries off)
+  spend.py        SpendGate p015-spend/1 (programme ceiling, block stop)
+  launcher.py     p015-launch/1 (plan, run, status, stop, resolve, export)
   paper/          mirror.py (ctx-turn-mirror/1), shell.py (ShellSandbox), capability.py (PaperShellContext)
   summary/        capability.py (TokenTailSummary, token-tail-p015/1)
   docthread/      the workload (SPEC §29); plain_agent.py and arms_offline.py for the two arms' offline sessions

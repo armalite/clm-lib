@@ -88,11 +88,16 @@ def _count(items: Any) -> dict[str, int]:
     return dict(sorted(out.items()))
 
 
-def export_session(run_dir: Path, dest_root: Path) -> Path:
+def export_session(run_dir: Path, dest_root: Path, *, partial: bool = False) -> Path:
+    """A complete export refuses an inconsistent record. A partial export (`partial=True`, for a session that was
+    interrupted, stopped or left an attempt in flight) copies the record as it is and lists its consistency problems
+    in the manifest's `incomplete` field, which `verify_export` then checks against the records."""
     problems = consistency_problems(run_dir)
-    if problems:
+    if problems and not partial:
         raise ValueError(f"session record is inconsistent: {problems}")
     manifest = summarise(run_dir)
+    if partial:
+        manifest["incomplete"] = problems
     dest = dest_root / manifest["run_id"]
     staging = dest_root / f".{manifest['run_id']}.staging"
     if staging.exists():
@@ -154,9 +159,18 @@ def verify_export(dest: Path) -> list[str]:
             out.append(f"missing {name}")
         elif _sha256(dest / name) != digest:
             out.append(f"checksum mismatch: {name}")
-    out += consistency_problems(dest)
     manifest = json.loads((dest / "manifest.json").read_text(encoding="utf-8"))
-    if manifest != summarise(dest):
+    problems = consistency_problems(dest)
+    if (
+        "incomplete" in manifest
+    ):  # a partial export: its problems are declared, and must be exactly these
+        if manifest["incomplete"] != problems:
+            out.append("the declared incomplete records differ from the exported records")
+        expected = {**summarise(dest), "incomplete": problems}
+    else:
+        out += problems
+        expected = summarise(dest)
+    if manifest != expected:
         out.append("manifest does not match the exported records")
     return out
 

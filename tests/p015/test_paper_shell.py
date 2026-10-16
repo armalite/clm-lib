@@ -288,22 +288,24 @@ def test_step_limit_call_cap_and_finalize_notice(tmp_path: Path) -> None:
     assert cap.state.calls == 3 and cap.state.steps == 0  # free steps count as calls only
 
 
-def test_nudges_follow_the_documented_thresholds(tmp_path: Path) -> None:
+def test_readme_nudges_follow_the_readme_thresholds(tmp_path: Path) -> None:
+    """README profile: 25/50/75% of the budget (the README's denominator), once each and re-armed; the adaptive
+    persistent nudge relative to the limit."""
     (tmp_path / "m").mkdir()
-    cap = PaperShellContext(FakeSandbox(tmp_path / "m", tmp_path, {}))  # type: ignore[arg-type]
-    limit = cap.settings.limit
-    assert cap._notices(int(0.2 * limit)) == []
-    assert "(26% of the limit)" in cap._notices(int(0.26 * limit))[0]
-    assert cap._notices(int(0.27 * limit)) == []  # each threshold once
+    box = FakeSandbox(tmp_path / "m", tmp_path, {})
+    cap = PaperShellContext(box, PaperSettings(profile="readme"))  # type: ignore[arg-type]
+    budget, limit = cap.settings.budget_tokens, cap.settings.limit
+    assert cap._notices(int(0.24 * budget)) == []
+    assert "26% of the 32,000-token budget" in cap._notices(int(0.26 * budget))[0]
+    assert cap._notices(int(0.27 * budget)) == []  # each threshold once
     assert (
-        "(76% of the limit)" in cap._notices(int(0.76 * limit))[0]
-    )  # 50% and 75% crossed together: one notice
-    assert cap._notices(int(0.10 * limit)) == [] and cap.state.nudged == set()  # re-armed below
+        "76% of the 32,000-token budget" in cap._notices(int(0.76 * budget))[0]
+    )  # 50 and 75% at once: one
+    assert cap._notices(int(0.10 * budget)) == [] and cap.state.nudged == set()  # re-armed below
     cap.state.nudged = {0.25, 0.5, 0.75}
-    near = limit - int(0.09 * limit)
     assert any(
-        "tokens are left before" in n for n in cap._notices(near)
-    )  # room below 10% of the limit
+        "tokens are left before" in n for n in cap._notices(limit - int(0.09 * limit))
+    )  # < 10% of limit
     cap.state.recent_outputs.extend([3_000, 100, 200])
     assert any(
         "tokens are left before" in n for n in cap._notices(limit - 5_000)
@@ -311,6 +313,35 @@ def test_nudges_follow_the_documented_thresholds(tmp_path: Path) -> None:
     assert not any(
         "tokens are left before" in n for n in cap._notices(int(0.45 * limit))
     )  # never below 50%
+
+
+def test_paper_profile_gives_one_reminder_2048_tokens_before_the_limit(tmp_path: Path) -> None:
+    (tmp_path / "m").mkdir()
+    cap = PaperShellContext(FakeSandbox(tmp_path / "m", tmp_path, {}))  # type: ignore[arg-type]
+    s = cap.settings
+    assert (s.profile, s.reminders, s.rollback, s.max_rollbacks) == (
+        "paper",
+        "single",
+        "last-step",
+        6,
+    )
+    point = s.limit - 2_048
+    assert cap._notices(int(0.9 * point)) == []  # no 25/50/75% nudges in the paper profile
+    assert cap._notices(point - 1) == []
+    first = cap._notices(point)
+    assert len(first) == 1 and "within 2,048 tokens of the 29,952-token limit" in first[0]
+    assert cap._notices(point + 500) == []  # once per crossing
+    assert (
+        cap._notices(point - 100) == [] and cap._notices(point + 1) != []
+    )  # re-armed below the point
+    readme = PaperSettings(profile="readme")
+    assert (readme.reminders, readme.rollback, readme.max_rollbacks) == (
+        "escalating",
+        "to-margin",
+        50,
+    )
+    with pytest.raises(ValueError):
+        PaperSettings(profile="other")
 
 
 def test_instructions_and_tool_schema() -> None:
@@ -334,6 +365,9 @@ def stress(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
             "paper_clm_shell", policy="never", label="stress", paper=PaperSettings(max_rollbacks=3)
         ),
         "never": ArmPlan("paper_clm_shell", policy="never", label="stress"),
+        "never_readme": ArmPlan(
+            "paper_clm_shell", policy="never", label="stress", paper=PaperSettings(profile="readme")
+        ),
     }
     return {k: (run(p, out, k), out / k) for k, p in plans.items()}
 
@@ -374,8 +408,15 @@ def test_rollback_then_one_final_request_then_context_limit(stress: dict[str, An
     )
 
 
-def test_never_editing_agent_ends_at_the_step_limit_with_rollbacks(stress: dict[str, Any]) -> None:
+def test_never_editing_agent_under_each_profile(stress: dict[str, Any]) -> None:
+    # The paper profile: six one-step rollbacks, then one final over-limit request, then the turn ends.
     result, run_dir = stress["never"]
+    assert result["endings"] == ["context_limit"]
+    m = result["measurements"]
+    assert m["rollback_steps"] == 6 and m["over_limit_notices"] == 1 and m["editing_reminders"] >= 1
+    assert m["size_nudges"] == m["persistent_nudges"] == 0
+    # The README profile: rollbacks to the margin never run out before the 60-step limit.
+    result, run_dir = stress["never_readme"]
     assert result["endings"] == ["step_limit"]
     m = result["measurements"]
     assert 0 < m["rollbacks"] < 50 and m["persistent_nudges"] > 0 and m["size_nudges"] == 3

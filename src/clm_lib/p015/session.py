@@ -40,7 +40,15 @@ from pydantic_core import to_jsonable_python
 from ..budget import Ledger, ModelPrice
 from ..tooling import Tool as TaskTool
 from . import EVIDENCE_LABEL
-from .accounting import AccountedModel, AccountingBoundViolated, Mode, SpendRefused
+from .accounting import (
+    AccountedModel,
+    AccountingBoundViolated,
+    LaunchStopped,
+    Mode,
+    RetryPolicy,
+    SpendGate,
+    SpendRefused,
+)
 from .provenance import harness_provenance, library_provenance
 from .records import SessionRecorder
 from .tools import bridge
@@ -114,6 +122,8 @@ class GuardedSession:
         mode: Mode = "scripted",
         live_authorised: bool = False,
         evidence: str = EVIDENCE_LABEL,
+        gate: SpendGate | None = None,
+        retry: RetryPolicy | None = None,
     ) -> None:
         self.settings = settings or GuardedSettings()
         self.recorder = SessionRecorder(run_dir, run_id=run_id, evidence=evidence)
@@ -125,6 +135,8 @@ class GuardedSession:
             sink=self.recorder,
             mode=mode,
             live_authorised=live_authorised,
+            gate=gate,
+            retry=retry,
         )
         tools = [*(bridge(t, sink=self.recorder) for t in task_tools), *framework_tools]
         self.agent: Agent[None, Any] = Agent(
@@ -154,6 +166,8 @@ class GuardedSession:
         )
 
     def classify(self, exc: BaseException) -> str:
+        if isinstance(exc, LaunchStopped):
+            return "stopped"
         if isinstance(exc, SpendRefused):
             return "spend_refused"
         if isinstance(exc, AccountingBoundViolated):

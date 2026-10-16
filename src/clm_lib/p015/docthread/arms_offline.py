@@ -196,7 +196,10 @@ def measure(run_dir: Path, desk: EvidenceService, calls_by_turn: list[list[str]]
             default=0,
         ),
         "final_chars_per_token": requests[-1]["chars_per_token"] if requests else None,
-        "size_nudges": sum("% of the limit)" in n for n in notices),
+        "size_nudges": sum("-token budget." in n for n in notices),
+        "editing_reminders": sum(
+            "tokens of the" in n and "-token limit. Edit" in n for n in notices
+        ),
         "persistent_nudges": sum("tokens are left before" in n for n in notices),
         "rollback_notices": sum("were rolled back" in n for n in notices),
         "over_limit_notices": sum("nothing more can be rolled back" in n for n in notices),
@@ -207,6 +210,7 @@ def measure(run_dir: Path, desk: EvidenceService, calls_by_turn: list[list[str]]
         "edits_applied": kinds.get("paper_edit_applied", 0),
         "edits_rejected": kinds.get("paper_edit_rejected", 0),
         "rollbacks": kinds.get("paper_rollback", 0),
+        "rollback_steps": sum(r["units"] for r in trace if r["type"] == "paper_rollback"),
         "summaries_applied": kinds.get("summary_applied", 0),
         "summaries_too_large": kinds.get("summary_too_large", 0),
         "summaries_empty": kinds.get("summary_empty", 0),
@@ -246,6 +250,14 @@ def matrix() -> list[tuple[str, ArmPlan]]:
             out.append((name, ArmPlan("token_tail_p015", inst, "none", synthetic)))
     out += [
         ("paper-dev1-never-synthetic-stress", ArmPlan("paper_clm_shell", policy="never", label="stress")),
+        (
+            "paper-dev1-never-readme-stress",
+            ArmPlan("paper_clm_shell", policy="never", label="stress", paper=PaperSettings(profile="readme")),
+        ),
+        (
+            "paper-dev1-keep-synthetic-readme",
+            ArmPlan("paper_clm_shell", policy="keep", label="alternative", paper=PaperSettings(profile="readme")),
+        ),
         ("paper-dev1-never-3-rollbacks-stress",
          ArmPlan("paper_clm_shell", policy="never", label="stress", paper=PaperSettings(max_rollbacks=3))),
         ("paper-dev1-bad-edits-stress", ArmPlan("paper_clm_shell", label="stress", bad_edits=list(BAD_EDITS.values()))),

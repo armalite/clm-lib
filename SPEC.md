@@ -1,6 +1,6 @@
 # clm-lib: Technical Specification
 
-Version: 2.18 | 16 October 2026
+Version: 2.19 | 16 October 2026
 
 Repository: `clm-lib` | Python package: `clm_lib` | CLI: `clm-lib`
 
@@ -29,6 +29,7 @@ Version history:
 - 2.14: adds §26's W3 instances `w3-dev-3` and `w3-dev-4` (fresh seeds of the dev-1 and dev-2 schedules) and the replay's neutral `last_request` keys, for experiment 014's R1 matched development pilot.
 - 2.15: adds §27, shared foundations for programme 015 (opt-in, not yet wired into the runner): the native-tool transport `native-tools/1`, tool interfaces, versioned counters `session-counters/1`, the task-tool output cap `tool-output-cap/1` and accounted native dispatch. No arm, workload or live path uses them yet; §27.6 lists what is pending.
 - 2.16: adds §28, the programme 015 guarded-clm integration path (`clm_lib.p015`): opt-in, in a separate environment, verified offline with scripted and mocked models only.
+- 2.19: adds §31, the programme 015 comparison contract (`p015-model/1`, `p015-retry/1`) and the resumable launcher with spending controls (`p015-launch/1`, `p015-spend/1`), verified offline only; amends §30.2 with the `paper` and `readme` profiles.
 - 2.18: adds §30, the programme 015 paper and summary arms (`paper-clm-shell/1`, `token-tail-p015/1`) on a shared runner, `ArmSession`, verified offline with scripted sessions only.
 - 2.17: adds §29, the programme 015 incident-thread workload `docthread` (generator `docthread-gen/1`, task `docthread-task/1`, scorer `docthread-score/1`), verified offline with scripted sessions only.
 - 1.9: adds a multi-round incident task family, two CLM capability variants (direct editing only; reusable helpers allowed), a separate summary-call allowance, helper-evidence tiers and a three-condition schedule (§18).
@@ -938,7 +939,12 @@ A session directory holds:
   - rollback of the current turn's newest steps when over the limit (2,048-token margin, up to 50 per turn), then one final over-limit request;
   - free edit-only steps; 60 task steps and 144 calls per turn;
   - only the first `bash` call of a response runs, and the others get an explicit not-run result.
-- **Settings:** `PaperSettings`. The defaults are the 015 standard (budget 32,000; limit 29,952) and the README's (margins, ratios, retries).
+- **Settings:** `PaperSettings`. The budget is 32,000 and the limit 29,952 (the 015 standard).
+- **Profiles (amended 2026-10-16):**
+  - **`paper`** (the default) follows the paper's experimental settings: one editing reminder when the request is within 2,048 tokens of the limit, once per crossing; and over the limit, the last step is rolled back and the request retried, up to 6 times per turn.
+  - **`readme`** follows the README's defaults: nudges at 25, 50 and 75% of the budget plus the adaptive persistent nudge; rollback of the newest steps to a 2,048-token margin, up to 50 times.
+
+  Both then allow one final over-limit request before the turn ends. The first version used the README's rules, with the limit as the nudge denominator; both were corrected.
 
 ### 30.3 The summary arm (`token-tail-p015/1`)
 
@@ -959,3 +965,62 @@ A session directory holds:
 - **`docthread/plain_agent.py`:** a scripted investigator for requests in plain message form. Its paper policies are `tidy`, `keep`, `never` and bad edits; for the summary arm it uses `none` and also acts as an extractive summariser. `docthread/arms_offline.py` runs the sessions, and `--matrix` runs the reported offline matrix.
 
 **Status:** offline verification only, with scripted models and the real sandbox. There are no model results. See docs/results.md.
+
+## 31. Programme 015 comparison contract and resumable launcher (offline-verified)
+
+### 31.1 The model configuration (`live.py`, `p015-model/1`)
+
+`ModelConfig` is one configuration for every arm and the summariser.
+
+**Settings:**
+- **Model:** `claude-sonnet-5`.
+- **Sampling:** not sent.
+- **Thinking:** adaptive (the default; `thinking` not sent) or `disabled`.
+- **Effort:** `high`.
+- **Output:** `max_tokens` 8,192.
+- **Caching:** automatic prompt caching plus breakpoints after the tool definitions and the instructions, with one TTL (5 minutes by default).
+- **Session isolation:** a `run-ref: <32 hex>` line leads each session's system prompt (`tagged_system_prompt`).
+
+**`live_model()`** builds Pydantic AI's `AnthropicModel` on an Anthropic client with `max_retries=0`. It is never called live by the tests; they use an in-memory transport.
+
+**Credentials:** `credential_source_present()` checks only that a credential source exists. `configs/prices.toml` holds the dated `claude-sonnet-5` price.
+
+### 31.2 Accounting additions (`accounting.py`)
+
+- **`RetryPolicy` (`p015-retry/1`):** bounded retries of one logical call, after HTTP 429, 500, 502, 503, 504 or 529, or a connection failure. Each retry is its own reserved, gate-checked attempt, recorded with `logical_call` and `retry`. There are none by default, so the existing offline failure paths are unchanged.
+- **`SpendGate`:** a protocol, checked before every reservation. A refusal is recorded and never dispatched.
+- **`LaunchStopped`:** the ending `stopped`, in both runners. `GuardedSession` and `ArmSession` accept `gate` and `retry`. With neither, their behaviour is unchanged.
+
+### 31.3 Spending controls (`spend.py`, `p015-spend/1`)
+
+**The authorisation file:** the maintainer writes it, naming the experiment and the launch. It sets a programme ceiling and a block stop. It is reread before every user turn and every provider attempt.
+
+**What is counted:**
+- **programme spend:** the ledger's `p015:*` entries;
+- **block spend:** the launch's entries;
+- **open reservations:** this process's, and those other processes have left pending in the ledger file.
+
+Confirmed and assumed charges are reported apart. An authorisation for another launch is refused, and nothing writes or raises an authorisation or a ceiling.
+
+### 31.4 The launcher (`launcher.py`, `p015-launch/1`)
+
+**The commands** are `plan`, `run`, `status`, `stop` (`--now`, `--clear`), `resolve` and `export`.
+
+**`plan`** writes an immutable contract: the session identities, a balanced instance-major run order, the cache tags, the settings, the ledger and authorisation paths, and fingerprints of the configuration, the clm-lib source, the guarded-clm source and the workload versions.
+
+**`run` refuses** if the contract, its digest or a fingerprint differs; if another launcher holds the file lock; or while a stop is pending.
+
+**State:** status files are written atomically, and `events.jsonl` is append-only. Each run is a recorder directory, `runs/<session>/r<k>`.
+
+**Restart:**
+- finished sessions are skipped;
+- a session left `running` becomes `uncertain` if an attempt was in flight (the ledger charges it at the reservation), or `interrupted` otherwise;
+- neither is redispatched without `resolve`.
+
+**Outcomes:** `complete`, `arm_failure`, `provider_failure`, `spend_stopped`, `stopped` and `harness_defect`.
+
+**`resolve`** reruns only non-results; the old run is kept.
+
+**`export`** writes complete runs as verified exports and incomplete runs as partial exports (`export_session(partial=True)`), whose manifests declare what is missing.
+
+**Status:** offline verification only (`tests/p015/test_launcher.py`, `test_live_config.py`). No live call has been made. See docs/results.md.

@@ -112,6 +112,24 @@ Verification: `ruff check`, `ruff format --check` and `mypy src` are clean; **56
 
 Live phases: **still not run**. `ANTHROPIC_API_KEY` is still unset in the agent process (`doctor`). Live spend $0.00; cumulative $0.00 of $10.00.
 
+## Programme 015 comparison settings and launcher (2026-10-16, offline)
+
+**What was built (SPEC §31):**
+- the shared model configuration `p015-model/1` and the bounded retry policy `p015-retry/1`;
+- the spending gate `p015-spend/1`;
+- the resumable launcher `p015-launch/1`;
+- the paper arm's `paper` and `readme` profiles.
+
+The settings, the fidelity review, the cost scenarios and the proposed confirmation design are in the results repository (`experiments/015-public-clm-comparison/`).
+
+**Checks:**
+- **The p015 suite** has **138 passed**, with network blocked: 122 before, plus 4 configuration tests, 11 launcher tests (one with the real sandbox) and 1 net new paper test; other paper tests were updated for the profiles.
+- **The launcher proof:** a three-arm matrix with the real sandbox; restarts; a killed launcher with an attempt in flight, marked uncertain and not redispatched; stops; a lowered block stop and a summariser refused before dispatch; two competing launchers; a changed fingerprint; and complete and partial exports.
+- **The arm matrix:** 23 scripted sessions, rerun with the new default profile; all exported and verified.
+- **The historical suite** (dev environment): 349 passed, unchanged, including the isolation tests.
+
+**Not shown:** anything about model performance or live compatibility. No provider or token-counting call was made, and the active ledger is unchanged.
+
 ## Programme 015 paper and summary arms (2026-10-16, offline)
 
 **What was built:** `paper_clm_shell` (`paper-clm-shell/1`) and the summary baseline (`token-tail-p015/1`), on a shared runner, `ArmSession` (SPEC §30). The fidelity mapping, the settings table and the full session table are in the results repository, under `experiments/015-public-clm-comparison/` (`paper-clm-shell-fidelity.md`, `arm-settings.md` and `arms-offline.md`).

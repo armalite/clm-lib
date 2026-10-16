@@ -59,19 +59,38 @@ TOOL = "bash"
 NOTE = "[context]"
 
 
+PROFILES = ("paper", "readme")
+
+
 @dataclasses.dataclass(frozen=True)
 class PaperSettings:
+    """`profile` selects the source for the rules the paper and the README describe differently (2026-10-16 review,
+    clm-lib-test-results 015 `paper-clm-shell-fidelity.md`):
+
+    - `paper` (default): the paper's experimental settings (Appendix E). One editing reminder, given when the request
+      comes within `reminder_before_tokens` (2,048) of the limit; and over the limit, the last step is rolled back and
+      the request retried, up to 6 times (BrowseComp-Plus).
+    - `readme`: the harness README's defaults. Nudges at 25, 50 and 75% of the budget plus the adaptive persistent
+      nudge, and rollback of the newest steps until `retry_margin_tokens` are free, up to 50 times.
+
+    Fields left as None take the profile's value.
+    """
+
     budget_tokens: int = 32_000
     reserve_tokens: int = 2_048
     max_steps: int = 60
     call_cap: int | None = None  # 2 * max_steps + 24 by default
     edit_gate: str = "fit"
-    nudge_fractions: tuple[float, ...] = (0.25, 0.50, 0.75)
-    persistent_floor_fraction: float = 0.10
+    profile: str = "paper"
+    reminders: str | None = None  # "single" (paper) or "escalating" (README)
+    reminder_before_tokens: int = 2_048
+    rollback: str | None = None  # "last-step" (paper) or "to-margin" (README)
+    max_rollbacks: int | None = None  # 6 (paper) or 50 (README)
+    nudge_fractions: tuple[float, ...] = (0.25, 0.50, 0.75)  # of the budget (README)
+    persistent_floor_fraction: float = 0.10  # of the limit (README)
     persistent_output_mult: float = 2.0
-    persistent_min_fraction: float = 0.50
+    persistent_min_fraction: float = 0.50  # of the limit (README)
     retry_margin_tokens: int = 2_048
-    max_rollbacks: int = 50
     finalize_steps: int = 3
     max_output_chars: int = 8_000
     command_timeout_s: int = 30
@@ -79,6 +98,22 @@ class PaperSettings:
     def __post_init__(self) -> None:
         if self.edit_gate != "fit":
             raise ValueError("only the paper's default `fit` edit gate is implemented")
+        if self.profile not in PROFILES:
+            raise ValueError(f"unknown profile {self.profile!r}; expected one of {PROFILES}")
+        paper = self.profile == "paper"
+        defaults = {
+            "reminders": "single" if paper else "escalating",
+            "rollback": "last-step" if paper else "to-margin",
+            "max_rollbacks": 6 if paper else 50,
+        }
+        for name, value in defaults.items():
+            if getattr(self, name) is None:
+                object.__setattr__(self, name, value)
+        if self.reminders not in ("single", "escalating") or self.rollback not in (
+            "last-step",
+            "to-margin",
+        ):
+            raise ValueError(f"unknown reminders {self.reminders!r} or rollback {self.rollback!r}")
 
     @property
     def limit(self) -> int:
@@ -87,6 +122,11 @@ class PaperSettings:
     @property
     def cap(self) -> int:
         return self.call_cap if self.call_cap is not None else 2 * self.max_steps + 24
+
+    @property
+    def rollback_limit(self) -> int:
+        assert self.max_rollbacks is not None
+        return self.max_rollbacks
 
 
 def instructions(settings: PaperSettings) -> str:
@@ -339,10 +379,10 @@ class PaperShellContext(AbstractCapability[Any]):
         chars, tokens = self._estimate(request)
         return request, chars, tokens
 
-    def _rollback(self, target: int) -> int:
+    def _rollable(self) -> bool:
+        """Whether the newest step (a reply and its results) belongs to this turn and can be rolled back."""
         st = self.state
-        units = 0
-        while (
+        return (
             len(st.messages) >= 2
             and isinstance(st.messages[-2], ModelResponse)
             and isinstance(st.messages[-1], ModelRequest)
@@ -351,7 +391,13 @@ class PaperShellContext(AbstractCapability[Any]):
                 isinstance(p, ToolReturnPart) or p.part_kind == "retry-prompt"
                 for p in st.messages[-1].parts
             )
-        ):
+        )
+
+    def _rollback(self, target: int) -> int:
+        """README rule: remove the newest steps of this turn until the request is at most `target`."""
+        st = self.state
+        units = 0
+        while self._rollable():
             if self._build([])[2] <= target:
                 break
             del st.messages[-2:]
@@ -362,26 +408,40 @@ class PaperShellContext(AbstractCapability[Any]):
         st, s = self.state, self.settings
         out: list[str] = []
         limit = s.limit
-        for f in list(st.nudged):
-            if tokens < f * limit:
-                st.nudged.discard(f)  # re-armed once the context is back below it
-        crossed = [f for f in s.nudge_fractions if tokens >= f * limit and f not in st.nudged]
-        if crossed:
-            st.nudged.update(crossed)
-            out.append(
-                f"{NOTE} the context is about {tokens:,} of {limit:,} tokens ({round(100 * tokens / limit)}% of the "
-                "limit)."
+        if s.reminders == "single":
+            # The paper: one editing reminder, 2,048 tokens before the limit; given once per crossing, and re-armed
+            # when the request falls below it again (the repetition is not stated by the paper: our choice).
+            point = limit - s.reminder_before_tokens
+            if tokens < point:
+                st.nudged.discard(0.0)
+            elif 0.0 not in st.nudged:
+                st.nudged.add(0.0)
+                out.append(
+                    f"{NOTE} the context is about {tokens:,} tokens, within {s.reminder_before_tokens:,} tokens of "
+                    f"the {limit:,}-token limit. Edit {MIRROR_FILE} to make room."
+                )
+        else:
+            budget = s.budget_tokens
+            for f in list(st.nudged):
+                if tokens < f * budget:
+                    st.nudged.discard(f)  # re-armed once the context is back below it
+            crossed = [f for f in s.nudge_fractions if tokens >= f * budget and f not in st.nudged]
+            if crossed:
+                st.nudged.update(crossed)
+                out.append(
+                    f"{NOTE} the context is about {tokens:,} tokens, {round(100 * tokens / budget)}% of the "
+                    f"{budget:,}-token budget."
+                )
+            room = limit - tokens
+            threshold = max(
+                s.persistent_floor_fraction * limit,
+                s.persistent_output_mult * max(st.recent_outputs, default=0),
             )
-        room = limit - tokens
-        threshold = max(
-            s.persistent_floor_fraction * limit,
-            s.persistent_output_mult * max(st.recent_outputs, default=0),
-        )
-        if tokens >= s.persistent_min_fraction * limit and room < threshold:
-            out.append(
-                f"{NOTE} only about {max(room, 0):,} tokens are left before the {limit:,}-token limit. Edit "
-                f"{MIRROR_FILE} to make room before reading more."
-            )
+            if tokens >= s.persistent_min_fraction * limit and room < threshold:
+                out.append(
+                    f"{NOTE} only about {max(room, 0):,} tokens are left before the {limit:,}-token limit. Edit "
+                    f"{MIRROR_FILE} to make room before reading more."
+                )
         left = min(s.max_steps - st.steps, s.cap - st.calls)
         if left <= s.finalize_steps:
             out.append(
@@ -403,24 +463,35 @@ class PaperShellContext(AbstractCapability[Any]):
             raise UsageLimitExceeded(f"the model-call cap of {s.cap} was reached")
         events: list[str] = []
         _, _, tokens = self._build([])
-        if tokens > s.limit and st.rollbacks < s.max_rollbacks:
-            units = self._rollback(s.limit - s.retry_margin_tokens)
+        over = tokens
+        if tokens > s.limit and st.rollbacks < s.rollback_limit:
+            units = 0
+            if s.rollback == "to-margin":
+                units = self._rollback(s.limit - s.retry_margin_tokens)
+                if units:
+                    st.rollbacks += 1
+                    st.rollbacks_total += 1
+            else:  # the paper: roll back the last step and retry, each counted, while still over the limit
+                while tokens > s.limit and st.rollbacks < s.rollback_limit and self._rollable():
+                    del st.messages[-2:]
+                    units += 1
+                    st.rollbacks += 1
+                    st.rollbacks_total += 1
+                    tokens = self._build([])[2]
             if units:
-                st.rollbacks += 1
-                st.rollbacks_total += 1
                 after = self._build([])[2]
                 self.record(
                     {
                         "type": "paper_rollback",
+                        "mode": s.rollback,
                         "units": units,
-                        "from_tokens": tokens,
+                        "from_tokens": over,
                         "to_tokens": after,
                     }
                 )
                 events.append(
-                    f"{NOTE} the context was over the {s.limit:,}-token limit (about {tokens:,} tokens), so your last "
-                    f"{units} step(s) were rolled back and their results removed. Edit {MIRROR_FILE} to make room "
-                    "before continuing."
+                    f"{NOTE} the context was over the {s.limit:,}-token limit, so your last {units} step(s) were "
+                    f"rolled back and their results removed. Edit {MIRROR_FILE} to make room before continuing."
                 )
                 tokens = after
         if tokens > s.limit:

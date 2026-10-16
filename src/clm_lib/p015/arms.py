@@ -33,7 +33,16 @@ from ..budget import Ledger, ModelPrice
 from ..executor import ExecutorUnavailable
 from ..tooling import Tool as TaskTool
 from . import EVIDENCE_LABEL
-from .accounting import AccountedModel, AccountingBoundViolated, AttemptCounter, Mode, SpendRefused
+from .accounting import (
+    AccountedModel,
+    AccountingBoundViolated,
+    AttemptCounter,
+    LaunchStopped,
+    Mode,
+    RetryPolicy,
+    SpendGate,
+    SpendRefused,
+)
 from .arm_errors import ArmContextLimit, ArmStepLimit, SummaryCallCap
 from .paper.capability import PaperSettings, PaperShellContext
 from .paper.shell import ShellSandbox
@@ -68,13 +77,24 @@ class ArmSession:
         mode: Mode = "scripted",
         live_authorised: bool = False,
         evidence: str = EVIDENCE_LABEL,
+        gate: SpendGate | None = None,
+        retry: RetryPolicy | None = None,
     ) -> None:
         self.arm = arm
         self.recorder = SessionRecorder(run_dir, run_id=run_id, evidence=evidence)
         counter = AttemptCounter()
-        accounting = dict(ledger=ledger, price=price, run_id=run_id, sink=self.recorder, mode=mode,
-                          live_authorised=live_authorised, counter=counter)  # fmt: skip
-        self.model = AccountedModel(model, category="main", **accounting)  # type: ignore[arg-type]
+        accounting: dict[str, Any] = {
+            "ledger": ledger,
+            "price": price,
+            "run_id": run_id,
+            "sink": self.recorder,
+            "mode": mode,
+            "live_authorised": live_authorised,
+            "counter": counter,
+            "gate": gate,
+            "retry": retry,
+        }  # fmt: skip
+        self.model = AccountedModel(model, category="main", **accounting)
         self.capability: PaperShellContext | TokenTailSummary
         if arm == "paper_clm_shell":
             settings = paper or PaperSettings()
@@ -87,7 +107,7 @@ class ArmSession:
             self.cap = settings.cap
         elif arm == "token_tail_p015":
             ssettings = summary or SummarySettings()
-            self.summary_model = AccountedModel(model, category="summary", **accounting)  # type: ignore[arg-type]
+            self.summary_model = AccountedModel(model, category="summary", **accounting)
             self.capability = TokenTailSummary(
                 self.summary_model,
                 ssettings,
@@ -122,6 +142,8 @@ class ArmSession:
         )
 
     def classify(self, exc: BaseException) -> str:
+        if isinstance(exc, LaunchStopped):
+            return "stopped"
         if isinstance(exc, SpendRefused):
             return "spend_refused"
         if isinstance(exc, AccountingBoundViolated):

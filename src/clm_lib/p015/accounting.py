@@ -10,8 +10,10 @@
 
 `WrapperModel` forwards `system`, `profile` and request preparation, so the capability sees the same model identity
 (its real-usage versus fixed-ratio estimate choice is unchanged), and the request passed on is exactly the one
-Pydantic AI built. Nothing is retried here; Pydantic AI does not retry model requests, and live provider clients must
-have their own retries disabled so that every attempt passes through this wrapper.
+Pydantic AI built. Pydantic AI does not retry model requests. Retries happen only here, by `RetryPolicy`
+(`p015-retry/1`; none by default), each as its own reserved attempt, and live provider clients have the SDK's own
+retries disabled (`live.py`), so that every attempt passes through this wrapper. A spend gate, when given, is
+rechecked before every attempt (`spend.py`).
 
 Usage: Pydantic AI's `RequestUsage.input_tokens` already includes `cache_read_tokens` and `cache_write_tokens`
 (its documented convention; Anthropic's raw figures are normalised on extraction), so the uncached input is
@@ -20,15 +22,16 @@ Usage: Pydantic AI's `RequestUsage.input_tokens` already includes `cache_read_to
 
 from __future__ import annotations
 
+import asyncio
 import json
 import threading
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
-from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
 from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter, ModelResponse
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.function import FunctionModel
@@ -52,6 +55,53 @@ class SpendRefused(RuntimeError):
     def __init__(self, reason: str, kind: str) -> None:
         super().__init__(reason)
         self.kind = kind  # "not_authorised" | "no_price" | "unbounded_output" | "budget_exhausted" | "not_scripted"
+
+
+class LaunchStopped(RuntimeError):
+    """A stop was requested (launcher `stop --now`, or a signal) and is honoured before the next provider attempt.
+    Nothing is dispatched; the session ends as `stopped`."""
+
+
+class SpendGate(Protocol):
+    """Rechecked before every provider attempt (see `clm_lib.p015.spend`). Raises `SpendRefused` or
+    `LaunchStopped`; returns normally to let the attempt reserve and dispatch."""
+
+    def check(self, amount_usd: float, category: str) -> None: ...
+
+
+RETRY_VERSION = "p015-retry/1"
+
+
+@dataclass(frozen=True)
+class RetryPolicy:
+    """Bounded retries of one logical call (`p015-retry/1`), the same for every arm. Each retry is a separate,
+    reserved and settled attempt, rechecked by the spend gate. Only HTTP 429, 500, 502, 503, 504 and 529 and
+    connection failures are retried; anything else ends the call. The SDK's own retries must be off (`live.py`)."""
+
+    max_retries: int = (
+        0  # 0: no retries (the default offline, so scripted failures end the session)
+    )
+    statuses: tuple[int, ...] = (429, 500, 502, 503, 504, 529)
+    base_delay_s: float = 2.0
+    factor: float = 4.0
+    max_delay_s: float = 60.0
+
+    def retryable(self, exc: BaseException) -> bool:
+        if isinstance(exc, ModelHTTPError):
+            return exc.status_code in self.statuses
+        return isinstance(exc, ModelAPIError)  # a connection failure or timeout, no status
+
+    def delay(self, exc: BaseException, retry: int) -> float:
+        after = None
+        if isinstance(exc, ModelHTTPError):
+            headers = getattr(exc, "headers", None) or {}
+            raw = {k.lower(): v for k, v in dict(headers).items()}.get("retry-after")
+            try:
+                after = float(raw) if raw is not None else None
+            except ValueError:
+                after = None
+        planned = self.base_delay_s * self.factor**retry
+        return min(self.max_delay_s, max(planned, after or 0.0))
 
 
 class AccountingBoundViolated(RuntimeError):
@@ -135,6 +185,9 @@ class AccountedModel(WrapperModel):
         live_authorised: bool = False,
         category: str = "main",
         counter: AttemptCounter | None = None,
+        gate: SpendGate | None = None,
+        retry: RetryPolicy | None = None,
+        sleep: Callable[[float], Awaitable[None]] | None = None,
     ) -> None:
         super().__init__(wrapped)
         self.ledger = ledger
@@ -146,6 +199,10 @@ class AccountedModel(WrapperModel):
         self.category = category  # "main" for the agent's calls; "summary" for a summariser's
         self.counter = counter or AttemptCounter()
         self.attempts = 0  # this wrapper's attempts
+        self.logical_calls = 0  # this wrapper's logical calls (each may have several attempts)
+        self.gate = gate
+        self.retry = retry or RetryPolicy()
+        self.sleep = sleep or asyncio.sleep
 
     def _refuse_if_not_allowed(self, max_tokens: int | None) -> None:
         scripted_model = isinstance(self.wrapped, FunctionModel | TestModel)
@@ -172,10 +229,41 @@ class AccountedModel(WrapperModel):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
+        """One logical call: an attempt, and up to `retry.max_retries` further attempts after a retryable failure."""
+        logical = self.logical_calls
+        self.logical_calls += 1
+        retry = 0
+        while True:
+            try:
+                return await self._attempt(
+                    messages, model_settings, model_request_parameters, logical, retry
+                )
+            except (SpendRefused, LaunchStopped, AccountingBoundViolated):
+                raise
+            except Exception as exc:
+                if retry >= self.retry.max_retries or not self.retry.retryable(exc):
+                    raise
+                await self.sleep(self.retry.delay(exc, retry))
+                retry += 1
+
+    async def _attempt(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+        logical: int,
+        retry: int,
+    ) -> ModelResponse:
         max_tokens = (model_settings or {}).get("max_tokens")
         index = self.counter.next()
         self.attempts += 1
-        entry: dict[str, Any] = {"attempt": index, "category": self.category, "mode": self.mode}
+        entry: dict[str, Any] = {
+            "attempt": index,
+            "category": self.category,
+            "mode": self.mode,
+            "logical_call": logical,
+            "retry": retry,
+        }
         try:
             self._refuse_if_not_allowed(max_tokens)
         except SpendRefused as exc:
@@ -185,6 +273,24 @@ class AccountedModel(WrapperModel):
             raise
         bound = request_input_bound(messages, model_request_parameters)
         reserve = self.price.max_cost(bound, max_tokens or 0) if self.price is not None else 0.0
+        if self.gate is not None:
+            try:
+                self.gate.check(reserve, self.category)
+            except SpendRefused as exc:
+                entry.update(
+                    outcome="refused",
+                    refusal=exc.kind,
+                    reason=str(exc),
+                    reserve_usd=round(reserve, 6),
+                )
+                if self.sink is not None:
+                    self.sink.attempt_finished(entry)
+                raise
+            except LaunchStopped as exc:
+                entry.update(outcome="refused", refusal="stopped", reason=str(exc))
+                if self.sink is not None:
+                    self.sink.attempt_finished(entry)
+                raise
         try:
             reservation = self.ledger.reserve(reserve, self.run_id, f"p015:{self.category}", bound)
         except BudgetExhausted as exc:
