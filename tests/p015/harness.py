@@ -190,10 +190,16 @@ class Script:
     `system` is not a scripted one, so the capability calibrates on them. A step may be an exception to raise."""
 
     def __init__(
-        self, steps: list[Step], *, usage: tuple[float, float] | None = (2.4, 1.6)
+        self,
+        steps: list[Step],
+        *,
+        usage: tuple[float, float] | None = (2.4, 1.6),
+        rises: frozenset[int] = frozenset(),
     ) -> None:
-        self.steps, self.usage = steps, usage
+        self.steps, self.usage, self.rises = steps, usage, rises
         self.seen: list[dict[str, Any]] = []
+        self.reported: list[int] = []
+        self.chars: list[int] = []
 
     def respond(self, messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         index = len(self.seen)
@@ -213,9 +219,14 @@ class Script:
             other, dense = self.usage
             total = request_chars(messages, info)
             heavy = min(dense_chars(messages), total)
-            response.usage = RequestUsage(
-                input_tokens=math.ceil(heavy / dense + (total - heavy) / other), output_tokens=9
-            )
+            tokens = math.ceil(heavy / dense + (total - heavy) / other)
+            if index in self.rises:
+                # As when an edit removes about as much as a step adds: the reported input rises by ten tokens
+                # per character the request grew by, at least 250 (guarded-clm's own regression shape, SPEC 13.16).
+                tokens = self.reported[-1] + max(250, 10 * (total - self.chars[-1]))
+            self.chars.append(total)
+            self.reported.append(tokens)
+            response.usage = RequestUsage(input_tokens=tokens, output_tokens=9)
         self.seen[-1]["reported_input_tokens"] = (
             response.usage.input_tokens if self.usage is not None else None
         )
@@ -240,6 +251,10 @@ class Case:
     prompts: list[str]
     settings: GuardedSettings = dataclasses.field(default_factory=GuardedSettings)
     usage: tuple[float, float] | None = (2.4, 1.6)
+    rises: frozenset[int] = (
+        frozenset()
+    )  # calls whose reported input rises without the request extending
+    tools: Sequence[Any] | None = None  # the framework tools; TOOLS when None
 
 
 # ---------------------------------------------------------------------- the two ways of running a case
@@ -256,7 +271,7 @@ def _limits(s: GuardedSettings) -> ContextLimits:
 
 @frozen_clock()
 def run_direct(case: Case) -> dict[str, Any]:
-    script = Script(case.steps(), usage=case.usage)
+    script = Script(case.steps(), usage=case.usage, rises=case.rises)
     records: list[dict[str, Any]] = []
     s = case.settings
     capability = clm_context(
@@ -268,7 +283,8 @@ def run_direct(case: Case) -> dict[str, Any]:
         limits=_limits(s),
         on_record=records.append,
     )
-    agent = Agent(script.model(), system_prompt=SYSTEM, tools=TOOLS, capabilities=[capability])
+    tools = TOOLS if case.tools is None else list(case.tools)
+    agent = Agent(script.model(), system_prompt=SYSTEM, tools=tools, capabilities=[capability])
     runs: list[dict[str, Any]] = []
     history: list[ModelMessage] | None = None
     for prompt in case.prompts:
@@ -307,7 +323,7 @@ def run_direct(case: Case) -> dict[str, Any]:
 def run_session(
     case: Case, run_dir: Path, ledger: Ledger, *, after_turn: Callable[[int], None] | None = None
 ) -> tuple[dict[str, Any], GuardedSession]:
-    script = Script(case.steps(), usage=case.usage)
+    script = Script(case.steps(), usage=case.usage, rises=case.rises)
     session = GuardedSession(
         script.model(),
         run_dir=run_dir,
@@ -316,7 +332,7 @@ def run_session(
         price=PRICE,
         settings=case.settings,
         system_prompt=SYSTEM,
-        framework_tools=TOOLS,
+        framework_tools=TOOLS if case.tools is None else list(case.tools),
         conversation_id="conv",
     )
     runs: list[dict[str, Any]] = []

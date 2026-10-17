@@ -1,0 +1,55 @@
+{
+ "note": "Programme 015 comparison settings for guarded-clm 0.2.0.dev1, PROPOSED (2026-10-16). Successor of superseded/proposed-comparison-strict-db619a8.json. Not a launch spec: launch_id, instances (drawn at the freeze), ledger and authorisation are added at the freeze. A value here is not an approval and not a spending authorisation; settings_status says which choices are approved. See clm-lib-test-results experiments/015-public-clm-comparison/decisions.md.",
+ "experiment": "015",
+ "mode": "live",
+ "arms": ["guarded_clm", "paper_clm_shell", "token_tail_p015"],
+ "questions": 8,
+ "library": {
+  "guarded_clm": {
+   "version": "0.2.0.dev1",
+   "revision": "3f184734362c4c9e24d7f5e2a2d6de5fa18153dd",
+   "source_sha256": "51e6dbe8df7669ff8265d725976260f61891b6624d9c2201c7edc83dfcf2d9e4"
+  }
+ },
+ "model": {
+  "model": "claude-sonnet-5",
+  "thinking": "adaptive",
+  "effort": "high",
+  "max_tokens": 8192,
+  "cache_ttl": "5m",
+  "cache_breakpoints": ["automatic", "tool_definitions", "instructions"],
+  "max_retries": 2
+ },
+ "retry_policy": "p015-retry/1",
+ "arm_settings": {
+  "guarded_clm": {},
+  "paper_clm_shell": {"profile": "paper", "reminder_before_tokens": 2048},
+  "token_tail_p015": {"summary_call_cap": 24}
+ },
+ "paper_rules": {
+  "reminder_point": "limit_minus_reminder_before_tokens",
+  "reminder_repeat": "once_per_crossing",
+  "rejected_edit_free_step": "free"
+ },
+ "settings_status": {
+  "approved": [
+   "model: claude-sonnet-5",
+   "call cap: 144 logical main-model calls per user turn",
+   "summariser calls: a separate finite allowance, counted in every total (the principle)",
+   "retries: one bounded policy for every arm (the principle)",
+   "caching: one common ordinary policy with a per-session identifier (the shape)",
+   "paper arm: the paper's settings first, the README's as the alternative (the principle)",
+   "guarded-clm implementation: 0.2.0.dev1 at 3f18473 (implausible-ratio backstop always on), accepted 2026-10-16"
+  ],
+  "proposed": [
+   "model.thinking adaptive",
+   "model.effort high",
+   "model.max_tokens 8192",
+   "model.cache_ttl 5m and the three breakpoints",
+   "model.max_retries 2 (p015-retry/1 details)",
+   "token_tail_p015.summary_call_cap 24",
+   "paper_clm_shell.profile paper, reminder_before_tokens 2048, and the three paper_rules",
+   "the 60-step limit and the 32,000-token budget (inherited library defaults; not separately confirmed)"
+  ]
+ }
+}

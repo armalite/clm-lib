@@ -442,6 +442,16 @@ arm execution policy   which calls run, and in what order (not decided here); ta
 - **Concurrency:** one launcher at a time per launch directory (an `flock`). Sessions run one after another. The gate still counts open and other-process pending reservations.
 - **The paper arm's profiles:** `paper` (the default) and `readme`. These come from the source-priority review recorded in the results repository.
 
+**The accepted library (2026-10-16, SPEC §33):** guarded-clm 0.2.0.dev1 (`3f18473`) replaces the strict-learning revision. Its backstop is part of the library, so clm-lib has no setting for it and adds no backstop of its own.
+- **Removed settings are refused, not ignored,** so that a configuration made for another revision can never run silently.
+- **A live plan names the library it was made for** (version, revision, fingerprint), and `plan` checks that against what is loaded. This complements the contract fingerprints, which already refuse a contract made against another revision.
+
+**Strict ratio learning and explicit live settings (2026-10-16, SPEC §32; the strict-learning part is superseded by §33):**
+- **The option is passed explicitly, never inherited.** clm-lib fixes its own default (False, the earlier behaviour) so that a change of the library's default can never alter an existing configuration silently. The 015 comparison states True.
+- **No copy of the library:** the option is only a constructor argument. The estimator, guard and records stay the library's.
+- **Code defaults are proposals:** live plans must state every experimental choice, and the contract records exactly what was stated. This closes the gap where `plan()` filled unapproved defaults.
+- **Equivalence evidence** reuses the direct-library versus `GuardedSession` harness, extended only with optional per-case tools and a rising-usage shape (guarded-clm's own regression shape). Existing cases are unchanged.
+
 **Files:**
 
 ```

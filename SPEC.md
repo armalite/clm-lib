@@ -1,6 +1,6 @@
 # clm-lib: Technical Specification
 
-Version: 2.19 | 16 October 2026
+Version: 2.21 | 16 October 2026
 
 Repository: `clm-lib` | Python package: `clm_lib` | CLI: `clm-lib`
 
@@ -29,6 +29,8 @@ Version history:
 - 2.14: adds §26's W3 instances `w3-dev-3` and `w3-dev-4` (fresh seeds of the dev-1 and dev-2 schedules) and the replay's neutral `last_request` keys, for experiment 014's R1 matched development pilot.
 - 2.15: adds §27, shared foundations for programme 015 (opt-in, not yet wired into the runner): the native-tool transport `native-tools/1`, tool interfaces, versioned counters `session-counters/1`, the task-tool output cap `tool-output-cap/1` and accounted native dispatch. No arm, workload or live path uses them yet; §27.6 lists what is pending.
 - 2.16: adds §28, the programme 015 guarded-clm integration path (`clm_lib.p015`): opt-in, in a separate environment, verified offline with scripted and mocked models only.
+- 2.21: adds §33: the accepted guarded-clm 0.2.0.dev1 (always-on implausible-ratio backstop) on the p015 path; `strict_ratio_learning` removed and refused; the library pinned in live plans. §32.1 is superseded.
+- 2.20: adds §32: guarded-clm's `strict_ratio_learning` on the p015 path (explicitly True in the proposed 015 configuration), live plans that must state every experimental choice, and corrections to §31.1's cache-isolation statement.
 - 2.19: adds §31, the programme 015 comparison contract (`p015-model/1`, `p015-retry/1`) and the resumable launcher with spending controls (`p015-launch/1`, `p015-spend/1`), verified offline only; amends §30.2 with the `paper` and `readme` profiles.
 - 2.18: adds §30, the programme 015 paper and summary arms (`paper-clm-shell/1`, `token-tail-p015/1`) on a shared runner, `ArmSession`, verified offline with scripted sessions only.
 - 2.17: adds §29, the programme 015 incident-thread workload `docthread` (generator `docthread-gen/1`, task `docthread-task/1`, scorer `docthread-score/1`), verified offline with scripted sessions only.
@@ -1024,3 +1026,67 @@ Confirmed and assumed charges are reported apart. An authorisation for another l
 **`export`** writes complete runs as verified exports and incomplete runs as partial exports (`export_session(partial=True)`), whose manifests declare what is missing.
 
 **Status:** offline verification only (`tests/p015/test_launcher.py`, `test_live_config.py`). No live call has been made. See docs/results.md.
+
+## 32. Strict ratio learning, explicit live settings and corrections (2026-10-16, offline-verified)
+
+### 32.1 guarded-clm's `strict_ratio_learning` (superseded by §33, 2026-10-16; kept as the record of that revision)
+
+**Where it comes from:** guarded-clm `0.2.0.dev0`, revision `db619a8`, adds `strict_ratio_learning` to `clm_context()` and `ClmContext`. Its default is False.
+
+**What it changes:** only the shared estimator's new-text ratio. With the option on, that ratio learns only from a request that extends the last answered one, and it ignores observations below 0.5 characters per token. The overall ratio, the anchor, the guard and the records are unchanged (library SPEC 13.16, decisions P6).
+
+**It is not behaviour-neutral:** estimates, and the guard and over-limit decisions that depend on them, can change after a step that does not extend the last request.
+
+**How clm-lib passes it:**
+- `GuardedSettings.strict_ratio_learning` has a **harness default of False**: the integration's earlier behaviour, independent of the library's default. It is always passed explicitly. An older spec that omits it runs with False.
+- **The proposed 015 configuration** (`configs/p015/proposed-comparison.json`) sets it to **True** explicitly.
+- **The value is recorded** in the launch contract (and so its configuration fingerprint), in `session.json` and in exports, beside the library's revision, version and source fingerprint.
+- **Unchanged:** the library's trace variant label, and the paper and summary arms.
+
+**The lockfile:** clm-lib's `uv.lock` records guarded-clm 0.2.0.dev0. It is still the editable sibling checkout, and the final live pin is pending.
+
+### 32.2 Explicit live settings (`launcher.live_spec_problems`)
+
+**A live plan must state:**
+- **model:** `thinking`, `effort` (null for not sent), `max_tokens`, `cache_ttl`, `cache_breakpoints` (a subset of automatic, tool definitions and instructions) and `max_retries`;
+- **retries:** `retry_policy: "p015-retry/1"`;
+- **for the arms selected:**
+  - guarded-clm's `strict_ratio_learning`;
+  - the paper arm's `profile` and `reminder_before_tokens`, and `paper_rules`, which acknowledge the three rules the arm implements without a setting (only the implemented values are accepted);
+  - the summariser allowance.
+
+**Otherwise `plan` refuses** before writing anything. Scripted plans may use the code defaults, which are proposals.
+
+**The contract** records `retry_policy`, `paper_rules` and an informational `settings_status`. `ModelConfig` gains `cache_breakpoints` and an optional `effort`. Both defaults equal the earlier behaviour. The live authorisation gate (§31.3, §31.4) is unchanged.
+
+### 32.3 Corrections
+
+- **§31.1's cache isolation is not complete:** the tool-definition breakpoint precedes the `run-ref` line, and summariser requests have none. The practical effect is not known without live evidence.
+- **The paper and summary arms' request estimates** include replayed thinking blocks, through their serialised signatures and calibration on reported usage.
+- **The summary arm's tail split** sizes units from visible text only. This is a limitation to observe, not changed.
+
+**Status:** offline verification only (`tests/p015/test_strict_ratio.py`, `test_live_spec.py`). No live call has been made.
+
+## 33. The accepted guarded-clm implementation (2026-10-16, offline-verified)
+
+**The library:** guarded-clm `0.2.0.dev1`, revision `3f184734362c4c9e24d7f5e2a2d6de5fa18153dd`, source sha256 `51e6dbe8df7669ff8265d725976260f61891b6624d9c2201c7edc83dfcf2d9e4`.
+- **The backstop is always on:** the shared estimator ignores a new-text observation below 0.5 characters per token; exactly 0.5 still counts.
+- **`strict_ratio_learning` is removed.**
+- **Everything else matches 0.1.0:** the learning rules, the guard and its conservative formula, and the records.
+- **Not neutral:** estimates, and the limit and guard decisions that depend on them, can differ where a request would have taught a ratio below 0.5.
+
+**Integration:**
+- **The setting is gone:** `GuardedSettings` has no `strict_ratio_learning`, and nothing passes it.
+- **Obsolete settings are refused:** `obsolete_setting_problems` reports a removed setting, and `plan`, in any mode, and `contract_problems` refuse it with a migration error, whatever its value. It is never ignored or translated.
+- **Configurations:**
+  - the strict-learning configuration is kept byte-identical in `configs/p015/superseded/`, and is refused;
+  - its successor, `configs/p015/proposed-comparison-0.2.0.dev1.json`, states `library.guarded_clm` (version, revision and source fingerprint).
+- **The pin:**
+  - live plans with the guarded arm must state it;
+  - any stated pin must match the loaded library (`library_pin_problems`), which must have no uncommitted package changes;
+  - the contract records the pin, and the existing fingerprints refuse a contract made against another revision.
+- **The lockfile** records 0.2.0.dev1.
+
+**Unchanged:** the paper and summary arms, the workload, the scorer, the model settings, and the launcher's spending, contract and restart protections.
+
+**Status:** offline verification only (`tests/p015/test_ratio_backstop.py`, `test_live_spec.py`, `test_equivalence.py`, `test_library_scenarios.py`). No live call has been made.

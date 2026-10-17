@@ -60,7 +60,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.usage import RequestUsage
 
 from ..budget import Ledger, ModelPrice, load_prices
-from .accounting import LaunchStopped, SpendRefused
+from .accounting import RETRY_VERSION, LaunchStopped, SpendRefused
 from .arms import ArmSession
 from .docthread.agent import Investigator
 from .docthread.fixture import DEV_INSTANCES, GENERATOR_VERSION, generate
@@ -80,7 +80,7 @@ from .live import (
 from .paper.capability import PaperSettings
 from .provenance import library_provenance, tree_fingerprint, versions
 from .records import read_jsonl
-from .session import GuardedSession, GuardedSettings
+from .session import GuardedSession, GuardedSettings, obsolete_setting_problems
 from .spend import SPEND_VERSION, SpendGate
 from .summary.capability import SummarySettings
 
@@ -91,6 +91,89 @@ TERMINAL = ("finished", "uncertain", "interrupted", "stopped", "abandoned")
 ARM_FAILURES = ("context_limit", "step_limit", "call_cap", "summary_call_cap", "model_behaviour")
 HARNESS_DEFECTS = ("harness_defect", "sandbox_unavailable", "unclassified_error", "tool_failure")
 RERUNNABLE_OUTCOMES = ("harness_defect", "provider_failure", "spend_stopped")
+
+# A live plan must state every experimental choice explicitly (2026-10-16): code defaults are proposals, not
+# approvals, and must never be adopted silently. Scripted plans may rely on defaults.
+LIVE_MODEL_FIELDS = {
+    "thinking": '"adaptive" or "disabled"',
+    "effort": 'an effort level, or null for "not sent"',
+    "max_tokens": "an integer",
+    "cache_ttl": '"5m", "1h", or null for no caching',
+    "cache_breakpoints": 'a list drawn from "automatic", "tool_definitions", "instructions" (may be empty)',
+    "max_retries": "the bounded retry count of p015-retry/1",
+}
+# A live plan names the guarded-clm implementation it was made for; plan() checks it against what is loaded.
+LIBRARY_PIN_FIELDS = ("version", "revision", "source_sha256")
+
+
+def library_pin_problems(spec: dict[str, Any]) -> list[str]:
+    """A stated guarded-clm pin that differs from the loaded library (any mode)."""
+    pin = (spec.get("library") or {}).get("guarded_clm")
+    if not pin:
+        return []
+    loaded = library_provenance()
+    actual = {"version": loaded.get("version"), "revision": (loaded.get("git") or {}).get("revision"),
+              "source_sha256": loaded.get("source_sha256")}  # fmt: skip
+    out = [f"library.guarded_clm.{k} is {pin[k]!r} but the loaded guarded-clm has {actual[k]!r}"
+           for k in LIBRARY_PIN_FIELDS if k in pin and pin[k] != actual[k]]  # fmt: skip
+    if (loaded.get("git") or {}).get("package_dirty"):
+        out.append(
+            "the loaded guarded-clm package has uncommitted changes, so it cannot match a pinned revision"
+        )
+    return out
+
+
+# Rules the paper arm implements in code without a setting; a live plan must acknowledge each one explicitly.
+PAPER_RULES_IMPLEMENTED = {
+    "reminder_point": "limit_minus_reminder_before_tokens",
+    "reminder_repeat": "once_per_crossing",
+    "rejected_edit_free_step": "free",
+}
+
+
+def live_spec_problems(spec: dict[str, Any]) -> list[str]:
+    """What a live plan leaves implicit; empty when every choice is stated (or the plan is scripted)."""
+    if spec.get("mode", "scripted") != "live":
+        return []
+    out = []
+    model = spec.get("model") or {}
+    for key, allowed in LIVE_MODEL_FIELDS.items():
+        if key not in model:
+            out.append(f"model.{key} is not set ({allowed})")
+    if spec.get("retry_policy") != RETRY_VERSION:
+        out.append(f'retry_policy must be stated as "{RETRY_VERSION}" (with model.max_retries)')
+    arms = list(spec.get("arms", ARMS))
+    settings = spec.get("arm_settings") or {}
+    if "guarded_clm" in arms:
+        pin = (spec.get("library") or {}).get("guarded_clm") or {}
+        for key in LIBRARY_PIN_FIELDS:
+            if not pin.get(key):
+                out.append(f"library.guarded_clm.{key} is not set (the accepted guarded-clm {key})")
+    if "paper_clm_shell" in arms:
+        paper = settings.get("paper_clm_shell", {})
+        for key, allowed in (
+            ("profile", '"paper" or "readme"'),
+            ("reminder_before_tokens", "an integer"),
+        ):
+            if key not in paper:
+                out.append(f"arm_settings.paper_clm_shell.{key} is not set ({allowed})")
+        rules = spec.get("paper_rules") or {}
+        for key, implemented in PAPER_RULES_IMPLEMENTED.items():
+            if key not in rules:
+                out.append(
+                    f'paper_rules.{key} is not set (the implemented rule is "{implemented}")'
+                )
+            elif rules[key] != implemented:
+                out.append(
+                    f'paper_rules.{key} = "{rules[key]}" is not implemented (only "{implemented}"); '
+                    "choosing it needs a reviewed change to the arm"
+                )
+    if "token_tail_p015" in arms and "summary_call_cap" not in settings.get("token_tail_p015", {}):
+        out.append(
+            "arm_settings.token_tail_p015.summary_call_cap is not set (the summariser allowance per turn)"
+        )
+    return out
+
 
 ModelHook = Callable[
     [str, int, list[ModelMessage]], None
@@ -147,6 +230,22 @@ def plan(spec: dict[str, Any], launch_dir: Path) -> dict[str, Any]:
         raise FileExistsError(
             f"{launch_dir} already has a launch contract; contracts are immutable"
         )
+    obsolete = obsolete_setting_problems((spec.get("arm_settings") or {}).get("guarded_clm"))
+    if obsolete:
+        raise ValueError(
+            "the spec uses settings that no longer exist; nothing was written. Migrate it:\n- "
+            + "\n- ".join(obsolete)
+        )
+    pin = library_pin_problems(spec)
+    if pin:
+        raise ValueError("the spec's guarded-clm pin does not match the loaded library; nothing was written:\n- "
+                         + "\n- ".join(pin))  # fmt: skip
+    missing = live_spec_problems(spec)
+    if missing:
+        raise ValueError(
+            "a live plan must state every experimental choice explicitly; nothing was written. "
+            "Missing or invalid:\n- " + "\n- ".join(missing)
+        )
     arms = list(spec.get("arms", ARMS))
     for arm in arms:
         if arm not in ARMS:
@@ -184,6 +283,14 @@ def plan(spec: dict[str, Any], launch_dir: Path) -> dict[str, Any]:
         "sessions": sessions,
         "model": dataclasses.asdict(ModelConfig(**spec.get("model", {}))),
         "arm_settings": spec.get("arm_settings", {}),
+        "retry_policy": spec.get("retry_policy", RETRY_VERSION),
+        "paper_rules": spec.get("paper_rules", PAPER_RULES_IMPLEMENTED),
+        "library": spec.get(
+            "library"
+        ),  # the stated guarded-clm pin, if any (required for live plans)
+        "settings_status": spec.get(
+            "settings_status"
+        ),  # informational: approved versus proposed choices
         "scripted": spec.get("scripted", {}),
         "price": spec.get("price"),
         "ledger": spec["ledger"],
@@ -217,6 +324,7 @@ def contract_problems(launch_dir: Path) -> list[str]:
     if hashlib.sha256(text.encode()).hexdigest() != recorded:
         out.append("contract.json does not match its recorded digest")
     contract = json.loads(text)
+    out += obsolete_setting_problems((contract.get("arm_settings") or {}).get("guarded_clm"))
     body = {k: v for k, v in contract.items() if k != "fingerprints"}
     now = fingerprints(body)
     for key, value in contract["fingerprints"].items():

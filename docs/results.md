@@ -112,6 +112,51 @@ Verification: `ruff check`, `ruff format --check` and `mypy src` are clean; **56
 
 Live phases: **still not run**. `ANTHROPIC_API_KEY` is still unset in the agent process (`doctor`). Live spend $0.00; cumulative $0.00 of $10.00.
 
+## Programme 015 accepted guarded-clm 0.2.0.dev1 (2026-10-16, offline)
+
+**What changed (SPEC §33):**
+- the guarded arm no longer has or passes `strict_ratio_learning`;
+- configurations that name it are refused with a migration error;
+- the strict-learning configuration is kept byte-identical under `configs/p015/superseded/`, and its successor `configs/p015/proposed-comparison-0.2.0.dev1.json` pins the library;
+- live plans must state and match the pin;
+- `uv.lock` records 0.2.0.dev1.
+
+**The library:** guarded-clm `3f18473` (0.2.0.dev1, clean, source sha256 `51e6dbe8…d9e4`), unmodified.
+
+**Checks:**
+- **The p015 suite:** 168 passed, with network blocked.
+- **Direct library and `GuardedSession`** give identical transcripts, with provider-like usage, on:
+  - the edit-and-read regression (it now completes);
+  - append-only learning;
+  - an edit with a plausible observation;
+  - the 11 existing equivalence cases.
+- **guarded-clm's 32 stored scenarios** match through the accounting wrapper, including the re-recorded `over_budget_ignored`. Its estimate figures changed; its requests, guard decisions and ending did not.
+- **The backstop boundary** at 0.5 was checked with the library's own `Calibration`.
+- **8 guarded docthread sessions** are identical to the earlier strict-off records.
+- **The historical suite** (dev environment): 349 passed, including the isolation tests. Ruff, format and mypy are clean in both environments.
+- **Details:** clm-lib-test-results `experiments/015-public-clm-comparison/backstop-verification.md`.
+
+**Not shown:** anything live. The strict-learning evidence below stays as recorded, valid only for `db619a8`.
+
+## Programme 015 guarded-clm strict ratio learning and explicit live settings (2026-10-16, offline; the strict-learning part is superseded by the entry above)
+
+**What changed (SPEC §32):**
+- the guarded arm passes `strict_ratio_learning` explicitly (harness default False);
+- the proposed 015 configuration (`configs/p015/proposed-comparison.json`) sets it to True;
+- live plans must state every experimental choice;
+- the cache-isolation, retained-thinking and ledger statements were corrected.
+
+**Library and lock:** guarded-clm `db619a8` (0.2.0.dev0, clean, source sha256 `ed22df29…5fbfcc1`), unmodified. clm-lib's `uv.lock` guarded-clm entry went from 0.1.0.dev0 to 0.2.0.dev0, and only the p015 environment was re-synced.
+
+**Checks:**
+- **The p015 suite** has **167 passed**, with network blocked: 138 before, plus 11 strict-ratio and 18 live-spec tests.
+- **With strict on,** the direct library run and `GuardedSession` give identical transcripts, including on guarded-clm's rewrite-induced collapse shape with provider-like usage. Off, that shape ends as `context_limit` with reported input under 10,000 tokens; on, it completes. A purely appending run is identical either way.
+- **16 guarded docthread sessions** (strict off and on, 8 pairs): identical transcripts in every pair. The scripted usage never produces a collapse-inducing observation, so this shows no change there, not neutrality under real usage.
+- **The historical suite** (dev environment): 349 passed, unchanged, including the isolation tests. Ruff, format and mypy are clean in both environments.
+- **Details:** clm-lib-test-results `experiments/015-public-clm-comparison/strict-ratio-verification.md`.
+
+**Not shown:** anything live. The earlier offline verification (guarded-clm 0.1.0) stays as recorded; this is new evidence. No provider or token-counting call was made, and the active ledger is unchanged.
+
 ## Programme 015 comparison settings and launcher (2026-10-16, offline)
 
 **What was built (SPEC §31):**

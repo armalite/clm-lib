@@ -53,10 +53,29 @@ from .provenance import harness_provenance, library_provenance
 from .records import SessionRecorder
 from .tools import bridge
 
+OBSOLETE_GUARDED_SETTINGS = {
+    "strict_ratio_learning": (
+        "strict_ratio_learning was removed in guarded-clm 0.2.0.dev1 (revision 3f18473), whose implausible-ratio "
+        "backstop is always on. Remove the field (whatever its value) and use a configuration made for that "
+        "revision, such as configs/p015/proposed-comparison-0.2.0.dev1.json"
+    ),
+}
+
+
+def obsolete_setting_problems(guarded: dict[str, Any] | None) -> list[str]:
+    """Settings for the guarded arm that no longer exist. They are refused, never ignored or translated."""
+    return [
+        f"arm_settings.guarded_clm.{k}: {why}"
+        for k, why in OBSOLETE_GUARDED_SETTINGS.items()
+        if k in (guarded or {})
+    ]
+
 
 @dataclasses.dataclass(frozen=True)
 class GuardedSettings:
-    """`clm_context()`'s arguments. The defaults are the library's."""
+    """`clm_context()`'s arguments. The defaults are the library's. `strict_ratio_learning` was removed with
+    guarded-clm 0.2.0.dev1 (its implausible-ratio backstop is always on), so it is not a setting here; a
+    configuration that still names it is refused with a migration error (`obsolete_setting_problems`)."""
 
     budget_tokens: int = 32_000
     max_steps: int = 60
