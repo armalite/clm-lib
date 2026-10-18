@@ -112,6 +112,45 @@ Verification: `ruff check`, `ruff format --check` and `mypy src` are clean; **56
 
 Live phases: **still not run**. `ANTHROPIC_API_KEY` is still unset in the agent process (`doctor`). Live spend $0.00; cumulative $0.00 of $10.00.
 
+## Programme 015 session event-loop fix (2026-10-19, offline)
+
+**What changed (SPEC §34, `p015-session-loop/1`):** each p015 session now runs all its turns on one event loop (`asyncio.Runner`). It closes its model clients on that loop before closing the loop. This fixes the defect found in smoke-dev1. Pooling, retries, requests, accounting and every arm's behaviour are unchanged.
+
+**Verification:** against a local keep-alive HTTP server, with synthetic responses and no provider:
+- the old pattern fails on turn 2 as it did live;
+- the fixed sessions (all three arms, summariser requests, successive sessions, error and stop endings, and a three-arm launch) make no failed or extra attempts;
+- request bodies are unchanged.
+
+**Live spend:** $0.00. The ledger is unchanged.
+
+**smoke-dev1's status:**
+- guarded-clm completed, but under the defect;
+- `paper_clm_shell` was stopped by the operator and is incomplete;
+- `token_tail_p015` never ran.
+
+Its contract is now refused, because the source fingerprint changed. A fresh, separately identified three-arm smoke is proposed, not launched.
+
+**Details:** clm-lib-test-results `experiments/015-public-clm-comparison/smoke-dev1-record.md`.
+
+## Programme 015 live development smoke smoke-dev1 (2026-10-18, PARTIAL)
+
+**What was approved and run:** the maintainer approved a USD 15 block. `docthread-dev-1` was run with the frozen contract (`configs/p015/smoke-dev1.json`; guarded-clm 0.2.0.dev1 at `3f18473`).
+
+**Results:**
+- **guarded-clm:** completed 8 turns, scoring 6/10 with recall 2/3. A compatibility result, not a comparison.
+- **`paper_clm_shell`:** stopped by the operator after 3 calls.
+- **`token_tail_p015`:** not run.
+
+**The harness defect:** the p015 runners call `asyncio.run` per user turn while the session's `AsyncAnthropic` client persists. The first attempt of every later turn therefore failed with "Event loop is closed" (7 of 23 attempts), and the bounded retry then succeeded.
+- **Reproduced offline** against a local HTTP server. There, the failed request reached the server, so the live failures may have been billed.
+- **Fixed offline on 2026-10-19** (the entry above). The smoke is not resumed against the changed source.
+
+**Spend:** USD 1.865448 charged to the block: 0.494056 confirmed and 1.371392 at reservation for the 7 failed attempts. Nothing is pending.
+
+**Exports:** both runs verify.
+
+**Details:** clm-lib-test-results `experiments/015-public-clm-comparison/smoke-dev1-record.md`.
+
 ## Programme 015 accepted guarded-clm 0.2.0.dev1 (2026-10-16, offline)
 
 **What changed (SPEC §33):**

@@ -16,7 +16,6 @@ example one raised by a framework tool that is not bridged, so the harness canno
 
 from __future__ import annotations
 
-import asyncio
 import dataclasses
 from collections.abc import Sequence
 from pathlib import Path
@@ -49,6 +48,7 @@ from .accounting import (
     SpendGate,
     SpendRefused,
 )
+from .loop import SessionLoop
 from .provenance import harness_provenance, library_provenance
 from .records import SessionRecorder
 from .tools import bridge
@@ -170,6 +170,7 @@ class GuardedSession:
         self.conversation_id = conversation_id
         self.history: list[ModelMessage] | None = None
         self.turns = 0
+        self.loop = SessionLoop()  # one event loop for all turns (p015-session-loop/1)
         self.recorder.write_meta(
             settings=dataclasses.asdict(self.settings),
             call_cap=self.settings.cap,
@@ -207,11 +208,25 @@ class GuardedSession:
             return "model_behaviour"
         return "unclassified_error"
 
+    def close(self) -> None:
+        """Close the session's model clients on its event loop, then the loop. Turns are refused afterwards."""
+        self.loop.close(self.model)
+
+    def __enter__(self) -> GuardedSession:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
+
     def run_turn(self, prompt: Any) -> TurnOutcome:
         """One user turn. A turn that ends early does not end the session object; the caller decides."""
+        if self.loop.closed:
+            raise RuntimeError(
+                "the session is closed; start a new session (with a new model) instead"
+            )
         self.turns += 1
         try:
-            result = asyncio.run(
+            result = self.loop.run(
                 self.agent.run(
                     prompt,
                     message_history=self.history,

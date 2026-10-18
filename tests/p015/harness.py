@@ -360,6 +360,7 @@ def run_session(
         )
         if after_turn is not None:
             after_turn(outcome.turn)
+    session.close()
     records = dump(read_jsonl(run_dir / "trace.jsonl"))
     return {"calls": script.seen, "records": records, "runs": runs}, session
 

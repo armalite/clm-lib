@@ -1,6 +1,6 @@
 # clm-lib: Technical Specification
 
-Version: 2.21 | 16 October 2026
+Version: 2.22 | 19 October 2026
 
 Repository: `clm-lib` | Python package: `clm_lib` | CLI: `clm-lib`
 
@@ -29,6 +29,7 @@ Version history:
 - 2.14: adds §26's W3 instances `w3-dev-3` and `w3-dev-4` (fresh seeds of the dev-1 and dev-2 schedules) and the replay's neutral `last_request` keys, for experiment 014's R1 matched development pilot.
 - 2.15: adds §27, shared foundations for programme 015 (opt-in, not yet wired into the runner): the native-tool transport `native-tools/1`, tool interfaces, versioned counters `session-counters/1`, the task-tool output cap `tool-output-cap/1` and accounted native dispatch. No arm, workload or live path uses them yet; §27.6 lists what is pending.
 - 2.16: adds §28, the programme 015 guarded-clm integration path (`clm_lib.p015`): opt-in, in a separate environment, verified offline with scripted and mocked models only.
+- 2.22: adds §34: one event loop per p015 session (`p015-session-loop/1`), fixing the per-turn event-loop defect found in the partial smoke-dev1, with client shutdown on that loop; verified offline against a local HTTP server.
 - 2.21: adds §33: the accepted guarded-clm 0.2.0.dev1 (always-on implausible-ratio backstop) on the p015 path; `strict_ratio_learning` removed and refused; the library pinned in live plans. §32.1 is superseded.
 - 2.20: adds §32: guarded-clm's `strict_ratio_learning` on the p015 path (explicitly True in the proposed 015 configuration), live plans that must state every experimental choice, and corrections to §31.1's cache-isolation statement.
 - 2.19: adds §31, the programme 015 comparison contract (`p015-model/1`, `p015-retry/1`) and the resumable launcher with spending controls (`p015-launch/1`, `p015-spend/1`), verified offline only; amends §30.2 with the `paper` and `readme` profiles.
@@ -1090,3 +1091,34 @@ Confirmed and assumed charges are reported apart. An authorisation for another l
 **Unchanged:** the paper and summary arms, the workload, the scorer, the model settings, and the launcher's spending, contract and restart protections.
 
 **Status:** offline verification only (`tests/p015/test_ratio_backstop.py`, `test_live_spec.py`, `test_equivalence.py`, `test_library_scenarios.py`). No live call has been made.
+
+## 34. One event loop per p015 session (`p015-session-loop/1`; 2026-10-19, offline-verified)
+
+**The defect (found in the partial live smoke `smoke-dev1`):**
+- `GuardedSession.run_turn` and `ArmSession.run_turn` ran each user turn with `asyncio.run`, which creates and closes an event loop per turn;
+- the session's model holds one `AsyncAnthropic` client for all turns, and the summary arm's summariser model shares it;
+- that client's HTTP pool keeps connections bound to the loop that opened them, so from turn 2 on, the first request of each turn failed with "Event loop is closed". The bounded retry then succeeded.
+
+The failed request can reach the server before the client fails, so a failed attempt may be billed. Charging it at the full reservation (§31) stays correct.
+
+**Requirements:**
+- **One loop per session:** a session owns one `asyncio.Runner` (`clm_lib.p015.loop.SessionLoop`), created at its first turn. Every turn, and every model request within it (summariser requests included), runs on that loop.
+- **Shutdown:** `close()` on either session class closes the session's model clients on that loop, then closes the loop. A client shared by the agent and the summariser is closed once. A session that never ran a turn has nothing to close. `close()` is idempotent, and the sessions are context managers.
+- **A closed session refuses turns,** rather than reusing a pool on a closed loop.
+- **No pool sharing between sessions:** each launcher session builds its own model and client, as before.
+- **The launcher** closes each session in a `finally`, however its turns end (completed, a provider failure, a spend refusal, a stop, an arm ending or an exception). The offline scorers and the test harness close sessions before scoring.
+
+**Unchanged:** connection pooling, the retry policy (`p015-retry/1`), the request bodies, the accounting, guarded-clm, every arm's context management, the prompts, settings, workload, scorer and caching layout. Only the harness's event-loop lifecycle changed.
+
+**Effect on existing launches:** the clm-lib source fingerprint changes, so `smoke-dev1`'s contract is refused for further runs (§31). That launch is not resumed. A corrected smoke needs a new launch id, a new freeze and a new authorisation.
+
+**Verification (`tests/p015/test_session_loop.py`):** a loopback-only HTTP/1.1 keep-alive server returns synthetic Messages responses; no provider is contacted.
+- the pre-fix pattern (`asyncio.run` per turn, one client) fails on the second turn with "Event loop is closed", after the server received the request;
+- with the fix, for guarded-clm, `paper_clm_shell` and `token_tail_p015`: several turns over one connection, no failed or retried attempt, server requests equal to recorded attempts, and the client closed at the end;
+- successive sessions each own their loop and client;
+- summariser requests run on the session's loop;
+- a provider error ending and a stop ending both close cleanly;
+- request bodies equal those sent through the in-memory transport;
+- a three-arm launch over the local server completes, with a temporary ledger and authorisation, and its export verifies.
+
+**Status:** offline verification only. No live call has been made since the fix.

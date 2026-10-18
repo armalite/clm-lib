@@ -514,24 +514,27 @@ def run_session(
     replies: list[str | None] = []
     calls: list[list[str]] = []
     endings: list[str] = []
-    for q in questions(fx)[: contract["questions"]]:
-        try:
-            gate.check_turn()
-        except (SpendRefused, LaunchStopped) as exc:
-            ending = "stopped" if isinstance(exc, LaunchStopped) else "spend_refused"
-            runner.turns += 1
-            runner.recorder.turn(
-                {"turn": runner.turns, "ending": ending, "error": f"before the turn: {exc}"}
-            )
-            endings.append(ending)
-            break
-        start = len(desk.order)
-        outcome = runner.run_turn(user_message(q))
-        calls.append(desk.order[start:])
-        endings.append(outcome.ending)
-        replies.append(outcome.output if outcome.ending == "completed" else None)
-        if outcome.ending != "completed":
-            break
+    try:  # the session's loop and clients are closed however the turns end (p015-session-loop/1)
+        for q in questions(fx)[: contract["questions"]]:
+            try:
+                gate.check_turn()
+            except (SpendRefused, LaunchStopped) as exc:
+                ending = "stopped" if isinstance(exc, LaunchStopped) else "spend_refused"
+                runner.turns += 1
+                runner.recorder.turn(
+                    {"turn": runner.turns, "ending": ending, "error": f"before the turn: {exc}"}
+                )
+                endings.append(ending)
+                break
+            start = len(desk.order)
+            outcome = runner.run_turn(user_message(q))
+            calls.append(desk.order[start:])
+            endings.append(outcome.ending)
+            replies.append(outcome.output if outcome.ending == "completed" else None)
+            if outcome.ending != "completed":
+                break
+    finally:
+        runner.close()
     score = score_session(fx, replies, calls)
     attempts = read_jsonl(launch_dir / run_rel / "attempts.jsonl")
     finished = [a for a in attempts if a["event"] == "finished"]

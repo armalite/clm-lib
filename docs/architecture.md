@@ -442,6 +442,11 @@ arm execution policy   which calls run, and in what order (not decided here); ta
 - **Concurrency:** one launcher at a time per launch directory (an `flock`). Sessions run one after another. The gate still counts open and other-process pending reservations.
 - **The paper arm's profiles:** `paper` (the default) and `readme`. These come from the source-priority review recorded in the results repository.
 
+**One event loop per session (2026-10-19, SPEC §34, `p015-session-loop/1`):** the live smoke `smoke-dev1` showed that running each turn with `asyncio.run` breaks a session-long `AsyncAnthropic` client, because its pooled connections belong to the loop that opened them.
+- **The fix keeps the client and changes the loop:** a session owns one `asyncio.Runner` for all its turns. Rebuilding the client per turn would also have worked, but it would have changed what is pooled and cached per session, and it would have left the summariser's shared client to be handled separately.
+- **Shutdown is ordered:** `close()` closes the session's model clients on the session's loop, then the loop. The launcher calls it in a `finally`. A closed session refuses turns, so nothing can reach a pool whose loop has closed.
+- **Why the offline tests missed it:** scripted models and the in-memory transport open no connection, so they never exercised a pool across loops. The lifecycle tests use a loopback HTTP/1.1 keep-alive server (`tests/p015/test_session_loop.py`). The p015 network block is narrowed to loopback for those tests only.
+
 **The accepted library (2026-10-16, SPEC §33):** guarded-clm 0.2.0.dev1 (`3f18473`) replaces the strict-learning revision. Its backstop is part of the library, so clm-lib has no setting for it and adds no backstop of its own.
 - **Removed settings are refused, not ignored,** so that a configuration made for another revision can never run silently.
 - **A live plan names the library it was made for** (version, revision, fingerprint), and `plan` checks that against what is loaded. This complements the contract fingerprints, which already refuse a contract made against another revision.
@@ -461,6 +466,7 @@ src/clm_lib/p015/
   tools.py        bridge(): tooling.ToolSpec + implementation -> pydantic_ai.Tool
   records.py      SessionRecorder (session.json, attempts/trace/tools/turns JSONL)
   session.py      GuardedSession, GuardedSettings, TurnOutcome, ending classification
+  loop.py         SessionLoop p015-session-loop/1 (one asyncio.Runner per session; clients closed on it)
   export.py       guarded-session-export/1 (python -m clm_lib.p015.export RUN_DIR DEST_DIR)
   arms.py         ArmSession: the paper and summary arms' runner (SPEC §30)
   arm_errors.py   ArmContextLimit, ArmStepLimit, SummaryCallCap

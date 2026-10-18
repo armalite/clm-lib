@@ -115,6 +115,7 @@ def run(plan: Plan, out_dir: Path, run_id: str | None = None) -> dict[str, Any]:
             break
         if plan.refuse_after_turn == q.number:
             ledger.limit_usd = ledger.spent_usd - ledger.start_spent_usd
+    session.close()
     score = score_session(fx, replies, calls_by_turn)
     measurements = measure(out_dir / run_id, desk, calls_by_turn)
     session.recorder.write_meta(

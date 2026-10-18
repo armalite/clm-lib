@@ -16,7 +16,6 @@ start an isolated container; nothing ran on the host).
 
 from __future__ import annotations
 
-import asyncio
 import dataclasses
 from collections.abc import Sequence
 from pathlib import Path
@@ -44,6 +43,7 @@ from .accounting import (
     SpendRefused,
 )
 from .arm_errors import ArmContextLimit, ArmStepLimit, SummaryCallCap
+from .loop import SessionLoop
 from .paper.capability import PaperSettings, PaperShellContext
 from .paper.shell import ShellSandbox
 from .provenance import harness_provenance, versions
@@ -128,6 +128,7 @@ class ArmSession:
         self.conversation_id = conversation_id
         self.history: list[ModelMessage] | None = None
         self.turns = 0
+        self.loop = SessionLoop()  # one event loop for all turns (p015-session-loop/1)
         self.recorder.write_meta(
             arm=arm,
             settings=self.capability.describe(),
@@ -188,11 +189,27 @@ class ArmSession:
             "summary_calls_total": s.summary_calls_total,
         }
 
+    def close(self) -> None:
+        """Close the session's model clients on its event loop, then the loop. Turns are refused afterwards."""
+        self.loop.close(
+            self.model, *([self.summary_model] if hasattr(self, "summary_model") else [])
+        )
+
+    def __enter__(self) -> ArmSession:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
+
     def run_turn(self, prompt: Any) -> TurnOutcome:
         """One user turn. A turn that ends early does not end the session object; the caller decides."""
+        if self.loop.closed:
+            raise RuntimeError(
+                "the session is closed; start a new session (with a new model) instead"
+            )
         self.turns += 1
         try:
-            result = asyncio.run(
+            result = self.loop.run(
                 self.agent.run(
                     prompt,
                     message_history=self.history,
