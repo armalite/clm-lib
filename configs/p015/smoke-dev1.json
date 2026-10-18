@@ -1,0 +1,56 @@
+{
+ "note": "Programme 015 first live development smoke, PROPOSED (2026-10-18). NOT AUTHORISED: running it needs the maintainer's written authorisation file at the path below and an explicit ledger ceiling change (clm-lib-test-results experiments/015-public-clm-comparison/smoke-plan.md). Paths are relative to the clm-lib checkout. One development instance, one session per arm, the eight-turn docthread task; no confirmation instances; no performance claim.",
+ "launch_id": "smoke-dev1",
+ "experiment": "015",
+ "mode": "live",
+ "instances": ["docthread-dev-1"],
+ "arms": ["guarded_clm", "paper_clm_shell", "token_tail_p015"],
+ "questions": 8,
+ "ledger": "runs/ledger.json",
+ "authorisation": "runs/p015-smoke-dev1-authorisation.json",
+ "library": {
+  "guarded_clm": {
+   "version": "0.2.0.dev1",
+   "revision": "3f184734362c4c9e24d7f5e2a2d6de5fa18153dd",
+   "source_sha256": "51e6dbe8df7669ff8265d725976260f61891b6624d9c2201c7edc83dfcf2d9e4"
+  }
+ },
+ "model": {
+  "model": "claude-sonnet-5",
+  "thinking": "adaptive",
+  "effort": "high",
+  "max_tokens": 8192,
+  "cache_ttl": "5m",
+  "cache_breakpoints": ["automatic", "tool_definitions", "instructions"],
+  "max_retries": 2,
+  "timeout_s": 600.0,
+  "session_tag": true
+ },
+ "retry_policy": "p015-retry/1",
+ "arm_settings": {
+  "guarded_clm": {"budget_tokens": 32000, "max_steps": 60, "call_cap": 144},
+  "paper_clm_shell": {"budget_tokens": 32000, "reserve_tokens": 2048, "max_steps": 60, "call_cap": 144,
+                      "profile": "paper", "reminder_before_tokens": 2048},
+  "token_tail_p015": {"budget_tokens": 32000, "max_steps": 60, "call_cap": 144, "summary_call_cap": 24}
+ },
+ "paper_rules": {
+  "reminder_point": "limit_minus_reminder_before_tokens",
+  "reminder_repeat": "once_per_crossing",
+  "rejected_edit_free_step": "free"
+ },
+ "settings_status": {
+  "chosen_for_this_smoke": [
+   "model claude-sonnet-5; adaptive thinking; effort high; max_tokens 8192",
+   "5-minute prompt caching with the existing three breakpoints",
+   "at most 2 retries per logical call (p015-retry/1), SDK retries off",
+   "144 logical main-model calls, at most 24 summariser calls, 60 task steps per user turn",
+   "budget 32,000 tokens; reserve 2,048 (guarded-clm, paper arm); token-tail's own 1,000 recovery reserve kept unchanged for the summary arm",
+   "guarded-clm 0.2.0.dev1 at 3f18473; paper profile paper",
+   "instance docthread-dev-1; arm order guarded_clm, paper_clm_shell, token_tail_p015"
+  ],
+  "decision_pending_before_live": [
+   "paper_rules: reminder at limit minus 2,048, once per crossing; rejected edit that changed the mirror counts as free (implemented proposals; sources silent or ambiguous)"
+  ],
+  "authorisation": "none; see smoke-plan.md"
+ }
+}
