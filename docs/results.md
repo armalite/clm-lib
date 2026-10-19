@@ -112,6 +112,25 @@ Verification: `ruff check`, `ruff format --check` and `mypy src` are clean; **56
 
 Live phases: **still not run**. `ANTHROPIC_API_KEY` is still unset in the agent process (`doctor`). Live spend $0.00; cumulative $0.00 of $10.00.
 
+## Programme 015 live development smoke smoke-dev2 (2026-10-19, COMPLETE)
+
+**What ran:** the replacement for smoke-dev1, approved within the remaining USD 13.134552 of the original USD 15 allowance. One eight-turn session per arm on `docthread-dev-1` (`configs/p015/smoke-dev2.json`: `docthread-task/2`, `p015-turn-endings/1`, `p015-truncation/1`; guarded-clm 0.2.0.dev1, source `51e6dbe8…`).
+
+**Results** (each session ran once):
+- **guarded-clm:** completed, 10/10, recall 3/3;
+- **`paper_clm_shell`:** ended at its context limit in turn 4, 4/10. Its only edit was rejected, and last-step rollback removed both the rejection reason and every inspection that followed;
+- **`token_tail_p015`:** completed, 9/10. The quote had the right line with its column spacing collapsed.
+
+A compatibility result, not a comparison.
+
+**The event-loop fix held:** 73 attempts, none failed or retried. No step limit, call cap or truncation occurred.
+
+**Spend:** USD 1.691882, all confirmed, nothing pending. The programme stands at USD 3.557330 of 15.
+
+**Exports:** all verify.
+
+**Details:** clm-lib-test-results `experiments/015-public-clm-comparison/smoke-dev2-record.md`.
+
 ## Programme 015 clarified task, turn endings and truncation (2026-10-19, offline)
 
 **What changed (SPEC §35):**
