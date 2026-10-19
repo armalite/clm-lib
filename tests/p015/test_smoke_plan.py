@@ -25,13 +25,26 @@ REPO = Path(__file__).resolve().parents[2]
 SMOKE = json.loads((REPO / "configs/p015/smoke-dev2.json").read_text())
 OLD_PATH = REPO / "configs/p015/smoke-dev1.json"
 OLD = json.loads(OLD_PATH.read_text())
+SMOKE_SHA256 = "b8374e77f365ca7e86d04034edea422a1288d02d9a85b862b4b7cf5d8508594a"  # as committed in 414789a; it ran
+PAPER_VERSION_UNSET = (
+    'arm_settings.paper_clm_shell.version is not set ("paper-clm-shell/1" or "paper-clm-shell/2")'
+)
 OLD_SHA256 = (
     "94660da655d3e3dcfdd78cf7e91506666c1091e20f82c55518ff2224f02b3189"  # as committed in 1a9c838
 )
 
 
 def test_the_smoke_spec_is_complete_pinned_and_small() -> None:
-    assert L.live_spec_problems(SMOKE) == [] and L.library_pin_problems(SMOKE) == []
+    """smoke-dev2 ran (2026-10-19) before the paper arm had versions, so it states none and ran version 1, the
+    default; new live plans must now state it. The file is kept as it ran."""
+    assert (
+        hashlib.sha256((REPO / "configs/p015/smoke-dev2.json").read_bytes()).hexdigest()
+        == SMOKE_SHA256
+    )
+    assert (
+        L.live_spec_problems(SMOKE) == [PAPER_VERSION_UNSET] and L.library_pin_problems(SMOKE) == []
+    )
+    assert PaperSettings(**SMOKE["arm_settings"]["paper_clm_shell"]).version == "paper-clm-shell/1"
     assert (
         SMOKE["mode"] == "live" and SMOKE["questions"] == 8 and SMOKE["launch_id"] == "smoke-dev2"
     )
@@ -110,6 +123,7 @@ def test_the_smoke_plans_offline_and_is_refused_without_authorisation(
     )  # a temporary ledger; the active one is never touched
     spec = copy.deepcopy(SMOKE) | {"ledger": str(tmp_path / "ledger.json"),
                                    "authorisation": str(tmp_path / "missing-authorisation.json")}  # fmt: skip
+    spec["arm_settings"]["paper_clm_shell"]["version"] = "paper-clm-shell/1"  # what smoke-dev2 ran
     L.plan(spec, tmp_path / "L")
     contract = json.loads((tmp_path / "L/contract.json").read_text())
     for key in (

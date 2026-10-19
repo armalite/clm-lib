@@ -442,6 +442,15 @@ arm execution policy   which calls run, and in what order (not decided here); ta
 - **Concurrency:** one launcher at a time per launch directory (an `flock`). Sessions run one after another. The gate still counts open and other-process pending reservations.
 - **The paper arm's profiles:** `paper` (the default) and `readme`. These come from the source-priority review recorded in the results repository.
 
+**Confirmation preparation (2026-10-19, SPEC §37):**
+- **The instance checker** keeps the rule's arithmetic and checks in one module that reads only fixtures. The one wording the rule leaves open, the evidence-size measure, is a named choice rather than a hidden default, and the manifest records it.
+- **The exposure report** reads only exported files. It derives turns from content the exports already hold, and leaves a figure absent rather than estimating it when the records cannot support it.
+
+**The paper arm's version 2 (2026-10-19, SPEC §36):** a rejected edit's reason is kept through the rollback of its step.
+- **Remembered by call id:** the arm remembers the reasons by the `bash` call id during the turn. It repeats a reason only when that call's step is actually removed, so the feedback is tied to the removal, not to the rejection.
+- **Metered like a notice:** the feedback is added as a transient notice, so it never enters the mirror or the conversation. The rollback measures the request with it, which keeps it inside the limit rule instead of beside it.
+- **The version is an arm setting,** not a new launcher field, so it flows through the existing contract, session record and export without new plumbing.
+
 **Task wording, turn endings and truncation (2026-10-19, SPEC §35):**
 - **Versions, not edits:** the clarified wording is `docthread-task/2` beside the untouched version 1. The launch contract names it, so a smoke-dev1 prompt can always be reproduced, and the scorer stays `docthread-score/1`.
 - **Continuation is the runner's job, the policy is the launcher's:** the launcher decides whether a limit-ended turn may be followed (`turn_endings`), and the runner says whether it can follow it safely (`continue_after_limit`).
@@ -481,9 +490,11 @@ src/clm_lib/p015/
   live.py         ModelConfig p015-model/1, tagged system prompt, live_model() (SDK retries off)
   spend.py        SpendGate p015-spend/1 (programme ceiling, block stop)
   launcher.py     p015-launch/1 (plan, run, status, stop, resolve, export)
+  exposure.py     p015-exposure/1 (read-only exposure report over exports)
   paper/          mirror.py (ctx-turn-mirror/1), shell.py (ShellSandbox), capability.py (PaperShellContext)
   summary/        capability.py (TokenTailSummary, token-tail-p015/1)
-  docthread/      the workload (SPEC §29); plain_agent.py and arms_offline.py for the two arms' offline sessions
+  docthread/      the workload (SPEC §29); plain_agent.py and arms_offline.py for the two arms' offline sessions;
+                  confirm.py, the confirmation-instance checker (p015-instance-check/1)
 tests/p015/       comparison harness and tests (skipped outside the p015 environment; network blocked)
 ```
 

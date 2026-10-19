@@ -181,6 +181,7 @@ def live_spec_problems(spec: dict[str, Any]) -> list[str]:
         for key, allowed in (
             ("profile", '"paper" or "readme"'),
             ("reminder_before_tokens", "an integer"),
+            ("version", '"paper-clm-shell/1" or "paper-clm-shell/2"'),
         ):
             if key not in paper:
                 out.append(f"arm_settings.paper_clm_shell.{key} is not set ({allowed})")

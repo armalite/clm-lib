@@ -1,4 +1,5 @@
-"""`PaperShellContext` (`paper-clm-shell/1`): the paper's shell-based context editing, as a Pydantic AI capability.
+"""`PaperShellContext` (`paper-clm-shell/1` and `/2`): the paper's shell-based context editing, as a Pydantic AI
+capability.
 
 The model has one extra tool, `bash`, which runs one command in a fresh sandbox container (`shell.ShellSandbox`).
 Before each command, the editable conversation is written to the mirror file (`mirror.render`). If the command
@@ -17,6 +18,15 @@ Accounting, per run (one user turn): every response is a model call (`call_cap`)
 nothing). Over the limit, the newest steps of this turn are rolled back until `retry_margin_tokens` are free, up to
 `max_rollbacks` times; then one final request over the limit is allowed, and if the next is still over, the turn
 ends (`ArmContextLimit`).
+
+Versions (`PaperSettings.version`):
+- `paper-clm-shell/1` (the default; what smoke-dev2 ran): a rolled-back step takes its edit receipt with it.
+- `paper-clm-shell/2` (2026-10-19): when a rolled-back step held a rejected edit, that edit's rejection reason is
+  repeated, once, beside the rollback notice ("from the rolled-back step: edit rejected, nothing changed: ..."), so
+  that the model is still told why its edit was not applied (the README's property; the sources do not say how
+  rollback treats a receipt, so this is a documented adaptation). Nothing else of the step returns: not its command,
+  output or the deleted text. The feedback is part of the request the rollback measures, so it counts towards the
+  limit like any other content. Every other rule is the same in both versions.
 
 Settings, sources and every adaptation are listed in clm-lib-test-results, experiment 015,
 `paper-clm-shell-fidelity.md`. This is an independent implementation from the paper and the public README; it is
@@ -54,7 +64,9 @@ from .shell import MIRROR_FILE, ShellSandbox
 if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestContext
 
-PAPER_VERSION = "paper-clm-shell/1"
+PAPER_VERSION = "paper-clm-shell/1"  # the default, and the historical version
+PAPER_V2 = "paper-clm-shell/2"  # rejection feedback kept through rollback
+PAPER_VERSIONS = (PAPER_VERSION, PAPER_V2)
 TOOL = "bash"
 NOTE = "[context]"
 
@@ -94,8 +106,13 @@ class PaperSettings:
     finalize_steps: int = 3
     max_output_chars: int = 8_000
     command_timeout_s: int = 30
+    version: str = PAPER_VERSION
 
     def __post_init__(self) -> None:
+        if self.version not in PAPER_VERSIONS:
+            raise ValueError(
+                f"unknown paper arm version {self.version!r}; expected one of {PAPER_VERSIONS}"
+            )
         if self.edit_gate != "fit":
             raise ValueError("only the paper's default `fit` edit gate is implemented")
         if self.profile not in PROFILES:
@@ -171,6 +188,12 @@ class PaperState:
     free_steps: int = 0
     rollbacks: int = 0
     final_over_used: bool = False
+    rejections: dict[str, str] = dataclasses.field(
+        default_factory=dict
+    )  # paper-clm-shell/2: bash call id -> its edit's rejection reason, this run
+    carried: list[str] = dataclasses.field(
+        default_factory=list
+    )  # paper-clm-shell/2: reasons from steps rolled back for this request
     # per conversation totals
     edits_accepted: int = 0
     edits_rejected: int = 0
@@ -192,16 +215,17 @@ class PaperShellContext(AbstractCapability[Any]):
         self.sandbox = sandbox
         self.on_record = on_record
         self.state = PaperState()
+        self._last_rejection = ""  # the reason of the most recent rejected edit
         self.estimator = RatioEstimator()
         self.mirror_path = Path(sandbox.mirror_dir) / Path(MIRROR_FILE).name
 
     def record(self, entry: dict[str, Any]) -> None:
         if self.on_record is not None:
-            self.on_record({"variant": PAPER_VERSION, **entry})
+            self.on_record({"variant": self.settings.version, **entry})
 
     def describe(self) -> dict[str, Any]:
         return {
-            "variant": PAPER_VERSION,
+            "variant": self.settings.version,
             "mirror": MIRROR_VERSION,
             "estimate": ESTIMATE_VERSION,
             "settings": dataclasses.asdict(self.settings),
@@ -222,6 +246,7 @@ class PaperShellContext(AbstractCapability[Any]):
         st.run_messages = set()
         st.steps = st.calls = st.free_steps = st.rollbacks = 0
         st.final_over_used = False
+        st.rejections, st.carried = {}, []
         return self
 
     def get_instructions(self) -> str | None:
@@ -273,6 +298,8 @@ class PaperShellContext(AbstractCapability[Any]):
         receipt, outcome = None, "unchanged"
         if changed:
             outcome, receipt = self._edit(after, before, reply)
+            if outcome == "rejected" and s.version == PAPER_V2:
+                st.rejections[call_id] = self._last_rejection
         only_bash = len(
             [p for p in reply.parts if isinstance(p, ToolCallPart)]
         ) == 1 and bash_ids == [call_id]
@@ -312,6 +339,7 @@ class PaperShellContext(AbstractCapability[Any]):
 
         def reject(reason: str) -> tuple[str, str]:
             st.edits_rejected += 1
+            self._last_rejection = reason
             self.record(
                 {"type": "paper_edit_rejected", "reason": reason, "blocks_before": len(before)}
             )
@@ -398,11 +426,28 @@ class PaperShellContext(AbstractCapability[Any]):
         st = self.state
         units = 0
         while self._rollable():
-            if self._build([])[2] <= target:
+            if self._build(self._feedback())[2] <= target:
                 break
+            self._carry(st.messages[-2])
             del st.messages[-2:]
             units += 1
         return units
+
+    def _carry(self, removed: ModelMessage) -> None:
+        """paper-clm-shell/2: keep the rejection reason of an edit whose step is being rolled back (once)."""
+        st = self.state
+        if self.settings.version != PAPER_V2 or not isinstance(removed, ModelResponse):
+            return
+        for p in removed.parts:
+            if isinstance(p, ToolCallPart) and p.tool_call_id in st.rejections:
+                st.carried.append(st.rejections.pop(p.tool_call_id))
+
+    def _feedback(self) -> list[str]:
+        """The carried rejection reasons, in the existing receipt wording; empty in paper-clm-shell/1."""
+        return [
+            f"{NOTE} from the rolled-back step: edit rejected, nothing changed: {reason}."
+            for reason in self.state.carried
+        ]
 
     def _notices(self, tokens: int) -> list[str]:
         st, s = self.state, self.settings
@@ -462,6 +507,7 @@ class PaperShellContext(AbstractCapability[Any]):
             self.record({"type": "call_cap", "calls": st.calls, "call_cap": s.cap})
             raise UsageLimitExceeded(f"the model-call cap of {s.cap} was reached")
         events: list[str] = []
+        st.carried = []
         _, _, tokens = self._build([])
         over = tokens
         if tokens > s.limit and st.rollbacks < s.rollback_limit:
@@ -473,26 +519,31 @@ class PaperShellContext(AbstractCapability[Any]):
                     st.rollbacks_total += 1
             else:  # the paper: roll back the last step and retry, each counted, while still over the limit
                 while tokens > s.limit and st.rollbacks < s.rollback_limit and self._rollable():
+                    self._carry(st.messages[-2])
                     del st.messages[-2:]
                     units += 1
                     st.rollbacks += 1
                     st.rollbacks_total += 1
-                    tokens = self._build([])[2]
+                    tokens = self._build(self._feedback())[
+                        2
+                    ]  # /2: measured with the carried feedback
             if units:
-                after = self._build([])[2]
-                self.record(
-                    {
-                        "type": "paper_rollback",
-                        "mode": s.rollback,
-                        "units": units,
-                        "from_tokens": over,
-                        "to_tokens": after,
-                    }
-                )
+                after = self._build(self._feedback())[2]
+                record: dict[str, Any] = {
+                    "type": "paper_rollback",
+                    "mode": s.rollback,
+                    "units": units,
+                    "from_tokens": over,
+                    "to_tokens": after,
+                }
+                if s.version == PAPER_V2:
+                    record["carried_rejections"] = len(st.carried)
+                self.record(record)
                 events.append(
                     f"{NOTE} the context was over the {s.limit:,}-token limit, so your last {units} step(s) were "
                     f"rolled back and their results removed. Edit {MIRROR_FILE} to make room before continuing."
                 )
+                events += self._feedback()
                 tokens = after
         if tokens > s.limit:
             if st.final_over_used or tokens > s.budget_tokens:

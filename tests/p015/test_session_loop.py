@@ -321,6 +321,7 @@ def test_the_launcher_runs_three_arms_over_the_pool(
     spec = json.loads((REPO / "configs/p015/smoke-dev2.json").read_text()) | {
         "launch_id": "loop1", "questions": 2, "ledger": str(tmp_path / "ledger.json"),
         "authorisation": str(tmp_path / "auth.json")}  # fmt: skip
+    spec["arm_settings"]["paper_clm_shell"]["version"] = "paper-clm-shell/2"
     L.plan(spec, tmp_path / "L")
     assert L.run(tmp_path / "L") == L.EXIT_OK
     rows = L.status(tmp_path / "L")["sessions"]

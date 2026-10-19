@@ -1,6 +1,6 @@
 # clm-lib: Technical Specification
 
-Version: 2.23 | 19 October 2026
+Version: 2.25 | 19 October 2026
 
 Repository: `clm-lib` | Python package: `clm_lib` | CLI: `clm-lib`
 
@@ -29,6 +29,8 @@ Version history:
 - 2.14: adds §26's W3 instances `w3-dev-3` and `w3-dev-4` (fresh seeds of the dev-1 and dev-2 schedules) and the replay's neutral `last_request` keys, for experiment 014's R1 matched development pilot.
 - 2.15: adds §27, shared foundations for programme 015 (opt-in, not yet wired into the runner): the native-tool transport `native-tools/1`, tool interfaces, versioned counters `session-counters/1`, the task-tool output cap `tool-output-cap/1` and accounted native dispatch. No arm, workload or live path uses them yet; §27.6 lists what is pending.
 - 2.16: adds §28, the programme 015 guarded-clm integration path (`clm_lib.p015`): opt-in, in a separate environment, verified offline with scripted and mocked models only.
+- 2.25: adds §37: the confirmation-instance checker (`p015-instance-check/1`) and the read-only exposure report (`p015-exposure/1`); offline-verified, no confirmation instance generated.
+- 2.24: adds §36: `paper-clm-shell/2`, which keeps a rejected edit's reason through the rollback of its step (version 1 kept and the default); the paper arm's version is recorded and must be stated in live plans; the proposed confirmation configuration. Offline-verified.
 - 2.23: adds §35: the clarified docthread task (`docthread-task/2`; version 1 kept), versioned turn-ending policies (`p015-turn-endings/1` and `/2`, continuation after a main-model step or call limit, supported by guarded-clm only), and output-limit truncation as its own ending (`p015-truncation/1`); offline-verified.
 - 2.22: adds §34: one event loop per p015 session (`p015-session-loop/1`), fixing the per-turn event-loop defect found in the partial smoke-dev1, with client shutdown on that loop; verified offline against a local HTTP server.
 - 2.21: adds §33: the accepted guarded-clm 0.2.0.dev1 (always-on implausible-ratio backstop) on the p015 path; `strict_ratio_learning` removed and refused; the library pinned in live plans. §32.1 is superseded.
@@ -1203,3 +1205,124 @@ A development revision after the partial smoke `smoke-dev1` and a review of gene
 **Pins:** the closed `smoke-dev1.json` is kept byte-identical. Because the pin is exact, the README-only guarded-clm commit makes `plan` refuse it, and the proposed comparison configuration, until they are re-pinned.
 
 No live call has been made.
+
+## 36. `paper-clm-shell/2`: rejection feedback kept through rollback (2026-10-19, offline-verified)
+
+**Why:** in smoke-dev2, the paper arm's malformed edit was rejected with a receipt in its command's result. That step then went over the limit and was rolled back, so the model was never told why (clm-lib-test-results 015 `paper-arm-smoke-dev2-review.md`). The harness README states that "a rejected edit is not applied, and the model is told why". Neither source says how rollback treats a receipt. Version 2 is therefore a documented adaptation that preserves the README's property. It is not a reproduction of unspecified reference behaviour.
+
+**The change (`PaperSettings.version = "paper-clm-shell/2"`):**
+- **What is kept:** when a rollback removes a step whose `bash` command's edit was rejected, the rejection reason is given once, beside the rollback notice, in the existing receipt wording: `[context] from the rolled-back step: edit rejected, nothing changed: <reason>.`
+- **What is not:** nothing else of the step returns. Not its command, its output, the text the edit removed, or any other execution content.
+- **It is metered:** the rollback measures the request with the feedback in it. If only the feedback would leave it over the limit, the normal rule applies (another step is rolled back within the same allowance, or the final over-limit request and terminal rule follow). The feedback is never truncated.
+- **It does not accumulate:** a reason is carried once, when its step is removed. It is a transient notice, like every other notice, and it is not kept in the conversation or the mirror. The per-turn record of rejected edits is cleared at each new turn.
+- **Records:** `paper_rollback` gains `carried_rejections` in version 2 only. The trace `variant` and `describe()` name the version.
+
+**Unchanged in both versions:**
+- the mirror format and edit validation;
+- the rollback unit, allowance and margin;
+- the reminder threshold and repetition;
+- the free-step rule;
+- the terminal context-limit rule;
+- the task, scorer, tools, model settings and caching;
+- guarded-clm and the summary arm.
+
+**Version 1** stays the default and is what both smokes ran. Its requests and trace records are unchanged. Its `describe()` settings now also list `"version"`.
+
+**Recording:**
+- the version is an arm setting, so it reaches the contract (`arm_settings.paper_clm_shell.version`), `session.json` and exports;
+- live plans that include the paper arm must state it (§32.2), and an unknown version is refused;
+- the closed smoke configurations are unchanged and are refused for new plans.
+
+**The proposed confirmation configuration** (`configs/p015/proposed-confirmation.json`) contains:
+- the smoke-dev2 shared settings, with `paper-clm-shell/2`, `docthread-task/2`, `p015-turn-endings/1` and `p015-truncation/1`;
+- the predeclared instances `docthread-confirm-1` to `6` (seeds 7401 to 7406; lease, memory, pages, twice);
+- the balanced order: 18 sessions.
+
+It is not frozen or authorised, and no instance is generated.
+
+**Verification:** `tests/p015/test_paper_feedback.py` uses synthetic data and a fake sandbox. It covers:
+- the smoke's pattern (a summary edit without result headers, rejected, then rolled back): the next request carries the rollback notice and the reason, and nothing of the step returns;
+- a correctly formatted edit is then accepted;
+- the feedback is counted in the estimate, and when only the feedback would overflow, the arm rolls back further rather than overflowing;
+- it is given once;
+- a rollback without a rejected edit is identical in both versions;
+- the rollback allowance and the terminal rule are unchanged;
+- version 1 is unchanged;
+- the selected version reaches the contract, `session.json` and the export.
+
+`tests/p015/test_confirmation_plan.py` plans the confirmation offline without generating an instance.
+
+**What is not established:**
+- the new notice path is verified offline only, and its effect on a real model's recovery is unmeasured;
+- it does not remove the paper arm's context-limit risk; the rollback rule still leaves little room near the limit.
+
+## 37. Confirmation preparation tools (2026-10-19, offline-verified)
+
+### 37.1 The instance checker (`clm_lib.p015.docthread.confirm`, `p015-instance-check/1`)
+
+**What it applies:** the predeclared rule (clm-lib-test-results 015 `docthread-workload.md`, "Confirmation instances"):
+- `docthread-confirm-k`, seed 7400 + k, mechanisms `lease`, `memory`, `pages`, `lease`, `memory`, `pages`;
+- the frozen generator;
+- a skipped seed is replaced by 7400 + k + 6j, keeping the mechanism. The development seeds and any seed already used are never tried.
+
+**Checks:**
+
+| Check | What it requires |
+| --- | --- |
+| `generates` | The generator returns. |
+| `unique_support` | `uniqueness_problems` is empty. |
+| `output_size` | Every output is at most 7,800 characters. |
+| `journal_layout` | 15 pages; the first rejection on page 8 to 11; the evidence line 2 to 4 pages later. |
+| `evidence_size` | The evidence size lies within the bounds of the chosen size reading. |
+| `no_dev_identifiers` | No component name, change id or job id is shared with a development instance. |
+
+**The size reading must be chosen:** the rule's wording admits more than one, so the command requires `--size-reading`. The readings:
+
+| Reading | Measure | Bounds (characters) |
+| --- | --- | --- |
+| `plan` (the literal measure) | `agent.plan`'s outputs | 95,923 to 123,358 |
+| `plan_with_recall` | the plan, plus one read of each recall fact's sources | 102,928 to 131,799 |
+| `stated` | the plan, against the rule's stated numbers | 100,000 to 139,000 |
+
+The dev-derived bounds are 0.9 × the development minimum and 1.1 × the development maximum.
+
+**The manifest records,** per instance: the seeds tried, each check's pass or fail, the generator version and its internal re-draw count, the measured evidence characters, a sha256 of all rendered outputs, the chosen seed, and the instance list in configuration form.
+
+**What it never records or prints:** a fact value, component role, page number or excerpt. A failure names its check only.
+
+**Safeguards:**
+- the command refuses without `--confirm-freeze`, and never overwrites a manifest;
+- the attempt cap (50 seeds per instance) is a safety stop, not part of the rule, and reaching it is reported;
+- nothing reads an agent's behaviour or outcome, and nothing selects for difficulty.
+
+### 37.2 The exposure report (`clm_lib.p015.exposure`, `p015-exposure/1`)
+
+A read-only report over a launch export or one exported session. It is printed, or written outside the export, and never into it.
+
+**Per session:**
+- the arm and version, ending and outcome;
+- planned, attempted and completed turns;
+- main-model and summariser logical calls, attempts, retries, and failed, refused and truncated attempts;
+- reported input, cache and output tokens, and the peak main-model input;
+- the arm's own estimates (their peak, and the median ratio to reported input);
+- the notices the model was shown;
+- context management: edits, holds, refetches, rollbacks and summaries;
+- task-tool calls, delivered characters and repeated calls;
+- provider and wall time;
+- confirmed and assumed cost.
+
+**Per turn:** the ending; attempts by category; retries; peak and total reported input; cost; time; notices; tool calls and characters.
+
+**Units and absences:** characters, tokens, bytes and dollars are kept in separately named fields. An absent measurement is `None` ("n/a"), never 0.
+
+**How attribution works:**
+- **A main-model attempt** belongs to the latest question whose text is in its request.
+- **A summariser attempt** belongs to the next main-model attempt's turn.
+- **A refused attempt** belongs to the previous attempt's turn.
+- **Tool calls** are assigned by `calls_by_turn`. If its counts disagree with the tool records, the per-turn tool figures are left absent.
+- **Context-management records** carry no turn, so they are reported per session.
+- **A repeated call** has the same tool and arguments as an earlier one; whether it was deliberate is not known. guarded-clm's `lite_refetch` is reported separately.
+
+**Verification:** `tests/p015/test_exposure.py` checks the totals against the recorded smoke evidence: the attempts, costs, peaks, characters, repeats, turns, edits, holds, refetches, rollbacks, summaries and wall times of smoke-dev2, and smoke-dev1's failures, retries and assumed cost. It also checks that the per-turn figures add up to the session's. The exports are left byte-identical.
+
+`tests/p015/test_instance_check.py` exercises the checks on the development instances and stubs, and checks the manifest for any answer.

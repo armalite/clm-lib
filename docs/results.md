@@ -112,6 +112,26 @@ Verification: `ruff check`, `ruff format --check` and `mypy src` are clean; **56
 
 Live phases: **still not run**. `ANTHROPIC_API_KEY` is still unset in the agent process (`doctor`). Live spend $0.00; cumulative $0.00 of $10.00.
 
+## Programme 015 confirmation preparation tools (2026-10-19, offline)
+
+**What was added (SPEC §37):**
+- **The instance checker** applies the predeclared instance rule and writes a manifest that holds no answers. It has run on the development instances only; no confirmation instance has been generated.
+- **The exposure report** is read-only over exports. Its totals match the recorded smoke-dev1 and smoke-dev2 evidence.
+
+**One decision is needed before generation:** the rule's evidence-size bounds have more than one reading.
+
+**Live spend:** $0.00.
+
+## Programme 015 paper arm version 2 and the confirmation proposal (2026-10-19, offline)
+
+**What changed (SPEC §36):** `paper-clm-shell/2` keeps a rejected edit's reason through the rollback of its step, which smoke-dev2 showed was lost. Nothing else of the rolled-back step returns, the feedback counts towards the limit, and every other paper-arm rule is unchanged.
+- Version 1 stays the default, and is what both smokes ran.
+- The new path is verified offline only. Its effect on real-model recovery is unmeasured, and it does not remove the arm's context-limit risk.
+
+**The confirmation configuration** (`configs/p015/proposed-confirmation.json`) is proposed: six fresh instances, three arms, 18 sessions. It is not frozen, not authorised, and no instance has been generated.
+
+**Live spend:** $0.00.
+
 ## Programme 015 live development smoke smoke-dev2 (2026-10-19, COMPLETE)
 
 **What ran:** the replacement for smoke-dev1, approved within the remaining USD 13.134552 of the original USD 15 allowance. One eight-turn session per arm on `docthread-dev-1` (`configs/p015/smoke-dev2.json`: `docthread-task/2`, `p015-turn-endings/1`, `p015-truncation/1`; guarded-clm 0.2.0.dev1, source `51e6dbe8…`).

@@ -1,0 +1,117 @@
+{
+ "note": "Programme 015 CONFIRMATION, PROPOSED for review (2026-10-19). NOT AUTHORISED and NOT FROZEN: running it needs the final protocol freeze, the fresh-instance generation and checks under the predeclared rule, the maintainer's written authorisation at the path below and, if needed, an authorised ledger ceiling change (clm-lib-test-results experiments/015-public-clm-comparison/confirmation-design.md). Paths are relative to the clm-lib checkout. Six fresh instances (two per failure template), one session per arm: 18 sessions. The seeds are the predeclared ones; a seed that fails a mechanical check is replaced by the published rule (7400 + k + 6j), which changes this file at the freeze only.",
+ "launch_id": "confirm1",
+ "experiment": "015",
+ "mode": "live",
+ "instances": [
+  {
+   "name": "docthread-confirm-1",
+   "seed": 7401,
+   "mechanism": "lease"
+  },
+  {
+   "name": "docthread-confirm-2",
+   "seed": 7402,
+   "mechanism": "memory"
+  },
+  {
+   "name": "docthread-confirm-3",
+   "seed": 7403,
+   "mechanism": "pages"
+  },
+  {
+   "name": "docthread-confirm-4",
+   "seed": 7404,
+   "mechanism": "lease"
+  },
+  {
+   "name": "docthread-confirm-5",
+   "seed": 7405,
+   "mechanism": "memory"
+  },
+  {
+   "name": "docthread-confirm-6",
+   "seed": 7406,
+   "mechanism": "pages"
+  }
+ ],
+ "arms": [
+  "guarded_clm",
+  "paper_clm_shell",
+  "token_tail_p015"
+ ],
+ "questions": 8,
+ "ledger": "runs/ledger.json",
+ "authorisation": "runs/p015-confirm1-authorisation.json",
+ "library": {
+  "guarded_clm": {
+   "version": "0.2.0.dev1",
+   "revision": "cce58c1f2aa27b247ddb451fb16e6f84b92ba2ad",
+   "source_sha256": "51e6dbe8df7669ff8265d725976260f61891b6624d9c2201c7edc83dfcf2d9e4"
+  }
+ },
+ "model": {
+  "model": "claude-sonnet-5",
+  "thinking": "adaptive",
+  "effort": "high",
+  "max_tokens": 8192,
+  "cache_ttl": "5m",
+  "cache_breakpoints": [
+   "automatic",
+   "tool_definitions",
+   "instructions"
+  ],
+  "max_retries": 2,
+  "timeout_s": 600.0,
+  "session_tag": true
+ },
+ "retry_policy": "p015-retry/1",
+ "task_version": "docthread-task/2",
+ "turn_endings": "p015-turn-endings/1",
+ "arm_settings": {
+  "guarded_clm": {
+   "budget_tokens": 32000,
+   "max_steps": 60,
+   "call_cap": 144
+  },
+  "paper_clm_shell": {
+   "budget_tokens": 32000,
+   "reserve_tokens": 2048,
+   "max_steps": 60,
+   "call_cap": 144,
+   "profile": "paper",
+   "reminder_before_tokens": 2048,
+   "version": "paper-clm-shell/2"
+  },
+  "token_tail_p015": {
+   "budget_tokens": 32000,
+   "max_steps": 60,
+   "call_cap": 144,
+   "summary_call_cap": 24
+  }
+ },
+ "paper_rules": {
+  "reminder_point": "limit_minus_reminder_before_tokens",
+  "reminder_repeat": "once_per_crossing",
+  "rejected_edit_free_step": "free"
+ },
+ "settings_status": {
+  "proposed_for_confirmation": [
+   "the smoke-dev2 settings unchanged: claude-sonnet-5, adaptive thinking, effort high, max_tokens 8192, 5-minute caching with three breakpoints, at most 2 retries per logical call",
+   "budget 32,000, reserve 2,048 (guarded-clm, paper arm), token-tail's own 1,000-token reserve kept; 60 steps, 144 calls, 24 summariser calls per user turn",
+   "guarded-clm 0.2.0.dev1 (source 51e6dbe8...), pinned to the checkout at preparation (cce58c1); recheck at the freeze",
+   "paper arm paper-clm-shell/2 (rejection feedback kept through rollback), profile paper, reminder 2,048 before the limit",
+   "summary baseline token-tail-p015/1 unchanged",
+   "docthread-task/2; p015-turn-endings/1 (stop on the first incomplete turn) and p015-truncation/1 for every arm",
+   "instances docthread-confirm-1..6 (seeds 7401..7406; lease, memory, pages, lease, memory, pages); balanced_order run order"
+  ],
+  "decision_pending_before_live": [
+   "approval of paper-clm-shell/2 and of the fidelity document's open questions (the three paper rules stay provisional)",
+   "the final protocol freeze (this file, the analysis plan, the instance rule)",
+   "instance generation and the mechanical checks at the freeze (none generated yet)",
+   "the automated exposure report from exports (to be built and verified offline first)",
+   "the allowance, and any ledger ceiling change, both by the maintainer"
+  ],
+  "authorisation": "none"
+ }
+}

@@ -40,6 +40,7 @@ def full_spec(tmp: Path, launch_id: str = "live1", **over: Any) -> dict[str, Any
         "library": {"guarded_clm": loaded_pin()}, "task_version": "docthread-task/2",
         "turn_endings": "p015-turn-endings/1",
     }  # fmt: skip
+    spec["arm_settings"]["paper_clm_shell"]["version"] = "paper-clm-shell/2"
     return spec | over
 
 
@@ -54,6 +55,7 @@ def test_the_proposed_settings_pin_the_accepted_library_and_await_the_freeze_upd
     assert L.live_spec_problems(PROPOSED) == [
         "task_version is not set (one of docthread-task/1, docthread-task/2)",
         "turn_endings is not set (one of p015-turn-endings/1, p015-turn-endings/2)",
+        'arm_settings.paper_clm_shell.version is not set ("paper-clm-shell/1" or "paper-clm-shell/2")',
     ]
     problems = L.library_pin_problems(PROPOSED)
     assert all(p.startswith("library.guarded_clm.revision is ") for p in problems)
@@ -85,6 +87,7 @@ def test_the_proposed_settings_pin_the_accepted_library_and_await_the_freeze_upd
         ),
         (("paper_rules", "reminder_repeat"), "paper_rules.reminder_repeat is not set"),
         (("arm_settings", "token_tail_p015", "summary_call_cap"), "summary_call_cap is not set"),
+        (("arm_settings", "paper_clm_shell", "version"), "paper_clm_shell.version is not set"),
     ],
 )
 def test_an_incomplete_live_plan_is_refused_before_anything_is_written(
