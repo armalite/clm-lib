@@ -38,6 +38,7 @@ from .accounting import (
     AttemptCounter,
     LaunchStopped,
     Mode,
+    OutputTruncated,
     RetryPolicy,
     SpendGate,
     SpendRefused,
@@ -48,12 +49,22 @@ from .paper.capability import PaperSettings, PaperShellContext
 from .paper.shell import ShellSandbox
 from .provenance import harness_provenance, versions
 from .records import SessionRecorder
-from .session import TurnOutcome
+from .session import ContinuationUnsupported, TurnOutcome
 from .summary.capability import SummarySettings, TokenTailSummary
 from .tools import bridge
 
 Arm = Literal["paper_clm_shell", "token_tail_p015"]
 ARMS: tuple[Arm, ...] = ("paper_clm_shell", "token_tail_p015")
+
+
+# Why the paper and summary arms cannot continue after a limit-ended turn (checked offline, 2026-10-19).
+CONTINUATION_BLOCKER = (
+    "the arm keeps its own copy of the conversation and takes the messages each request adds by position (the "
+    "length of the request it last sent). A limit-ended turn stops between a tool result and the next model call, "
+    "so the next turn's question follows a tool-result request; Pydantic AI merges those two requests when it next "
+    "cleans the history, and the arm's next turn then loses or repeats messages (or, from the earlier completed "
+    "turn's history, never sees the new question). Continuing needs a reviewed change to the arm's bookkeeping."
+)
 
 
 class ArmSession:
@@ -149,6 +160,8 @@ class ArmSession:
             return "spend_refused"
         if isinstance(exc, AccountingBoundViolated):
             return "harness_defect"
+        if isinstance(exc, OutputTruncated):
+            return "output_truncated"
         if isinstance(exc, ArmContextLimit):
             return "context_limit"
         if isinstance(exc, ArmStepLimit):
@@ -194,6 +207,10 @@ class ArmSession:
         self.loop.close(
             self.model, *([self.summary_model] if hasattr(self, "summary_model") else [])
         )
+
+    def continue_after_limit(self) -> int:
+        """Not supported (p015-turn-endings/2): see `CONTINUATION_BLOCKER`."""
+        raise ContinuationUnsupported(f"{self.arm}: {CONTINUATION_BLOCKER}")
 
     def __enter__(self) -> ArmSession:
         return self

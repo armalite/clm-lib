@@ -18,6 +18,13 @@ rechecked before every attempt (`spend.py`).
 Usage: Pydantic AI's `RequestUsage.input_tokens` already includes `cache_read_tokens` and `cache_write_tokens`
 (its documented convention; Anthropic's raw figures are normalised on extraction), so the uncached input is
 `input_tokens - cache_read_tokens - cache_write_tokens`. Cached tokens are never added a second time.
+
+Output-limit truncation (`p015-truncation/1`, 2026-10-19): a response that stopped at `max_tokens` is settled and
+recorded like any other (its usage and cost are real), the attempt is marked `output_truncated` with the adapter's
+finish reason and the provider's stop reason, and then `OutputTruncated` is raised instead of returning it, for the
+agent's and the summariser's requests alike. It is never retried. Pydantic AI's Anthropic adapter reports the
+provider's `max_tokens` stop as `finish_reason == "length"`; it maps `model_context_window_exceeded` to `length`
+too, which is not an output limit and is not treated as one.
 """
 
 from __future__ import annotations
@@ -102,6 +109,26 @@ class RetryPolicy:
                 after = None
         planned = self.base_delay_s * self.factor**retry
         return min(self.max_delay_s, max(planned, after or 0.0))
+
+
+TRUNCATION_VERSION = "p015-truncation/1"
+
+
+class OutputTruncated(RuntimeError):
+    """A response stopped at the output limit (`max_tokens`). Its attempt is settled and recorded; the run ends with
+    `output_truncated`, distinct from context limits, transport failures and malformed output."""
+
+    def __init__(self, message: str, category: str) -> None:
+        super().__init__(message)
+        self.category = category
+
+
+def output_truncation(response: ModelResponse) -> dict[str, Any] | None:
+    """The finish and stop reasons when the response stopped at the output limit, else None."""
+    stop = (response.provider_details or {}).get("finish_reason")
+    if response.finish_reason != "length" or stop == "model_context_window_exceeded":
+        return None
+    return {"finish_reason": response.finish_reason, "stop_reason": stop}
 
 
 class AccountingBoundViolated(RuntimeError):
@@ -238,7 +265,7 @@ class AccountedModel(WrapperModel):
                 return await self._attempt(
                     messages, model_settings, model_request_parameters, logical, retry
                 )
-            except (SpendRefused, LaunchStopped, AccountingBoundViolated):
+            except (SpendRefused, LaunchStopped, AccountingBoundViolated, OutputTruncated):
                 raise
             except Exception as exc:
                 if retry >= self.retry.max_retries or not self.retry.retryable(exc):
@@ -360,6 +387,9 @@ class AccountedModel(WrapperModel):
             response=to_jsonable_python(response),
             **_settled(settled),
         )
+        truncated = output_truncation(response)
+        if truncated is not None:
+            entry["output_truncated"] = truncated
         if self.sink is not None:
             self.sink.attempt_finished(entry)
         if self.mode == "live" and (
@@ -368,6 +398,12 @@ class AccountedModel(WrapperModel):
         ):
             raise AccountingBoundViolated(
                 f"reported input {response.usage.input_tokens} (bound {bound}) / output {usage.output_tokens}"
+            )
+        if truncated is not None:
+            raise OutputTruncated(
+                f"the {self.category} response stopped at the output limit (max_tokens {max_tokens}; "
+                f"stop reason {truncated['stop_reason']})",
+                self.category,
             )
         return response
 

@@ -8,10 +8,16 @@ estimator across turns; its step and call counts are per run. Nothing is reset b
 the prompt, instructions or output type for scoring.
 
 Endings are classified so that a financial refusal is never mistaken for a context-management result (G7):
-`completed`, `spend_refused`, `budget_exceeded`, `context_limit`, `step_limit`, `call_cap`, `provider_failure`,
+`completed`, `spend_refused`, `budget_exceeded`, `context_limit`, `step_limit`, `call_cap`, `output_truncated` (a
+response stopped at `max_tokens`, `p015-truncation/1`), `provider_failure`,
 `tool_failure` (a bridged task tool raised), `model_behaviour` (Pydantic AI's `UnexpectedModelBehavior`, e.g. a tool's
 retry limit), `harness_defect` (an accounting-bound violation) and `unclassified_error` (any other exception, for
 example one raised by a framework tool that is not bridged, so the harness cannot attribute it).
+
+Continuation (`p015-turn-endings/2`, 2026-10-19): after a turn that ended at the main model's step or call limit,
+`continue_after_limit()` lets the next turn start from that run's own messages (its last processed request, then the
+last step's response and tool results). guarded-clm folds that step into the working context at the next request,
+as it does every step, and its new-turn rule protects the unanswered question. Nothing is reset or synthesised.
 """
 
 from __future__ import annotations
@@ -29,9 +35,15 @@ from guarded_clm import (
     clm_context,
 )
 from guarded_clm.steps import lm_call_cap
-from pydantic_ai import Agent, UsageLimits
+from pydantic_ai import Agent, UsageLimits, capture_run_messages
 from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UsageLimitExceeded
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    ToolCallPart,
+    ToolReturnPart,
+)
 from pydantic_ai.models import Model
 from pydantic_ai.settings import ModelSettings
 from pydantic_core import to_jsonable_python
@@ -44,6 +56,7 @@ from .accounting import (
     AccountingBoundViolated,
     LaunchStopped,
     Mode,
+    OutputTruncated,
     RetryPolicy,
     SpendGate,
     SpendRefused,
@@ -121,6 +134,31 @@ class TurnOutcome:
         return None if self.error is None else f"{type(self.error).__name__}: {self.error}"
 
 
+# p015-turn-endings/2: the endings after which the next scheduled turn may run (main-model step or call exhaustion).
+CONTINUABLE_ENDINGS = ("step_limit", "call_cap")
+
+
+class ContinuationUnsupported(RuntimeError):
+    """The next turn cannot safely follow a limit-ended turn through the runner's existing interface."""
+
+
+def unanswered_calls(messages: Sequence[ModelMessage]) -> list[str]:
+    """Tool calls with no result in the request that follows them: such a history is not provider-valid."""
+    out = []
+    for i, m in enumerate(messages):
+        if not isinstance(m, ModelResponse):
+            continue
+        ids = {p.tool_call_id for p in m.parts if isinstance(p, ToolCallPart)}
+        nxt = messages[i + 1] if i + 1 < len(messages) else None
+        answered = (
+            {p.tool_call_id for p in nxt.parts if isinstance(p, ToolReturnPart)}
+            if isinstance(nxt, ModelRequest)
+            else set()
+        )
+        out += sorted(ids - answered)
+    return out
+
+
 class GuardedSession:
     def __init__(
         self,
@@ -170,6 +208,9 @@ class GuardedSession:
         self.conversation_id = conversation_id
         self.history: list[ModelMessage] | None = None
         self.turns = 0
+        self.limited_messages: list[ModelMessage] | None = (
+            None  # the last run's messages, if it hit a limit
+        )
         self.loop = SessionLoop()  # one event loop for all turns (p015-session-loop/1)
         self.recorder.write_meta(
             settings=dataclasses.asdict(self.settings),
@@ -192,6 +233,8 @@ class GuardedSession:
             return "spend_refused"
         if isinstance(exc, AccountingBoundViolated):
             return "harness_defect"
+        if isinstance(exc, OutputTruncated):
+            return "output_truncated"
         if isinstance(exc, BudgetExceededError):
             return "budget_exceeded"
         if isinstance(exc, ContextLimitError):
@@ -212,6 +255,28 @@ class GuardedSession:
         """Close the session's model clients on its event loop, then the loop. Turns are refused afterwards."""
         self.loop.close(self.model)
 
+    def continue_after_limit(self) -> int:
+        """Let the next turn follow a turn that ended at the main model's step or call limit (p015-turn-endings/2).
+
+        The limit is raised before guarded-clm's own request hook, so the limited run's messages end with the last
+        step's response and its tool results, not yet folded into the working context. Passing them as the next
+        turn's history lets the library fold that step in as usual, and its new-turn rule then records the
+        unanswered question as a protected entry. Passing the earlier completed turn's history instead would make
+        the library record that turn's answer a second time, under the limited turn's number. Returns how many
+        messages are kept."""
+        if self.limited_messages is None:
+            raise ContinuationUnsupported("the last turn did not end at a step or call limit")
+        dangling = unanswered_calls(self.limited_messages)
+        if dangling:
+            raise ContinuationUnsupported(
+                f"the limited run left tool calls without results: {dangling}"
+            )
+        self.history, self.limited_messages = self.limited_messages, None
+        self.recorder.trace(
+            {"type": "turn_continued", "after_turn": self.turns, "kept_messages": len(self.history)}
+        )
+        return len(self.history)
+
     def __enter__(self) -> GuardedSession:
         return self
 
@@ -225,17 +290,25 @@ class GuardedSession:
                 "the session is closed; start a new session (with a new model) instead"
             )
         self.turns += 1
-        try:
-            result = self.loop.run(
-                self.agent.run(
+        captured: list[list[ModelMessage]] = []
+
+        async def run() -> Any:
+            with capture_run_messages() as messages:
+                captured.append(messages)
+                return await self.agent.run(
                     prompt,
                     message_history=self.history,
                     conversation_id=self.conversation_id,
                     usage_limits=UsageLimits(request_limit=self.settings.cap),
                 )
-            )
+
+        self.limited_messages = None
+        try:
+            result = self.loop.run(run())
         except Exception as exc:
             outcome = TurnOutcome(self.turns, self.classify(exc), error=exc)
+            if outcome.ending in CONTINUABLE_ENDINGS and captured:
+                self.limited_messages = list(captured[0])
             self.recorder.turn(
                 {
                     "turn": self.turns,

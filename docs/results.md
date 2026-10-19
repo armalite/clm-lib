@@ -112,6 +112,19 @@ Verification: `ruff check`, `ruff format --check` and `mypy src` are clean; **56
 
 Live phases: **still not run**. `ANTHROPIC_API_KEY` is still unset in the agent process (`doctor`). Live spend $0.00; cumulative $0.00 of $10.00.
 
+## Programme 015 clarified task, turn endings and truncation (2026-10-19, offline)
+
+**What changed (SPEC §35):**
+- **The task's reply format** now states each field's required form, and question 4 asks for the line that states the causing setting and its value (`docthread-task/2`). The scorer, evidence, tools and budgets are unchanged, and version 1 is kept.
+- **Continuation:** a new turn-ending policy (`p015-turn-endings/2`) lets the next turn run after a main-model step or call limit. Only guarded-clm supports it. The paper and summary arms cannot follow it safely through their existing bookkeeping, so it is refused for launches that include them.
+- **Truncation:** a response stopped at `max_tokens` ends the session as `output_truncated`, with its cost recorded and no retry (`p015-truncation/1`).
+
+**smoke-dev1's recorded 6/10 is unchanged.** Its record now separates exact-format misses from factual errors.
+
+**The successor smoke `configs/p015/smoke-dev2.json`** is prepared and not authorised.
+
+**Verification:** offline only, with scripted models and an in-memory transport. **Live spend:** $0.00.
+
 ## Programme 015 session event-loop fix (2026-10-19, offline)
 
 **What changed (SPEC §34, `p015-session-loop/1`):** each p015 session now runs all its turns on one event loop (`asyncio.Runner`). It closes its model clients on that loop before closing the loop. This fixes the defect found in smoke-dev1. Pooling, retries, requests, accounting and every arm's behaviour are unchanged.

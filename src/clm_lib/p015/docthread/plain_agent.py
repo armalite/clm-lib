@@ -40,7 +40,7 @@ from ..summary.capability import SUMMARY_SYSTEM_P015
 from .agent import Call, _parse_key, plan
 from .fixture import Fixture, mentions
 from .scoring import answer_block, true_answers
-from .task import Question, questions
+from .task import TASK_V1, Question, questions
 
 PlainPolicy = Literal["tidy", "keep", "never", "none"]
 
@@ -109,13 +109,14 @@ class PlainInvestigator:
         overrides: dict[int, dict[str, Any]] | None = None,
         bad_edits: list[str] | None = None,
         summary_faults: dict[int, str] | None = None,
+        task_version: str = TASK_V1,
     ) -> None:
         self.fx, self.policy, self.overrides = fx, policy, overrides or {}
         self.bad_edits = list(bad_edits or [])
         self.summary_faults = (
             summary_faults or {}
         )  # summariser call number (from 1) -> "too_long" | "empty"
-        self.questions: list[Question] = questions(fx)
+        self.questions: list[Question] = questions(fx, task_version)
         self.plans = plan(fx)
         self.turn = 0
         self.position = 0

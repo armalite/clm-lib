@@ -318,7 +318,7 @@ def test_the_launcher_runs_three_arms_over_the_pool(
     Ledger.open(tmp_path / "ledger.json", 100.0)
     (tmp_path / "auth.json").write_text(json.dumps({"experiment": "015", "launch_id": "loop1", "live": True,
                                                     "programme_ceiling_usd": 15.0, "block_stop_usd": 15.0}))  # fmt: skip
-    spec = json.loads((REPO / "configs/p015/smoke-dev1.json").read_text()) | {
+    spec = json.loads((REPO / "configs/p015/smoke-dev2.json").read_text()) | {
         "launch_id": "loop1", "questions": 2, "ledger": str(tmp_path / "ledger.json"),
         "authorisation": str(tmp_path / "auth.json")}  # fmt: skip
     L.plan(spec, tmp_path / "L")

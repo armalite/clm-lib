@@ -1,0 +1,89 @@
+{
+ "note": "Programme 015 successor live development smoke, PROPOSED (2026-10-19). NOT AUTHORISED: running it needs the maintainer's written authorisation file at the path below (clm-lib-test-results experiments/015-public-clm-comparison/protocol-draft.md, successor smoke). Paths are relative to the clm-lib checkout. It replaces the closed smoke-dev1 under the corrected harness (p015-session-loop/1) and the clarified task (docthread-task/2); everything else is as in smoke-dev1. One development instance, one session per arm; no confirmation instances; no performance claim.",
+ "launch_id": "smoke-dev2",
+ "experiment": "015",
+ "mode": "live",
+ "instances": [
+  "docthread-dev-1"
+ ],
+ "arms": [
+  "guarded_clm",
+  "paper_clm_shell",
+  "token_tail_p015"
+ ],
+ "questions": 8,
+ "ledger": "runs/ledger.json",
+ "authorisation": "runs/p015-smoke-dev2-authorisation.json",
+ "library": {
+  "guarded_clm": {
+   "version": "0.2.0.dev1",
+   "revision": "cce58c1f2aa27b247ddb451fb16e6f84b92ba2ad",
+   "source_sha256": "51e6dbe8df7669ff8265d725976260f61891b6624d9c2201c7edc83dfcf2d9e4"
+  }
+ },
+ "model": {
+  "model": "claude-sonnet-5",
+  "thinking": "adaptive",
+  "effort": "high",
+  "max_tokens": 8192,
+  "cache_ttl": "5m",
+  "cache_breakpoints": [
+   "automatic",
+   "tool_definitions",
+   "instructions"
+  ],
+  "max_retries": 2,
+  "timeout_s": 600.0,
+  "session_tag": true
+ },
+ "retry_policy": "p015-retry/1",
+ "task_version": "docthread-task/2",
+ "turn_endings": "p015-turn-endings/1",
+ "arm_settings": {
+  "guarded_clm": {
+   "budget_tokens": 32000,
+   "max_steps": 60,
+   "call_cap": 144
+  },
+  "paper_clm_shell": {
+   "budget_tokens": 32000,
+   "reserve_tokens": 2048,
+   "max_steps": 60,
+   "call_cap": 144,
+   "profile": "paper",
+   "reminder_before_tokens": 2048
+  },
+  "token_tail_p015": {
+   "budget_tokens": 32000,
+   "max_steps": 60,
+   "call_cap": 144,
+   "summary_call_cap": 24
+  }
+ },
+ "paper_rules": {
+  "reminder_point": "limit_minus_reminder_before_tokens",
+  "reminder_repeat": "once_per_crossing",
+  "rejected_edit_free_step": "free"
+ },
+ "settings_status": {
+  "chosen_for_this_smoke": [
+   "model claude-sonnet-5; adaptive thinking; effort high; max_tokens 8192",
+   "5-minute prompt caching with the existing three breakpoints",
+   "at most 2 retries per logical call (p015-retry/1), SDK retries off",
+   "144 logical main-model calls, at most 24 summariser calls, 60 task steps per user turn",
+   "budget 32,000 tokens; reserve 2,048 (guarded-clm, paper arm); token-tail's own 1,000 recovery reserve kept unchanged for the summary arm",
+   "guarded-clm 0.2.0.dev1, source 51e6dbe8 (checkout cce58c1: 3f18473 plus a README link; library source unchanged); paper profile paper",
+   "instance docthread-dev-1; arm order guarded_clm, paper_clm_shell, token_tail_p015",
+   "task docthread-task/2: the same questions, fields, scorer and evidence, with the reply format stating each field's required form and question 4 asking for the line that states the causing setting and its value",
+   "turn endings p015-turn-endings/1: the first turn that does not complete ends the session (p015-turn-endings/2, continuation after a step or call limit, is not supported by the paper and summary arms)",
+   "a response stopped at max_tokens ends the session as output_truncated (p015-truncation/1)"
+  ],
+  "decision_pending_before_live": [
+   "the maintainer's authorisation for this smoke (none exists)",
+   "whether to keep p015-turn-endings/1 for this smoke, or first approve a reviewed change that lets the paper and summary arms continue after a limit-ended turn",
+   "re-check the guarded-clm checkout revision and source fingerprint at the freeze; the pin is exact"
+  ],
+  "authorisation": "none",
+  "paper_rules": "as smoke-dev1 (provisional, confirmed for smoke-dev1 only)"
+ }
+}

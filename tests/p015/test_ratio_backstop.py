@@ -10,6 +10,7 @@ import asyncio
 import hashlib
 import inspect
 import json
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -29,7 +30,14 @@ from clm_lib.p015.session import GuardedSettings
 from . import harness as h
 
 REPO = Path(__file__).resolve().parents[2]
-ACCEPTED = {"version": "0.2.0.dev1", "revision": "3f184734362c4c9e24d7f5e2a2d6de5fa18153dd"}
+# The accepted implementation: introduced at revision 3f18473; identified by its version and source fingerprint.
+# Later documentation-only commits move the checkout's revision without changing the source (2026-10-19: cce58c1).
+ACCEPTED_REVISION = "3f184734362c4c9e24d7f5e2a2d6de5fa18153dd"
+ACCEPTED_SOURCE = "51e6dbe8df7669ff8265d725976260f61891b6624d9c2201c7edc83dfcf2d9e4"
+ACCEPTED = {
+    "version": "0.2.0.dev1",
+    "revision": library_provenance()["git"]["revision"],
+}  # the loaded checkout
 
 
 def read_page(n: int, size: int) -> str:
@@ -104,7 +112,11 @@ def new_text_ratio(c: h.Case) -> float:
 def test_the_accepted_revision_is_loaded_and_the_option_is_gone() -> None:
     p = library_provenance()
     assert guarded_clm.__version__ == ACCEPTED["version"] == p["version"]
-    assert p["git"]["revision"] == ACCEPTED["revision"] and not p["git"]["package_dirty"]
+    assert p["source_sha256"] == ACCEPTED_SOURCE and not p["git"]["package_dirty"]
+    checkout = Path(guarded_clm.__file__).resolve().parents[2]
+    ancestry = subprocess.run(["git", "-C", str(checkout), "merge-base", "--is-ancestor", ACCEPTED_REVISION,
+                               p["git"]["revision"]], check=False)  # fmt: skip
+    assert ancestry.returncode == 0  # the loaded checkout descends from the accepting revision
     assert "strict_ratio_learning" not in inspect.signature(clm_context).parameters
     assert "strict_ratio_learning" not in inspect.signature(ClmContext.__init__).parameters
     assert "strict_ratio_learning" not in GuardedSettings.__dataclass_fields__

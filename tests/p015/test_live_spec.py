@@ -13,25 +13,50 @@ from typing import Any
 import pytest
 
 from clm_lib.p015 import launcher as L
+from clm_lib.p015.provenance import library_provenance
 from clm_lib.p015.records import read_jsonl
 
 REPO = Path(__file__).resolve().parents[2]
 PROPOSED = json.loads((REPO / "configs/p015/proposed-comparison-0.2.0.dev1.json").read_text())
+ACCEPTED_SOURCE = (
+    "51e6dbe8df7669ff8265d725976260f61891b6624d9c2201c7edc83dfcf2d9e4"  # guarded-clm 0.2.0.dev1
+)
+
+
+def loaded_pin() -> dict[str, Any]:
+    """The loaded guarded-clm, stated as a pin: these tests check completeness, not which checkout is current."""
+    p = library_provenance()
+    return {
+        "version": p["version"],
+        "revision": p["git"]["revision"],
+        "source_sha256": p["source_sha256"],
+    }
 
 
 def full_spec(tmp: Path, launch_id: str = "live1", **over: Any) -> dict[str, Any]:
     spec = copy.deepcopy(PROPOSED) | {
         "launch_id": launch_id, "instances": ["docthread-dev-1"], "questions": 1,
         "ledger": str(tmp / "ledger.json"), "ledger_ceiling_usd": 100.0, "authorisation": str(tmp / "auth.json"),
+        "library": {"guarded_clm": loaded_pin()}, "task_version": "docthread-task/2",
+        "turn_endings": "p015-turn-endings/1",
     }  # fmt: skip
     return spec | over
 
 
-def test_the_proposed_settings_are_complete_and_pin_the_accepted_library() -> None:
-    assert L.live_spec_problems(PROPOSED) == [] and L.library_pin_problems(PROPOSED) == []
+def test_the_proposed_settings_pin_the_accepted_library_and_await_the_freeze_updates() -> None:
+    """The proposal predates the task and turn-ending versions and the README-only guarded-clm commit: it pins the
+    accepted source exactly, and plan() refuses it until it is updated at the freeze (the pin is never loosened)."""
+    pin = PROPOSED["library"]["guarded_clm"]
+    assert pin["version"] == "0.2.0.dev1" and pin["source_sha256"] == ACCEPTED_SOURCE
     assert (
-        PROPOSED["library"]["guarded_clm"]["revision"] == "3f184734362c4c9e24d7f5e2a2d6de5fa18153dd"
-    )
+        pin["source_sha256"] == library_provenance()["source_sha256"]
+    )  # the library source is unchanged
+    assert L.live_spec_problems(PROPOSED) == [
+        "task_version is not set (one of docthread-task/1, docthread-task/2)",
+        "turn_endings is not set (one of p015-turn-endings/1, p015-turn-endings/2)",
+    ]
+    problems = L.library_pin_problems(PROPOSED)
+    assert all(p.startswith("library.guarded_clm.revision is ") for p in problems)
     assert PROPOSED["arm_settings"]["guarded_clm"] == {}  # no removed option
     assert "model.thinking adaptive" in PROPOSED["settings_status"]["proposed"]
 
@@ -46,6 +71,8 @@ def test_the_proposed_settings_are_complete_and_pin_the_accepted_library() -> No
         (("model", "cache_breakpoints"), "model.cache_breakpoints is not set"),
         (("model", "max_retries"), "model.max_retries is not set"),
         (("retry_policy",), "retry_policy must be stated"),
+        (("task_version",), "task_version is not set"),
+        (("turn_endings",), "turn_endings is not set"),
         (("library", "guarded_clm", "revision"), "library.guarded_clm.revision is not set"),
         (
             ("library", "guarded_clm", "source_sha256"),

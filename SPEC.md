@@ -1,6 +1,6 @@
 # clm-lib: Technical Specification
 
-Version: 2.22 | 19 October 2026
+Version: 2.23 | 19 October 2026
 
 Repository: `clm-lib` | Python package: `clm_lib` | CLI: `clm-lib`
 
@@ -29,6 +29,7 @@ Version history:
 - 2.14: adds §26's W3 instances `w3-dev-3` and `w3-dev-4` (fresh seeds of the dev-1 and dev-2 schedules) and the replay's neutral `last_request` keys, for experiment 014's R1 matched development pilot.
 - 2.15: adds §27, shared foundations for programme 015 (opt-in, not yet wired into the runner): the native-tool transport `native-tools/1`, tool interfaces, versioned counters `session-counters/1`, the task-tool output cap `tool-output-cap/1` and accounted native dispatch. No arm, workload or live path uses them yet; §27.6 lists what is pending.
 - 2.16: adds §28, the programme 015 guarded-clm integration path (`clm_lib.p015`): opt-in, in a separate environment, verified offline with scripted and mocked models only.
+- 2.23: adds §35: the clarified docthread task (`docthread-task/2`; version 1 kept), versioned turn-ending policies (`p015-turn-endings/1` and `/2`, continuation after a main-model step or call limit, supported by guarded-clm only), and output-limit truncation as its own ending (`p015-truncation/1`); offline-verified.
 - 2.22: adds §34: one event loop per p015 session (`p015-session-loop/1`), fixing the per-turn event-loop defect found in the partial smoke-dev1, with client shutdown on that loop; verified offline against a local HTTP server.
 - 2.21: adds §33: the accepted guarded-clm 0.2.0.dev1 (always-on implausible-ratio backstop) on the p015 path; `strict_ratio_learning` removed and refused; the library pinned in live plans. §32.1 is superseded.
 - 2.20: adds §32: guarded-clm's `strict_ratio_learning` on the p015 path (explicitly True in the proposed 015 configuration), live plans that must state every experimental choice, and corrections to §31.1's cache-isolation statement.
@@ -1122,3 +1123,83 @@ The failed request can reach the server before the client fails, so a failed att
 - a three-arm launch over the local server completes, with a temporary ledger and authorisation, and its export verifies.
 
 **Status:** offline verification only. No live call has been made since the fix.
+
+## 35. Clarified task, turn endings and output-limit truncation (2026-10-19, offline-verified)
+
+A development revision after the partial smoke `smoke-dev1` and a review of generic benchmark conventions. It changes the instructions the model reads and the harness's ending rules. It does not change the scorer, the generated evidence, the tools, the budgets, any arm's context management, or guarded-clm.
+
+### 35.1 The task wording (`docthread-task/2`)
+
+**What stays fixed:** the same eight questions, fields and comparison rules (`docthread-score/1`), for every arm.
+
+**What changes:**
+- **The reply format** states, field by field, the form the scorer already requires:
+  - an id, code or name on its own, exactly as written, without the rest of its record or line;
+  - the journal's time;
+  - a number;
+  - one complete journal line, copied exactly.
+
+  It also asks for no labels, notes or other text inside a value.
+- **Question 4** asks for a journal line "that states the configuration setting behind the problem, with its value". That is what the quote rule checks (§29).
+
+**What it does not reveal:** any setting, value, component or page that version 1 did not already show.
+
+**Version 1 is kept** byte-identical, as the default for callers that state no version. It is what smoke-dev1 sent.
+
+**The contract** records `task_version`, and the workload fingerprint uses it. Live plans must state it. An unsupported version is refused.
+
+### 35.2 Turn endings (`turn_endings`)
+
+**`p015-turn-endings/1`:** the first turn that does not complete ends the session, and its unfinished questions score as missing. This was the earlier behaviour.
+
+**`p015-turn-endings/2`:** a revision of that policy, not a description of earlier runs. A turn that ends at the main model's step limit (`step_limit`) or call cap (`call_cap`) ends only that turn:
+- its fields score as unanswered under the fixed denominator of 10;
+- the next scheduled user turn runs in the same session, agent and conversation.
+
+**Every other ending still stops the session:** context limits, spend refusals, operator stops, provider and harness failures, the summariser's cap and truncation.
+
+**The outcome:** a session that continued past a limit-ended turn is an `arm_failure` result. It is never rerun.
+
+**History after a limit-ended turn (guarded-clm):**
+- The limit is raised before the library's own request hook. So the limited run's messages end with the last step's response and its tool results, with no dangling call.
+- These messages become the next turn's history (`GuardedSession.continue_after_limit`). The library folds that step into the working context, as it does every step, and its new-turn rule records the unanswered question as a protected entry.
+- Nothing is reset or synthesised, and the library's counters and rules are its own.
+- The earlier completed turn's history must not be used: the library would record that turn's answer a second time, under the limited turn's number.
+- **One visible artefact:** at the first request after continuing, the status line counts that folded step as one task step used in the new turn. Enforcement counts per run and is unaffected.
+
+**Not supported by the paper and summary arms:** they keep their own copy of the conversation and take each request's new messages by position. After a limit-ended turn, the next question follows a tool-result request, and Pydantic AI merges the two when it next cleans the history, so the arm loses or repeats messages. Every history variant was checked offline. `plan` and `contract_problems` refuse `/2` for a launch that includes these arms, and `ArmSession.continue_after_limit` refuses with the reason. Supporting it needs a reviewed change to the arms' bookkeeping.
+
+**Records:** each continuation is recorded as a `turn_continued` trace record and launch event. A refusal is recorded as a `continuation_refused` event, and the session then stops. Live plans must state `turn_endings`.
+
+### 35.3 Output-limit truncation (`p015-truncation/1`)
+
+**Detection:** Pydantic AI's Anthropic adapter reports the provider's `max_tokens` stop as `finish_reason == "length"`. It also maps `model_context_window_exceeded` to `length`, which is not an output limit and is not treated as one.
+
+**What happens:** `AccountedModel` settles and records the attempt as usual, with its real usage and cost, marks it `output_truncated` (the finish and stop reasons), and raises `OutputTruncated`. This applies to agent and summariser requests alike.
+- **The response is never retried** and never returned to the agent.
+- **The ending is `output_truncated`,** distinct from context limits, transport failures and malformed output.
+- **The session stops** under either turn-ending policy, with the outcome `output_truncated`.
+- **Scoring:** earlier completed turns keep their scores. The affected turn and the unreached turns are unanswered under the fixed denominator.
+- **Nothing is automatic:** the session is not retried, excluded or replaced, and `resolve --as rerun` refuses it.
+
+**Its status:** this is a public protocol decision for development runs. The contract records `truncation`.
+
+### 35.4 Verification and status
+
+**Tests:** `tests/p015/test_turn_endings.py`, plus the updated `test_smoke_plan.py`, `test_live_spec.py` and `test_ratio_backstop.py`. They check:
+- the version 1 wording digest;
+- that version 2 states each form and reveals nothing new;
+- that the stated forms are what the unchanged scorer accepts;
+- that every arm receives the same version 2 prompts and scores 10/10 with the scripted investigators;
+- guarded-clm continuation after a step and a call limit, with valid history and protected entries;
+- launcher continuation with unanswered fields;
+- the refusal for the two arms;
+- that provider failure, truncation, stop and context-limit endings still stop;
+- the adapter's `max_tokens` stop recorded, charged and not retried;
+- truncation in agent and summariser requests, with earlier scores kept.
+
+**The successor smoke configuration** (`configs/p015/smoke-dev2.json`) is smoke-dev1's settings with a new launch id and authorisation path, `docthread-task/2`, `p015-turn-endings/1`, and the guarded-clm checkout pin `cce58c1`. Its library source is unchanged from `3f18473` (sha256 `51e6dbe8…`). It is not authorised.
+
+**Pins:** the closed `smoke-dev1.json` is kept byte-identical. Because the pin is exact, the README-only guarded-clm commit makes `plan` refuse it, and the proposed comparison configuration, until they are re-pinned.
+
+No live call has been made.

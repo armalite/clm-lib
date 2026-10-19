@@ -442,6 +442,13 @@ arm execution policy   which calls run, and in what order (not decided here); ta
 - **Concurrency:** one launcher at a time per launch directory (an `flock`). Sessions run one after another. The gate still counts open and other-process pending reservations.
 - **The paper arm's profiles:** `paper` (the default) and `readme`. These come from the source-priority review recorded in the results repository.
 
+**Task wording, turn endings and truncation (2026-10-19, SPEC §35):**
+- **Versions, not edits:** the clarified wording is `docthread-task/2` beside the untouched version 1. The launch contract names it, so a smoke-dev1 prompt can always be reproduced, and the scorer stays `docthread-score/1`.
+- **Continuation is the runner's job, the policy is the launcher's:** the launcher decides whether a limit-ended turn may be followed (`turn_endings`), and the runner says whether it can follow it safely (`continue_after_limit`).
+  - For guarded-clm, the right history is the limited run's own captured messages. The library has not yet folded the last step into its working context when the limit is raised, and reusing the earlier completed history would make it record a stale answer.
+  - The paper and summary arms refuse, because their positional bookkeeping and Pydantic AI's merge of consecutive requests disagree after such a turn. A launch that would need them to continue is refused at `plan`, rather than the arms being given a recovery rule nobody reviewed.
+- **Truncation is detected where usage is settled:** the accounting wrapper already sees every agent and summariser response, so it can record the real cost first and then end the run with its own exception. No response cut at `max_tokens` reaches the agent as if it were an answer.
+
 **One event loop per session (2026-10-19, SPEC §34, `p015-session-loop/1`):** the live smoke `smoke-dev1` showed that running each turn with `asyncio.run` breaks a session-long `AsyncAnthropic` client, because its pooled connections belong to the loop that opened them.
 - **The fix keeps the client and changes the loop:** a session owns one `asyncio.Runner` for all its turns. Rebuilding the client per turn would also have worked, but it would have changed what is pooled and cached per session, and it would have left the summariser's shared client to be handled separately.
 - **Shutdown is ordered:** `close()` closes the session's model clients on the session's loop, then the loop. The launcher calls it in a `finally`. A closed session refuses turns, so nothing can reach a pool whose loop has closed.

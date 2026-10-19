@@ -27,6 +27,18 @@ Neither is redispatched automatically: `resolve` marks it `abandoned` (a missing
 gets a new run directory while the old one is kept. Provider execution after an uncertain network outcome is never
 assumed to be exactly-once; the ledger charges such an attempt at its full reservation.
 
+**Task and turn endings (2026-10-19):** the contract records `task_version` (`docthread-task/1` or `/2`, the same
+wording for every arm) and `turn_endings`:
+- `p015-turn-endings/1`: the first turn that does not complete ends the session; its unfinished questions score as
+  missing;
+- `p015-turn-endings/2`: the same, except that a turn ending at the main model's step or call limit ends only that
+  turn (its fields score as unanswered) and the next scheduled turn runs in the same session. Only runners that
+  support it may be planned with it (`CONTINUATION_ARMS`).
+
+In both, a response stopped at the output limit ends the session as `output_truncated` (`p015-truncation/1`); it is
+never retried, excluded or replaced automatically. A contract without these fields predates them (task version 1,
+every incomplete turn ending the session, no truncation ending). Unsupported versions are refused.
+
 **Stopping:** `stop` stops between sessions; `stop --now`, SIGTERM or SIGINT stop before the next provider attempt
 or turn, and the session is marked `stopped`.
 
@@ -60,14 +72,14 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.usage import RequestUsage
 
 from ..budget import Ledger, ModelPrice, load_prices
-from .accounting import RETRY_VERSION, LaunchStopped, SpendRefused
-from .arms import ArmSession
+from .accounting import RETRY_VERSION, TRUNCATION_VERSION, LaunchStopped, SpendRefused
+from .arms import CONTINUATION_BLOCKER, ArmSession
 from .docthread.agent import Investigator
 from .docthread.fixture import DEV_INSTANCES, GENERATOR_VERSION, generate
 from .docthread.offline import SYNTHETIC_CHARS_PER_TOKEN, SyntheticUsageModel
 from .docthread.plain_agent import PlainInvestigator
 from .docthread.scoring import SCORER_VERSION, score_session
-from .docthread.task import SYSTEM_PROMPT, TASK_VERSION, questions, user_message
+from .docthread.task import SYSTEM_PROMPT, TASK_V1, TASK_VERSIONS, questions, user_message
 from .docthread.tools import EvidenceService
 from .export import export_session, verify_export
 from .live import (
@@ -80,7 +92,13 @@ from .live import (
 from .paper.capability import PaperSettings
 from .provenance import library_provenance, tree_fingerprint, versions
 from .records import read_jsonl
-from .session import GuardedSession, GuardedSettings, obsolete_setting_problems
+from .session import (
+    CONTINUABLE_ENDINGS,
+    ContinuationUnsupported,
+    GuardedSession,
+    GuardedSettings,
+    obsolete_setting_problems,
+)
 from .spend import SPEND_VERSION, SpendGate
 from .summary.capability import SummarySettings
 
@@ -91,6 +109,11 @@ TERMINAL = ("finished", "uncertain", "interrupted", "stopped", "abandoned")
 ARM_FAILURES = ("context_limit", "step_limit", "call_cap", "summary_call_cap", "model_behaviour")
 HARNESS_DEFECTS = ("harness_defect", "sandbox_unavailable", "unclassified_error", "tool_failure")
 RERUNNABLE_OUTCOMES = ("harness_defect", "provider_failure", "spend_stopped")
+TURN_ENDINGS_V1, TURN_ENDINGS_V2 = "p015-turn-endings/1", "p015-turn-endings/2"
+TURN_ENDINGS = (TURN_ENDINGS_V1, TURN_ENDINGS_V2)
+CONTINUATION_ARMS = (
+    "guarded_clm",
+)  # runners whose existing interface can start a turn after a limit-ended one
 
 # A live plan must state every experimental choice explicitly (2026-10-16): code defaults are proposals, not
 # approvals, and must never be adopted silently. Scripted plans may rely on defaults.
@@ -142,6 +165,10 @@ def live_spec_problems(spec: dict[str, Any]) -> list[str]:
             out.append(f"model.{key} is not set ({allowed})")
     if spec.get("retry_policy") != RETRY_VERSION:
         out.append(f'retry_policy must be stated as "{RETRY_VERSION}" (with model.max_retries)')
+    if "task_version" not in spec:
+        out.append(f"task_version is not set (one of {', '.join(TASK_VERSIONS)})")
+    if "turn_endings" not in spec:
+        out.append(f"turn_endings is not set (one of {', '.join(TURN_ENDINGS)})")
     arms = list(spec.get("arms", ARMS))
     settings = spec.get("arm_settings") or {}
     if "guarded_clm" in arms:
@@ -207,6 +234,28 @@ def balanced_order(instances: list[str], arms: list[str]) -> list[tuple[str, str
     return out
 
 
+def version_problems(spec: dict[str, Any]) -> list[str]:
+    """Unsupported task or turn-ending versions, and a continuation policy an arm cannot follow (any mode)."""
+    out = []
+    task = spec.get("task_version", TASK_V1)
+    if task not in TASK_VERSIONS:
+        out.append(
+            f"task_version {task!r} is not supported (supported: {', '.join(TASK_VERSIONS)})"
+        )
+    endings = spec.get("turn_endings", TURN_ENDINGS_V1)
+    if endings not in TURN_ENDINGS:
+        out.append(
+            f"turn_endings {endings!r} is not supported (supported: {', '.join(TURN_ENDINGS)})"
+        )
+    elif endings == TURN_ENDINGS_V2:
+        for arm in spec.get("arms", ARMS):
+            if arm not in CONTINUATION_ARMS:
+                out.append(
+                    f"turn_endings {endings} is not supported by {arm}: {CONTINUATION_BLOCKER}"
+                )
+    return out
+
+
 def fingerprints(contract_body: dict[str, Any]) -> dict[str, Any]:
     import clm_lib
 
@@ -218,7 +267,7 @@ def fingerprints(contract_body: dict[str, Any]) -> dict[str, Any]:
         "guarded_clm_source_sha256": library_provenance()["source_sha256"],
         "workload": {
             "generator": GENERATOR_VERSION,
-            "task": TASK_VERSION,
+            "task": contract_body.get("task_version", TASK_V1),
             "scorer": SCORER_VERSION,
         },
         "dependencies": versions(),
@@ -240,6 +289,10 @@ def plan(spec: dict[str, Any], launch_dir: Path) -> dict[str, Any]:
     if pin:
         raise ValueError("the spec's guarded-clm pin does not match the loaded library; nothing was written:\n- "
                          + "\n- ".join(pin))  # fmt: skip
+    unsupported = version_problems(spec)
+    if unsupported:
+        raise ValueError("the spec states an unsupported version; nothing was written:\n- "
+                         + "\n- ".join(unsupported))  # fmt: skip
     missing = live_spec_problems(spec)
     if missing:
         raise ValueError(
@@ -284,6 +337,9 @@ def plan(spec: dict[str, Any], launch_dir: Path) -> dict[str, Any]:
         "model": dataclasses.asdict(ModelConfig(**spec.get("model", {}))),
         "arm_settings": spec.get("arm_settings", {}),
         "retry_policy": spec.get("retry_policy", RETRY_VERSION),
+        "task_version": spec.get("task_version", TASK_V1),
+        "turn_endings": spec.get("turn_endings", TURN_ENDINGS_V1),
+        "truncation": TRUNCATION_VERSION,
         "paper_rules": spec.get("paper_rules", PAPER_RULES_IMPLEMENTED),
         "library": spec.get(
             "library"
@@ -325,6 +381,7 @@ def contract_problems(launch_dir: Path) -> list[str]:
         out.append("contract.json does not match its recorded digest")
     contract = json.loads(text)
     out += obsolete_setting_problems((contract.get("arm_settings") or {}).get("guarded_clm"))
+    out += version_problems({**contract, "arms": [s["arm"] for s in contract.get("sessions", [])]})
     body = {k: v for k, v in contract.items() if k != "fingerprints"}
     now = fingerprints(body)
     for key, value in contract["fingerprints"].items():
@@ -433,6 +490,13 @@ def _scripted_model(
                 int(faults.get("fail_status", 503)), "scripted", {"error": "scripted failure"}
             )
         response: ModelResponse = agent.respond(messages, info)
+        if (
+            faults.get("truncate_at_attempt") == index
+        ):  # a scripted output-limit stop, as the adapter reports it
+            response.finish_reason, response.provider_details = (
+                "length",
+                {"finish_reason": "max_tokens"},
+            )
         if synthetic:
             chars = sum(len(str(getattr(p, "content", ""))) for m in messages for p in m.parts)
             chars += len(info.instructions or "") + len(
@@ -465,6 +529,8 @@ def run_session(
     run_id = f"{contract['launch_id']}.{sid}.r{run_index}"
     mode = contract["mode"]
     scripted = contract.get("scripted", {})
+    task_version = contract.get("task_version", TASK_V1)
+    turn_endings = contract.get("turn_endings", TURN_ENDINGS_V1)
     if mode == "live":
         price = load_prices(Path("configs/prices.toml")).get(config.model)
         live_ok = bool(gate.authorisation().get("live")) and credential_source_present()
@@ -479,7 +545,9 @@ def run_session(
             arm, "keep" if arm != "token_tail_p015" else "none"
         )
         agent: Any = (
-            Investigator(fx, policy) if arm == "guarded_clm" else PlainInvestigator(fx, policy)
+            Investigator(fx, policy, task_version=task_version)
+            if arm == "guarded_clm"
+            else PlainInvestigator(fx, policy, task_version=task_version)
         )
         faults = scripted.get("faults", {}).get(sid, {})
         model = _scripted_model(agent, scripted.get("synthetic_usage", True), faults, sid, hook)
@@ -510,12 +578,14 @@ def run_session(
     else:
         runner = ArmSession(arm, model, summary=SummarySettings(**settings), **common)
     runner.recorder.write_meta(launch={"launch_id": contract["launch_id"], "session_id": sid,
-                                       "order": session["order"], "run_index": run_index, "tag": session["tag"]})  # fmt: skip
+                                       "order": session["order"], "run_index": run_index, "tag": session["tag"],
+                                       "task_version": task_version, "turn_endings": turn_endings,
+                                       "truncation": TRUNCATION_VERSION})  # fmt: skip
     replies: list[str | None] = []
     calls: list[list[str]] = []
     endings: list[str] = []
     try:  # the session's loop and clients are closed however the turns end (p015-session-loop/1)
-        for q in questions(fx)[: contract["questions"]]:
+        for q in questions(fx, task_version)[: contract["questions"]]:
             try:
                 gate.check_turn()
             except (SpendRefused, LaunchStopped) as exc:
@@ -527,12 +597,23 @@ def run_session(
                 endings.append(ending)
                 break
             start = len(desk.order)
-            outcome = runner.run_turn(user_message(q))
+            outcome = runner.run_turn(user_message(q, task_version))
             calls.append(desk.order[start:])
             endings.append(outcome.ending)
             replies.append(outcome.output if outcome.ending == "completed" else None)
-            if outcome.ending != "completed":
-                break
+            if outcome.ending == "completed":
+                continue
+            if turn_endings == TURN_ENDINGS_V2 and outcome.ending in CONTINUABLE_ENDINGS:
+                try:
+                    kept = runner.continue_after_limit()
+                except ContinuationUnsupported as exc:
+                    _event(launch_dir, "continuation_refused", session=sid, turn=outcome.turn,
+                           ending=outcome.ending, reason=str(exc))  # fmt: skip
+                    break
+                _event(launch_dir, "turn_continued", session=sid, turn=outcome.turn,
+                       ending=outcome.ending, kept_messages=kept)  # fmt: skip
+                continue
+            break
     finally:
         runner.close()
     score = score_session(fx, replies, calls)
@@ -564,8 +645,10 @@ def classify_outcome(endings: list[str], questions_planned: int) -> str:
     if endings == ["completed"] * questions_planned:
         return "complete"
     last = endings[-1] if endings else "none"
-    if last in ARM_FAILURES:
-        return "arm_failure"
+    if last in ARM_FAILURES or (last == "completed" and any(e in ARM_FAILURES for e in endings)):
+        return "arm_failure"  # including a run that continued past a limit-ended turn (p015-turn-endings/2)
+    if last == "output_truncated":
+        return "output_truncated"
     if last == "spend_refused":
         return "spend_stopped"
     if last == "stopped":

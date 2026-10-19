@@ -39,7 +39,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from .fixture import HOURS, INCIDENT_HOUR, ROOT_PAGES, Fixture, canonical_call, mentions
 from .scoring import answer_block, true_answers
-from .task import Question, questions
+from .task import TASK_V1, Question, questions
 
 Policy = Literal["tidy", "keep"]
 Call = tuple[str, dict[str, Any]]
@@ -87,9 +87,10 @@ class Investigator:
         fx: Fixture,
         policy: Policy = "tidy",
         overrides: dict[int, dict[str, Any]] | None = None,
+        task_version: str = TASK_V1,
     ) -> None:
         self.fx, self.policy, self.overrides = fx, policy, overrides or {}
-        self.questions: list[Question] = questions(fx)
+        self.questions: list[Question] = questions(fx, task_version)
         self.plans = plan(fx)
         self.turn = 0
         self.position = 0
