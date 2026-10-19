@@ -118,7 +118,7 @@ Live phases: **still not run**. `ANTHROPIC_API_KEY` is still unset in the agent 
 
 **Results** (each session ran once):
 - **guarded-clm:** completed, 10/10, recall 3/3;
-- **`paper_clm_shell`:** ended at its context limit in turn 4, 4/10. Its only edit was rejected, and last-step rollback removed both the rejection reason and every inspection that followed;
+- **`paper_clm_shell`:** ended at its context limit in turn 4, 4/10. Its only edit was rejected, and last-step rollback removed the rejection reason and the next four inspections (corrected 2026-10-19). A fidelity review (clm-lib-test-results 015 `paper-arm-smoke-dev2-review.md`) finds no harness defect and nothing inconsistent with the sources. It proposes one narrow correction, not yet approved: keep a rolled-back step's edit receipt in the rollback notice;
 - **`token_tail_p015`:** completed, 9/10. The quote had the right line with its column spacing collapsed.
 
 A compatibility result, not a comparison.
