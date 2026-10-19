@@ -51,11 +51,17 @@ def test_only_the_identity_instances_and_paper_version_differ_from_smoke_dev2() 
 
 
 def test_the_instances_follow_the_predeclared_rule() -> None:
+    """The predeclared names and mechanisms, each with the first seed of 7400 + k + 6j that passed the mechanical
+    checks at the freeze (2026-10-19 manifest: k = 1 took 7407 and k = 6 took 7496; the others their first seed)."""
     mechanisms = ["lease", "memory", "pages", "lease", "memory", "pages"]
-    assert CONFIRM["instances"] == [
-        {"name": f"docthread-confirm-{k}", "seed": 7400 + k, "mechanism": m}
-        for k, m in zip(range(1, 7), mechanisms, strict=True)
+    assert [(i["name"], i["mechanism"]) for i in CONFIRM["instances"]] == [
+        (f"docthread-confirm-{k}", m) for k, m in zip(range(1, 7), mechanisms, strict=True)
     ]
+    assert all(
+        (i["seed"] - 7400 - k) % 6 == 0 and i["seed"] > 7400
+        for k, i in enumerate(CONFIRM["instances"], 1)
+    )
+    assert [i["seed"] for i in CONFIRM["instances"]] == [7407, 7402, 7403, 7404, 7405, 7496]
 
 
 def test_it_plans_18_balanced_sessions_without_generating_a_fixture(

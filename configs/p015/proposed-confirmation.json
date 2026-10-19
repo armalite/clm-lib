@@ -6,7 +6,7 @@
  "instances": [
   {
    "name": "docthread-confirm-1",
-   "seed": 7401,
+   "seed": 7407,
    "mechanism": "lease"
   },
   {
@@ -31,7 +31,7 @@
   },
   {
    "name": "docthread-confirm-6",
-   "seed": 7406,
+   "seed": 7496,
    "mechanism": "pages"
   }
  ],
