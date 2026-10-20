@@ -59,6 +59,10 @@ from ...output_cap import cap_exec
 from ..arm_errors import ArmContextLimit, ArmStepLimit
 from ..estimate import ESTIMATE_VERSION, RatioEstimator, request_chars
 from .mirror import MIRROR_VERSION, MirrorError, parse, render
+from .parts import PART_MIRROR_VERSION, PartMirrorError
+from .parts import blocks as part_blocks
+from .parts import parse as parse_parts
+from .parts import render as render_parts
 from .shell import MIRROR_FILE, ShellSandbox
 
 if TYPE_CHECKING:
@@ -66,7 +70,9 @@ if TYPE_CHECKING:
 
 PAPER_VERSION = "paper-clm-shell/1"  # the default, and the historical version
 PAPER_V2 = "paper-clm-shell/2"  # rejection feedback kept through rollback
-PAPER_VERSIONS = (PAPER_VERSION, PAPER_V2)
+PAPER_V3 = "paper-clm-shell/3"  # /2 with the part-level mirror (ctx-part-mirror/1)
+PAPER_VERSIONS = (PAPER_VERSION, PAPER_V2, PAPER_V3)
+FEEDBACK_VERSIONS = (PAPER_V2, PAPER_V3)
 TOOL = "bash"
 NOTE = "[context]"
 
@@ -147,6 +153,8 @@ class PaperSettings:
 
 
 def instructions(settings: PaperSettings) -> str:
+    if settings.version == PAPER_V3:
+        return instructions_parts(settings)
     return (
         f"Context management. Your conversation context is limited to about {settings.limit:,} tokens. Before each "
         f"bash command runs, the conversation so far (every message after the system prompt and the first question) "
@@ -200,6 +208,36 @@ class PaperState:
     rollbacks_total: int = 0
 
 
+def instructions_parts(settings: PaperSettings) -> str:
+    """paper-clm-shell/3: the part-level mirror, with a small generic example."""
+    return (
+        f"Context management. Your conversation context is limited to about {settings.limit:,} tokens. Before each "
+        f"bash command runs, your context so far is written to {MIRROR_FILE}: every part of the conversation after "
+        "the system prompt and the first question, up to the reply that holds this command. Each part is a block "
+        "that starts with a header line, [[CTX_BLOCK n kind=...]], followed by its text. The kinds are user (a "
+        "message to you), assistant (your reply text), tool_call (a call's JSON arguments) and tool_result (what "
+        "the call returned). You can change the file with any shell command; when the command finishes, a changed "
+        "file becomes your context from the next request on, if it fits the limit:\n"
+        "- keep a block by keeping its header line; you may rewrite its text, for example replace a long tool result "
+        "with a short summary (a tool_call's text must stay a JSON object);\n"
+        "- delete a block by removing its header line and text; a tool call and its result are deleted together;\n"
+        "- add a note with a [[CTX_BLOCK note]] header line followed by your text; text before the first header is "
+        "a note too;\n"
+        "- keep the blocks you keep in their order, and keep the context starting with one of your own blocks and "
+        "ending with a user or tool block.\n"
+        "Otherwise the edit is not applied, and the command's result says why. Example of an edited file: a long "
+        "result replaced by its summary, an earlier call and result deleted, and a note added:\n"
+        "[[CTX_BLOCK 4 kind=tool_call tool=lookup id=c2]]\n"
+        '{"name": "alpha"}\n'
+        "[[CTX_BLOCK 5 kind=tool_result tool=lookup id=c2]]\n"
+        "Summary: alpha has 3 records; record 2 failed at 10:02.\n"
+        "[[CTX_BLOCK note]]\n"
+        "So far: alpha is the source of the failures; next, check its settings.\n"
+        "The bash tool runs one command per call, in a sandbox without network access; files in /work persist "
+        "between commands."
+    )
+
+
 class PaperShellContext(AbstractCapability[Any]):
     def __init__(
         self,
@@ -226,7 +264,7 @@ class PaperShellContext(AbstractCapability[Any]):
     def describe(self) -> dict[str, Any]:
         return {
             "variant": self.settings.version,
-            "mirror": MIRROR_VERSION,
+            "mirror": PART_MIRROR_VERSION if self.settings.version == PAPER_V3 else MIRROR_VERSION,
             "estimate": ESTIMATE_VERSION,
             "settings": dataclasses.asdict(self.settings),
             "limit": self.settings.limit,
@@ -285,8 +323,11 @@ class PaperShellContext(AbstractCapability[Any]):
         if bash_ids and call_id != bash_ids[0]:
             self.record({"type": "paper_command_skipped", "call_id": call_id})
             return "not run: one bash command per response (only this response's first bash command runs)"
-        before = [*st.messages, reply]
-        text = render(before)
+        v3 = s.version == PAPER_V3
+        before = (
+            list(st.messages) if v3 else [*st.messages, reply]
+        )  # /3: the running reply is not editable
+        text = render_parts(before) if v3 else render(before)
         self.mirror_path.write_text(text, encoding="utf-8")
         res = self.sandbox.run(command)
         output, cap = cap_exec(res, self.sandbox.capture_bytes, s.max_output_chars)
@@ -298,7 +339,7 @@ class PaperShellContext(AbstractCapability[Any]):
         receipt, outcome = None, "unchanged"
         if changed:
             outcome, receipt = self._edit(after, before, reply)
-            if outcome == "rejected" and s.version == PAPER_V2:
+            if outcome == "rejected" and s.version in FEEDBACK_VERSIONS:
                 st.rejections[call_id] = self._last_rejection
         only_bash = len(
             [p for p in reply.parts if isinstance(p, ToolCallPart)]
@@ -345,6 +386,8 @@ class PaperShellContext(AbstractCapability[Any]):
             )
             return "rejected", f"{NOTE} edit rejected, nothing changed: {reason}."
 
+        if s.version == PAPER_V3:
+            return self._edit_parts(after, before, reply, reject)
         try:
             parsed = parse(after, before)
         except MirrorError as exc:
@@ -373,6 +416,45 @@ class PaperShellContext(AbstractCapability[Any]):
             f"{tokens:,} of {s.limit:,} tokens."
         )
 
+    def _edit_parts(
+        self, after: str, before: list[ModelMessage], reply: ModelResponse, reject: Any
+    ) -> tuple[str, str]:
+        """paper-clm-shell/3: the part-level mirror. The running reply is not in the file and follows the edited
+        context unchanged; the size check includes it."""
+        st, s = self.state, self.settings
+        assert st.pinned is not None
+        try:
+            parsed, origins = parse_parts(after, before)
+        except PartMirrorError as exc:
+            return reject(str(exc))
+        _, tokens = self._estimate([st.pinned, *parsed, reply])
+        if tokens > s.limit:
+            return reject(
+                f"the edited context would be about {tokens:,} tokens, over the {s.limit:,}-token limit"
+            )
+        kept = {id(m) for m in before}
+        for m, origin in zip(
+            parsed, origins, strict=True
+        ):  # a rebuilt message of this turn stays rollable
+            if all(id(before[i]) in st.run_messages for i in origin):
+                st.run_messages.add(id(m))
+        n_before, n_after = len(part_blocks(before)), len(part_blocks(parsed))
+        st.messages = parsed
+        st.edits_accepted += 1
+        self.record(
+            {
+                "type": "paper_edit_applied",
+                "blocks_before": n_before,
+                "blocks_after": n_after,
+                "rebuilt_blocks": sum(1 for m in parsed if id(m) not in kept),
+                "estimated_tokens": tokens,
+            }
+        )
+        return "applied", (
+            f"{NOTE} edit applied: {n_before} blocks before, {n_after} after; the context is now about "
+            f"{tokens:,} of {s.limit:,} tokens."
+        )
+
     # ------------------------------------------------------------------ the hooks
 
     def _absorb(self, messages: list[ModelMessage]) -> None:
@@ -397,7 +479,11 @@ class PaperShellContext(AbstractCapability[Any]):
     def _build(self, notices: list[str]) -> tuple[list[ModelMessage], int, int]:
         st = self.state
         assert st.pinned is not None
-        request: list[ModelMessage] = [st.pinned, *st.messages]
+        head, rest = st.pinned, st.messages
+        if rest and isinstance(rest[0], ModelRequest):  # /3: a context that begins with user text
+            head = dataclasses.replace(st.pinned, parts=[*st.pinned.parts, *rest[0].parts])
+            rest = rest[1:]
+        request: list[ModelMessage] = [head, *rest]
         if notices:
             last = request[-1]
             assert isinstance(last, ModelRequest)
@@ -436,7 +522,7 @@ class PaperShellContext(AbstractCapability[Any]):
     def _carry(self, removed: ModelMessage) -> None:
         """paper-clm-shell/2: keep the rejection reason of an edit whose step is being rolled back (once)."""
         st = self.state
-        if self.settings.version != PAPER_V2 or not isinstance(removed, ModelResponse):
+        if self.settings.version not in FEEDBACK_VERSIONS or not isinstance(removed, ModelResponse):
             return
         for p in removed.parts:
             if isinstance(p, ToolCallPart) and p.tool_call_id in st.rejections:
@@ -536,7 +622,7 @@ class PaperShellContext(AbstractCapability[Any]):
                     "from_tokens": over,
                     "to_tokens": after,
                 }
-                if s.version == PAPER_V2:
+                if s.version in FEEDBACK_VERSIONS:
                     record["carried_rejections"] = len(st.carried)
                 self.record(record)
                 events.append(

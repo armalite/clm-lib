@@ -442,6 +442,12 @@ arm execution policy   which calls run, and in what order (not decided here); ta
 - **Concurrency:** one launcher at a time per launch directory (an `flock`). Sessions run one after another. The gate still counts open and other-process pending reservations.
 - **The paper arm's profiles:** `paper` (the default) and `readme`. These come from the source-priority review recorded in the results repository.
 
+**The paper arm's version 3 (2026-10-20, SPEC §38):**
+- **Blocks are parts, not messages:** each block is one message part whose kind, tool and call id the runtime owns, and the model edits only text. That is why a prose summary of a tool result can be accepted: the pairing that the provider requires is never reconstructed from what the model wrote.
+- **Pairs and order are structural:** the runtime keeps calls and results together and merges neighbours.
+- **The running reply is not in the file,** so no edit can break the call being executed.
+- **A context that begins with user text** is folded into the request that holds the pinned question when it is sent. This keeps the arm's position-based bookkeeping consistent with the history Pydantic AI holds.
+
 **Confirmation preparation (2026-10-19, SPEC §37):**
 - **The instance checker** keeps the rule's arithmetic and checks in one module that reads only fixtures. The one wording the rule leaves open, the evidence-size measure, is a named choice rather than a hidden default, and the manifest records it.
 - **The exposure report** reads only exported files. It derives turns from content the exports already hold, and leaves a figure absent rather than estimating it when the records cannot support it.
@@ -491,7 +497,8 @@ src/clm_lib/p015/
   spend.py        SpendGate p015-spend/1 (programme ceiling, block stop)
   launcher.py     p015-launch/1 (plan, run, status, stop, resolve, export)
   exposure.py     p015-exposure/1 (read-only exposure report over exports)
-  paper/          mirror.py (ctx-turn-mirror/1), shell.py (ShellSandbox), capability.py (PaperShellContext)
+  paper/          mirror.py (ctx-turn-mirror/1), parts.py (ctx-part-mirror/1, version 3), shell.py (ShellSandbox),
+                  capability.py (PaperShellContext)
   summary/        capability.py (TokenTailSummary, token-tail-p015/1)
   docthread/      the workload (SPEC §29); plain_agent.py and arms_offline.py for the two arms' offline sessions;
                   confirm.py, the confirmation-instance checker (p015-instance-check/1)

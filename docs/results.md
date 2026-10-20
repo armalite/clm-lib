@@ -112,6 +112,41 @@ Verification: `ruff check`, `ruff format --check` and `mypy src` are clean; **56
 
 Live phases: **still not run**. `ANTHROPIC_API_KEY` is still unset in the agent process (`doctor`). Live spend $0.00; cumulative $0.00 of $10.00.
 
+## Programme 015 paper arm version 3 (2026-10-20, offline; not evaluated)
+
+**What changed (SPEC §38):** `paper-clm-shell/3` gives the paper arm a part-level context file. A tool result can be rewritten as the model's own summary and stays the native result of its call; deleting a call deletes its result; notes become user text; and the runtime rebuilds valid provider messages. Every other paper rule is unchanged, and versions 1 and 2 are kept.
+
+**Verification:** offline, through the real runner, the Docker sandbox and the Anthropic adapter's request bodies.
+
+**Not established:** no live call has been made with it, and confirm1 remains a version 2 result.
+
+## Programme 015 confirmation `confirm1` (2026-10-19, COMPLETE)
+
+**What ran:** six fresh docthread instances (seeds 7407 and 7402 to 7405, and 7496, by the declared rule) × guarded-clm 0.2.0.dev1, `paper-clm-shell/2` and `token-tail-p015/1`. Each of the 18 sessions ran once, with `docthread-task/2`, the stop-on-first-incomplete-turn policy and the smoke-dev2 shared settings.
+
+**Exact-format points out of 10, per instance (guarded / paper / summary):**
+
+| instance 1 | 2 | 3 | 4 | 5 | 6 |
+| --- | --- | --- | --- | --- | --- |
+| 10 / 4 / 10 | 10 / 0 / 10 | 10 / 4 / 10 | 9 / 4 / 9 | 10 / 4 / 10 | 9 / 4 / 10 |
+
+**Every paper session ended at its context limit,** turn 4 on five instances and turn 1 on one. No mirror edit was accepted in any of them: twelve rejections, all correct under the documented format.
+
+**guarded-clm and the summary arm** completed every turn. They tie on five instances; the summary arm leads by one on the sixth. guarded-clm cost more on each instance: $6.40 against $2.96 in total.
+
+**The run:** 473 attempts, none failed or retried, no truncation.
+
+**Spend:** $10.873678, all confirmed, of the $40 block. Nothing is pending.
+
+**Interpretation:** one model and one task family; the six instances are the units. The `pages` instances come from a narrower part of their template because of the size filter. The paper result reflects this implementation's encoding and rules.
+
+**Details:** clm-lib-test-results `experiments/015-public-clm-comparison/confirm1-record.md`.
+
+**Findings review (2026-10-20):** clm-lib-test-results `confirm1-findings.md`.
+- **Cost:** the arithmetic difference between guarded-clm and the summary arm is in cache-write charges; its cause is not isolated.
+- **Accuracy:** no difference between those two arms is established.
+- **The paper arm:** the editing contract that rejected all its edits is mostly our representation, so the paper comparison is not reference-aligned for editing.
+
 ## Programme 015 confirmation preparation tools (2026-10-19, offline)
 
 **What was added (SPEC §37):**

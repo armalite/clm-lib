@@ -1,6 +1,6 @@
 # clm-lib: Technical Specification
 
-Version: 2.25 | 19 October 2026
+Version: 2.26 | 20 October 2026
 
 Repository: `clm-lib` | Python package: `clm_lib` | CLI: `clm-lib`
 
@@ -29,6 +29,7 @@ Version history:
 - 2.14: adds §26's W3 instances `w3-dev-3` and `w3-dev-4` (fresh seeds of the dev-1 and dev-2 schedules) and the replay's neutral `last_request` keys, for experiment 014's R1 matched development pilot.
 - 2.15: adds §27, shared foundations for programme 015 (opt-in, not yet wired into the runner): the native-tool transport `native-tools/1`, tool interfaces, versioned counters `session-counters/1`, the task-tool output cap `tool-output-cap/1` and accounted native dispatch. No arm, workload or live path uses them yet; §27.6 lists what is pending.
 - 2.16: adds §28, the programme 015 guarded-clm integration path (`clm_lib.p015`): opt-in, in a separate environment, verified offline with scripted and mocked models only.
+- 2.26: adds §38: `paper-clm-shell/3`, the paper arm with a part-level context mirror (`ctx-part-mirror/1`) that accepts model-written summaries of completed tool exchanges and rebuilds valid provider messages; versions 1 and 2 kept. Offline-verified; not evaluated live.
 - 2.25: adds §37: the confirmation-instance checker (`p015-instance-check/1`) and the read-only exposure report (`p015-exposure/1`); offline-verified, no confirmation instance generated.
 - 2.24: adds §36: `paper-clm-shell/2`, which keeps a rejected edit's reason through the rollback of its step (version 1 kept and the default); the paper arm's version is recorded and must be stated in live plans; the proposed confirmation configuration. Offline-verified.
 - 2.23: adds §35: the clarified docthread task (`docthread-task/2`; version 1 kept), versioned turn-ending policies (`p015-turn-endings/1` and `/2`, continuation after a main-model step or call limit, supported by guarded-clm only), and output-limit truncation as its own ending (`p015-truncation/1`); offline-verified.
@@ -1326,3 +1327,68 @@ A read-only report over a launch export or one exported session. It is printed, 
 **Verification:** `tests/p015/test_exposure.py` checks the totals against the recorded smoke evidence: the attempts, costs, peaks, characters, repeats, turns, edits, holds, refetches, rollbacks, summaries and wall times of smoke-dev2, and smoke-dev1's failures, retries and assumed cost. It also checks that the per-turn figures add up to the session's. The exports are left byte-identical.
 
 `tests/p015/test_instance_check.py` exercises the checks on the development instances and stubs, and checks the manifest for any answer.
+
+## 38. `paper-clm-shell/3`: a part-level context mirror (2026-10-20, offline-verified; not evaluated live)
+
+**Why:** in confirm1, every paper-arm edit was rejected (clm-lib-test-results 015 `confirm1-findings.md`). Most were large prose reductions of completed tool exchanges. Version 1's mirror could not accept them: it encodes each whole message as a block and rebuilds tool calls and results from text sections the model must reproduce exactly.
+
+**The mirror (`clm_lib.p015.paper.parts`, `ctx-part-mirror/1`):**
+- **What the file holds:** one block per message *part*, after the pinned first request and before the reply that holds the running command, which cannot change while it runs and is not shown.
+- **Headers:** `[[CTX_BLOCK n kind=user|assistant|tool_call|tool_result ...]]`. Only the number is read back; the other attributes are informative.
+- **Reasoning parts are not shown,** and stay with an unchanged reply.
+
+**The edit rules:**
+- **Rewriting a block:** a kept block (its header kept) may have its text rewritten. A **tool result may be replaced by any text, such as a summary, and stays the native result of its call.** A tool call's text must stay a JSON object.
+- **Deleting a block:** a block is deleted by removing it. A tool call and its result are deleted together, whichever half is removed. A changed block whose pair was deleted is refused.
+- **Adding a note:** a note is added under `[[CTX_BLOCK note]]`, or as text before the first header. It becomes user text in the next user or tool message, after that message's tool results.
+- **A note before every kept block opens the context.** When the context begins with user text, the arm sends it within the request that holds the pinned first question, after the question, so that two requests are never sent in a row. The pinned parts themselves are unchanged.
+- **Order:** kept blocks must stay in their order.
+
+**The rebuild:**
+- unchanged parts keep their objects, and a message with no change keeps its object;
+- a message left empty is dropped, and same-kind neighbours are merged (tool results first);
+- a changed or merged reply loses its reasoning parts, since a replayed signature must belong to the reply as written;
+- the result must end with a user or tool message, because the running reply follows it, and every tool call must keep its result next to it.
+
+Anything else is refused with a reason in the receipt, and nothing changes. No text is written by the host, and nothing deleted is restored.
+
+**Unchanged from version 2:**
+- the `bash` tool and sandbox;
+- the `fit` gate (now measured with the running reply included);
+- the receipts, and the rejection feedback carried through rollback;
+- the free-step rule, the reminder, the rollback unit, allowance and margin, the final over-limit request and terminal rule;
+- the budgets, task, scorer and shared settings.
+
+**Bookkeeping:**
+- messages rebuilt from this turn's messages stay rollable within the turn;
+- the instructions state the format with a small generic example.
+
+**Versions:**
+- `PaperSettings.version = "paper-clm-shell/3"` selects it, and `describe()` records the variant and the mirror version;
+- versions 1 and 2 are unchanged, and confirm1 remains a version 2 result;
+- live plans must state the version (§32.2).
+
+**Verification:** `tests/p015/test_paper_parts.py`.
+
+*The parser:*
+- an unchanged file keeps every object;
+- a tool result is replaced by prose and stays paired;
+- deleting either half of a pair deletes both and rebuilds;
+- notes, including an opening note, are placed correctly;
+- a whole file rewritten as one note is accepted;
+- reasoning is kept or dropped as stated;
+- invalid edits (unknown, duplicate, reordered, non-JSON call, emptied block, changed half of a deleted pair, ending on a reply) are refused with reasons;
+- the instructions name the format and hold a generic example.
+
+*Sessions through `ArmSession`, the real Docker sandbox and Pydantic AI's Anthropic adapter over an in-memory transport, so that the request bodies sent are checked:*
+- a model-written summary of two journal reads is accepted and reaches every later request as the native `tool_result` of its call;
+- a second turn deletes a pair and adds a note;
+- every request body alternates roles, and pairs each `tool_use` with its `tool_result`;
+- a rejected edit leaves the earlier context unchanged and says why.
+
+*Rollback and the launcher:*
+- a rejected edit's rollback still reports its reason;
+- rebuilt messages stay rollable;
+- an eight-turn launch with version 3 completes 10/10 with the scripted investigator.
+
+**Not established:** whether a real model's edits are accepted, and how the arm performs. No live call has been made with version 3.
