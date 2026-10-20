@@ -73,7 +73,7 @@ from pydantic_ai.usage import RequestUsage
 
 from ..budget import Ledger, ModelPrice, load_prices
 from .accounting import RETRY_VERSION, TRUNCATION_VERSION, LaunchStopped, SpendRefused
-from .arms import CONTINUATION_BLOCKER, ArmSession
+from .arms import CONTINUATION_BLOCKER, TOOLS_CONTINUATION_BLOCKER, ArmSession
 from .docthread.agent import Investigator
 from .docthread.fixture import DEV_INSTANCES, GENERATOR_VERSION, generate
 from .docthread.offline import SYNTHETIC_CHARS_PER_TOKEN, SyntheticUsageModel
@@ -90,6 +90,7 @@ from .live import (
     tagged_system_prompt,
 )
 from .paper.capability import PaperSettings
+from .papertools import TOOLS_VERSION, ToolsSettings
 from .provenance import library_provenance, tree_fingerprint, versions
 from .records import read_jsonl
 from .session import (
@@ -103,7 +104,9 @@ from .spend import SPEND_VERSION, SpendGate
 from .summary.capability import SummarySettings
 
 LAUNCH_VERSION = "p015-launch/1"
-ARMS = ("guarded_clm", "paper_clm_shell", "token_tail_p015")
+ARMS = ("guarded_clm", "paper_clm_shell", "token_tail_p015")  # the comparison set, and the default
+TOOLS_ARM = "paper_clm_tools"  # planned only by name (paper-clm-tools/1); not in the default set
+KNOWN_ARMS = (*ARMS, TOOLS_ARM)
 EXIT_OK, EXIT_LOCKED, EXIT_CONTRACT, EXIT_SPEND, EXIT_STOPPED, EXIT_USAGE = 0, 3, 4, 5, 6, 2
 TERMINAL = ("finished", "uncertain", "interrupted", "stopped", "abandoned")
 ARM_FAILURES = ("context_limit", "step_limit", "call_cap", "summary_call_cap", "model_behaviour")
@@ -147,6 +150,13 @@ def library_pin_problems(spec: dict[str, Any]) -> list[str]:
 
 
 # Rules the paper arm implements in code without a setting; a live plan must acknowledge each one explicitly.
+# paper_clm_tools: the settings a live plan must state (the code defaults are the structured-tools design's).
+TOOLS_LIVE_FIELDS = {
+    "version": f'"{TOOLS_VERSION}"',
+    "budget_tokens": "an integer (the enforced limit is this minus reserve_tokens)",
+    "max_retries": "an integer: rollback retries per session (0 ends the turn at the first over-limit request)",
+    "readouts": "true or false: whether every tool result ends with the context size",
+}
 PAPER_RULES_IMPLEMENTED = {
     "reminder_point": "limit_minus_reminder_before_tokens",
     "reminder_repeat": "once_per_crossing",
@@ -196,6 +206,11 @@ def live_spec_problems(spec: dict[str, Any]) -> list[str]:
                     f'paper_rules.{key} = "{rules[key]}" is not implemented (only "{implemented}"); '
                     "choosing it needs a reviewed change to the arm"
                 )
+    if TOOLS_ARM in arms:
+        tools = settings.get(TOOLS_ARM, {})
+        for key, allowed in TOOLS_LIVE_FIELDS.items():
+            if key not in tools:
+                out.append(f"arm_settings.{TOOLS_ARM}.{key} is not set ({allowed})")
     if "token_tail_p015" in arms and "summary_call_cap" not in settings.get("token_tail_p015", {}):
         out.append(
             "arm_settings.token_tail_p015.summary_call_cap is not set (the summariser allowance per turn)"
@@ -251,9 +266,8 @@ def version_problems(spec: dict[str, Any]) -> list[str]:
     elif endings == TURN_ENDINGS_V2:
         for arm in spec.get("arms", ARMS):
             if arm not in CONTINUATION_ARMS:
-                out.append(
-                    f"turn_endings {endings} is not supported by {arm}: {CONTINUATION_BLOCKER}"
-                )
+                blocker = TOOLS_CONTINUATION_BLOCKER if arm == TOOLS_ARM else CONTINUATION_BLOCKER
+                out.append(f"turn_endings {endings} is not supported by {arm}: {blocker}")
     return out
 
 
@@ -302,7 +316,7 @@ def plan(spec: dict[str, Any], launch_dir: Path) -> dict[str, Any]:
         )
     arms = list(spec.get("arms", ARMS))
     for arm in arms:
-        if arm not in ARMS:
+        if arm not in KNOWN_ARMS:
             raise ValueError(f"unknown arm {arm!r}")
     instances = spec["instances"]
     defs = {}
@@ -542,9 +556,8 @@ def run_session(
                            p.get("cache_write_1h", 4.0), p.get("cache_read", 0.2), p.get("output", 10.0),
                            "offline placeholder", "offline")  # fmt: skip
         live_ok = False
-        policy = scripted.get("policies", {}).get(
-            arm, "keep" if arm != "token_tail_p015" else "none"
-        )
+        default_policy = {"token_tail_p015": "none", TOOLS_ARM: "tools_keep"}.get(arm, "keep")
+        policy = scripted.get("policies", {}).get(arm, default_policy)
         agent: Any = (
             Investigator(fx, policy, task_version=task_version)
             if arm == "guarded_clm"
@@ -576,6 +589,8 @@ def run_session(
         runner = GuardedSession(model, settings=GuardedSettings(**settings), **common)
     elif arm == "paper_clm_shell":
         runner = ArmSession(arm, model, paper=PaperSettings(**settings), **common)
+    elif arm == TOOLS_ARM:
+        runner = ArmSession(arm, model, tools=ToolsSettings(**settings), **common)
     else:
         runner = ArmSession(arm, model, summary=SummarySettings(**settings), **common)
     runner.recorder.write_meta(launch={"launch_id": contract["launch_id"], "session_id": sid,

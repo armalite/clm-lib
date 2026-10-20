@@ -385,7 +385,7 @@ arm execution policy   which calls run, and in what order (not decided here); ta
 - one `bash` tool, with one command per turn;
 - the context mirrored to a file, with one block per message;
 - edit-only turns (the mirror changed, nothing printed, exit 0) are free for `max_steps` but count toward `lm_call_cap`;
-- neither source describes `context_read`/`context_apply`, so `paper_clm_tools` is this project's adaptation.
+- neither source describes `context_read`/`context_apply`, so `paper_clm_tools` is this project's adaptation. **Update (2026-10-20):** it is implemented (SPEC §39), following an existing structured-tools implementation of the design as an engineering reference (below).
 
 **Library-first sequencing (2026-10-15):** programme 015's lite arms will use the separate guarded-clm library, imported at a pinned version (SPEC §27.7). clm-lib keeps the harness concerns only: the paper arms' transport, counters, the output cap, the runner, the sandbox, accounting and exports. It does not copy the library's logic. **Update (2026-10-15):** the library is a Pydantic AI capability (`clm_context()`). Hosting it is clm-lib's integration work (decisions G1 to G8 below, SPEC §28), tracked in clm-lib and the results repository, not in the library's plan.
 
@@ -499,6 +499,7 @@ src/clm_lib/p015/
   exposure.py     p015-exposure/1 (read-only exposure report over exports)
   paper/          mirror.py (ctx-turn-mirror/1), parts.py (ctx-part-mirror/1, version 3), shell.py (ShellSandbox),
                   capability.py (PaperShellContext)
+  papertools.py   PaperToolsContext, paper-clm-tools/1 (context_read, context_apply; SPEC §39)
   summary/        capability.py (TokenTailSummary, token-tail-p015/1)
   docthread/      the workload (SPEC §29); plain_agent.py and arms_offline.py for the two arms' offline sessions;
                   confirm.py, the confirmation-instance checker (p015-instance-check/1)
@@ -513,6 +514,31 @@ UV_PROJECT_ENVIRONMENT=.venv-p015 uv sync --no-config --frozen --no-dev --group 
 .venv-p015/bin/python -m clm_lib.p015.docthread.arms_offline OUT_DIR --matrix
 ```
 
+
+## Programme 015 `paper_clm_tools` (2026-10-20)
+
+**The arm (SPEC §39):** `PaperToolsContext` in `p015/papertools.py`, one Pydantic AI capability. It is hosted by `ArmSession` like the other two arms, with no sandbox. Its parts:
+- **The block view:** `context_view()` gives one block per non-pinned message part, numbered in order. The runtime keeps each block's message and part index, kind, tool name and call id.
+- **The operations:** `apply_edit()` validates a whole set against that view (`_Plan`, one method per operation), applies it to copies, and rebuilds the messages with `_reassemble()`. The rebuild drops emptied messages, merges same-kind neighbours, folds a trailing request into the request being built, and checks that the result starts with a request and leaves no new pairing problem. Only after every check does `in_place=True` change the framework's own final request.
+- **Staging:** `context_apply` stages a set against the history plus a placeholder request. The commit, in the next `before_model_request`, re-applies it and re-checks the fit.
+- **Rollback:** `undo_latest()` undoes the newest reply and its results; `recover()` repeats it until the margin is free.
+
+**The hook order in `before_model_request`:**
+1. the step check (free-step receipts, the step and call limits, the finalize notice);
+2. the commit;
+3. the limit (rollback to the margin, per-session retries, the final turn, or `ArmContextLimit`);
+4. the readouts and the reminder;
+5. a second limit check on the request as sent.
+
+**State:** per run (one user turn), the staged set, steps, calls and pending edit-only call ids. Per session (the capability's lifetime, one conversation), the retries, the final-turn flag, the reminder flag and the totals. Notices are written into the request, so Pydantic AI keeps them in the history like any other part; the arm keeps no copy of the conversation.
+
+**Engineering reference and departures:** the mechanics (operations, pinning, pairing, rebuild, staging and commit, rollback to the margin, per-session retries, the final turn, readouts, the reminder, the free-step rule and the finalize notice) follow an existing structured-tools implementation. The code is written for clm-lib; none of it is copied. The deliberate departures from it are listed in clm-lib-test-results 015 `paper-clm-tools.md`: our own wording, clm-lib's size estimator, the 015 workload and settings, one capability instead of two, our trace records, and no end-of-session rule for a reported input over the budget. Where its settings differ from `paper_clm_shell`'s, both are kept as they are and the differences are recorded there; nothing was taken from the shell arm's failed runs.
+
+**Integration:**
+- **The launcher:** accepts `paper_clm_tools` only when named (`KNOWN_ARMS`). `ARMS`, the default comparison set, is unchanged.
+- **Live plans** must state the version, budget, retries and readouts.
+- **The exposure report** counts the arm's notices from trace records, because its notices persist in the history.
+- **The scripted investigator** gains the `tools_tidy` and `tools_keep` policies.
 
 ## Design choices
 
@@ -531,3 +557,4 @@ UV_PROJECT_ENVIRONMENT=.venv-p015 uv sync --no-config --frozen --no-dev --group 
 4. **Model choice.** `claude-opus-5-5` (effort `low`) follows current Anthropic guidance. It's configurable, and it was used for every live run.
 5. **Post-hoc scorer correction (score/2).** After the comparison, `required_value` also accepts `<identifier>=<value>`, the form used in the authoritative change records. score/1 results are preserved in each run, and `report` shows both. This was prompted by one held-out answer and is disclosed in results.md.
 6. **Native tool calls for programme 015.** §3.3 avoids native tool calls. Programme 015's opt-in transport (`native-tools/1`, SPEC §27) uses them, with explicit pairing validation. Historical configurations still use only the single-action protocol.
+7. **`paper_clm_tools`'s recovery rules differ from `paper_clm_shell`'s** (SPEC §39). It rolls back to a 2,048-token margin, counts 6 retries per session, then gives a stated final turn, keeps its notices in the history and adds size readouts. The shell arm's paper profile rolls back the last step, counts 6 per turn, then allows one final over-limit request, and its notices are transient. Each arm keeps its own design's rules; the differences are recorded in clm-lib-test-results 015 `paper-clm-tools.md`.

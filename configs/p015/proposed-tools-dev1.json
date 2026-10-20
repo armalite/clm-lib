@@ -1,0 +1,53 @@
+{
+ "note": "PROPOSED, NOT AUTHORISED, NOT RUN (2026-10-20). Programme 015 development validation of paper-clm-tools/1: one paper_clm_tools session, eight turns, docthread-dev-1, with the dev-v3a shared settings. A development check of the structured-tools interface, not a comparison. Running it needs the maintainer's explicit authorisation (a proposed block of at most USD 4) and an authorisation file.",
+ "launch_id": "dev-tools1",
+ "experiment": "015",
+ "mode": "live",
+ "instances": [
+  "docthread-dev-1"
+ ],
+ "arms": [
+  "paper_clm_tools"
+ ],
+ "questions": 8,
+ "ledger": "runs/ledger.json",
+ "authorisation": "runs/p015-dev-tools1-authorisation.json",
+ "model": {
+  "model": "claude-sonnet-5",
+  "thinking": "adaptive",
+  "effort": "high",
+  "max_tokens": 8192,
+  "cache_ttl": "5m",
+  "cache_breakpoints": [
+   "automatic",
+   "tool_definitions",
+   "instructions"
+  ],
+  "max_retries": 2,
+  "timeout_s": 600.0,
+  "session_tag": true
+ },
+ "retry_policy": "p015-retry/1",
+ "task_version": "docthread-task/2",
+ "turn_endings": "p015-turn-endings/1",
+ "arm_settings": {
+  "paper_clm_tools": {
+   "version": "paper-clm-tools/1",
+   "budget_tokens": 32000,
+   "reserve_tokens": 2048,
+   "max_steps": 60,
+   "call_cap": 144,
+   "max_retries": 6,
+   "readouts": true,
+   "max_output_chars": 8000,
+   "finalize_steps": 3
+  }
+ },
+ "settings_status": {
+  "chosen": [
+   "paper-clm-tools/1 with the structured-tools design's settings: limit 29,952, rollback to a 2,048-token margin, 6 retries per session, then a final turn; readouts on; 60 steps and 144 calls per turn",
+   "shared dev-v3a model, cache, retry and limit settings; docthread-task/2; p015-turn-endings/1; p015-truncation/1"
+  ],
+  "authorisation": "not given"
+ }
+}

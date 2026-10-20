@@ -68,6 +68,9 @@ NOTICE_PATTERNS: dict[str, dict[str, str]] = {
     "token_tail_p015": {
         "finish_now": "step(s) left",
     },
+    # paper_clm_tools keeps its notices in the history, so matching request text would count each one again on
+    # every later call; its notices are counted from its trace records instead (`management`).
+    "paper_clm_tools": {},
 }
 
 
@@ -165,9 +168,11 @@ def session_report(run_dir: Path, *, planned_turns: int | None = None,
             if m:
                 estimates[lc] = int(m.group(1).replace(",", ""))
     else:
-        kind = {"paper_clm_shell": "paper_request", "token_tail_p015": "summary_arm_request"}.get(
-            arm
-        )
+        kind = {
+            "paper_clm_shell": "paper_request",
+            "paper_clm_tools": "tools_request",
+            "token_tail_p015": "summary_arm_request",
+        }.get(arm)
         recs = [r for r in trace if r.get("type") == kind]
         for lc, r in zip(sorted(first_attempt), recs, strict=False):
             estimates[lc] = int(r["estimated_tokens"])
@@ -210,6 +215,17 @@ def session_report(run_dir: Path, *, planned_turns: int | None = None,
                       "rollback_events": len(rb), "rollbacks": sum(int(r.get("units", 0)) for r in rb),
                       "carried_rejections": _sum(r.get("carried_rejections") for r in rb),
                       "over_limit_requests": types.get("paper_over_limit", 0),
+                      "held_outputs": None, "summaries": None}  # fmt: skip
+    elif arm == "paper_clm_tools":
+        staged = [r for r in trace if r.get("type") == "tools_edit"]
+        rb = [r for r in trace if r.get("type") == "tools_rollback"]
+        management = {"edits_staged": sum(1 for r in staged if r.get("status") == "staged"),
+                      "edits_rejected_at_staging": sum(1 for r in staged if r.get("status") == "rejected"),
+                      "edits_committed": types.get("tools_commit", 0),
+                      "edits_rejected_at_commit": types.get("tools_commit_rejected", 0),
+                      "rollback_events": len(rb), "rollbacks": _sum(r.get("steps_undone") for r in rb),
+                      "final_turns_given": sum(1 for r in rb if r.get("final_turn")),
+                      "reminders": types.get("tools_reminder", 0),
                       "held_outputs": None, "summaries": None}  # fmt: skip
     elif arm == "token_tail_p015":
         management = {"pressure_triggers": types.get("pressure", 0),  # the arm summarises; the model is shown nothing

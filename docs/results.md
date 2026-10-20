@@ -112,6 +112,33 @@ Verification: `ruff check`, `ruff format --check` and `mypy src` are clean; **56
 
 Live phases: **still not run**. `ANTHROPIC_API_KEY` is still unset in the agent process (`doctor`). Live spend $0.00; cumulative $0.00 of $10.00.
 
+## Programme 015 `paper_clm_tools` (2026-10-20, offline; not evaluated)
+
+**What was built (SPEC §39):** the structured-tools paper-style arm, `paper-clm-tools/1`. The model manages its context through `context_read` and `context_apply`, with operations to replace, delete, substitute and insert, staged and applied all or nothing. Over the limit, it rolls back to a margin, with per-session retries and then a final turn. It is a separate arm, not a version of `paper_clm_shell`, whose versions are unchanged. The other arms, the task and the scorer are unchanged.
+
+**Verification:**
+- **The new tests:** 33, in `tests/p015/test_paper_tools.py`. They run sessions through the real runner, Pydantic AI's Anthropic adapter over an in-memory transport, the launcher and the export.
+- **The p015 suite:** 284 passed, with network blocked.
+- **The historical suite:** 349 passed, unchanged.
+- **Lint and types:** ruff, format and mypy are clean in both environments.
+
+No provider call was made, and nothing was spent.
+
+**Details:** the specification, the differences from the structured-tools reference and from the shell arm, the fidelity limitations, the offline evidence and a proposed (unauthorised) one-session live validation are in clm-lib-test-results `experiments/015-public-clm-comparison/paper-clm-tools.md`.
+
+## Programme 015 live validation `dev-v3a` of paper arm version 3 (2026-10-20)
+
+**What ran:** one session of `paper-clm-shell/3` on `docthread-dev-1` (`docthread-task/2`, the shared settings).
+
+**The result:** the editing behaviour was **not demonstrated.**
+- **The one edit:** the model wrote a 91.6% prose reduction of its context on the final over-limit request.
+- **Why it was rejected:** the model renumbered the kept blocks' headers ("there is no block 48; the file had blocks 1 to 47"). The rejection was correct under the documented rule.
+- **The ending:** the turn ended at its context limit in turn 4, scoring 4/10.
+
+**Spend:** $0.247759, all confirmed.
+
+**Details:** clm-lib-test-results `experiments/015-public-clm-comparison/dev-v3a-record.md`.
+
 ## Programme 015 paper arm version 3 (2026-10-20, offline; not evaluated)
 
 **What changed (SPEC §38):** `paper-clm-shell/3` gives the paper arm a part-level context file. A tool result can be rewritten as the model's own summary and stays the native result of its call; deleting a call deletes its result; notes become user text; and the runtime rebuilds valid provider messages. Every other paper rule is unchanged, and versions 1 and 2 are kept.

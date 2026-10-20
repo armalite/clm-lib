@@ -1,6 +1,6 @@
 # clm-lib: Technical Specification
 
-Version: 2.26 | 20 October 2026
+Version: 2.27 | 20 October 2026
 
 Repository: `clm-lib` | Python package: `clm_lib` | CLI: `clm-lib`
 
@@ -29,6 +29,7 @@ Version history:
 - 2.14: adds §26's W3 instances `w3-dev-3` and `w3-dev-4` (fresh seeds of the dev-1 and dev-2 schedules) and the replay's neutral `last_request` keys, for experiment 014's R1 matched development pilot.
 - 2.15: adds §27, shared foundations for programme 015 (opt-in, not yet wired into the runner): the native-tool transport `native-tools/1`, tool interfaces, versioned counters `session-counters/1`, the task-tool output cap `tool-output-cap/1` and accounted native dispatch. No arm, workload or live path uses them yet; §27.6 lists what is pending.
 - 2.16: adds §28, the programme 015 guarded-clm integration path (`clm_lib.p015`): opt-in, in a separate environment, verified offline with scripted and mocked models only.
+- 2.27: adds §39: `paper_clm_tools` (`paper-clm-tools/1`), the structured-tools adaptation of model-managed context (`context_read`, `context_apply`), as a separately named arm on the shared runner; the other arms, the task and the scorer unchanged. Offline-verified; not evaluated live.
 - 2.26: adds §38: `paper-clm-shell/3`, the paper arm with a part-level context mirror (`ctx-part-mirror/1`) that accepts model-written summaries of completed tool exchanges and rebuilds valid provider messages; versions 1 and 2 kept. Offline-verified; not evaluated live.
 - 2.25: adds §37: the confirmation-instance checker (`p015-instance-check/1`) and the read-only exposure report (`p015-exposure/1`); offline-verified, no confirmation instance generated.
 - 2.24: adds §36: `paper-clm-shell/2`, which keeps a rejected edit's reason through the rollback of its step (version 1 kept and the default); the paper arm's version is recorded and must be stated in live plans; the proposed confirmation configuration. Offline-verified.
@@ -1392,3 +1393,82 @@ Anything else is refused with a reason in the receipt, and nothing changes. No t
 - an eight-turn launch with version 3 completes 10/10 with the scripted investigator.
 
 **Not established:** whether a real model's edits are accepted, and how the arm performs. No live call has been made with version 3.
+
+## 39. `paper_clm_tools` (`paper-clm-tools/1`): structured context tools (2026-10-20, offline-verified; not evaluated live)
+
+**What it is:** the second paper-style arm planned in §27, `paper_clm_tools`. The model manages its own context, as in the paper, but through two structured tools rather than a shell and a file. **It is a structured-tools adaptation, not a reproduction of the paper's shell interface.** Its mechanics follow an existing structured-tools implementation of the same design, used as an engineering reference. The wording the model sees is this project's own. `paper_clm_shell` (all versions) is unchanged, and the two designs are not combined.
+
+**The context (`clm_lib.p015.papertools`):**
+- **Blocks:** every message part after the pinned ones is one numbered block: user text, notes, the model's reply text, a tool call (its arguments as JSON) or a tool result. The runtime keeps each block's kind, tool name and call id; the model changes only text.
+- **Pinned:** the system prompt, the first user message and every rollback note. They are not shown as blocks and cannot be changed.
+- **`context_read(from_block, to_block, page)`:** the blocks as text (`=== block n | role ===`), paged to the 8,000-character tool-output cap.
+- **`context_apply(ops)`:** one set of operations per step, checked at once against the context including the calling reply. A second `context_apply` in the same step is refused. Accepted sets are staged and applied, all or nothing, when the next request is built.
+
+**The operations:**
+- `replace_text` (text found exactly once in a block);
+- `replace_block` (a block's whole text; a tool result stays the native result of its call);
+- `delete` (blocks; a call and its result go together; the current step's calls cannot be deleted);
+- `substitute` (a regular expression over the listed blocks or, without a list, every text block at staging);
+- `insert` (user text `[role]\ntext` after block n, placed in the request that holds or follows it, after that request's tool results).
+
+**The rebuild:**
+- emptied messages are dropped and same-kind neighbours merged;
+- the request being built is kept as the framework's own object;
+- the result must start with a request and may not leave a call without its result.
+
+Invalid sets are refused with a reason (`REJECTED: ... Your context is unchanged.`). Accepted ones get a receipt starting `Accepted:`, with the projected size. The `fit` gate checks the result against the limit at staging and again at the commit; a set that no longer applies at the commit is reported in a note, and nothing changes.
+
+**The limit and recovery:**
+- **The limit:** the budget minus the 2,048-token reserve (32,000 → 29,952), checked on each request as sent (readouts and notes included), estimated with `p015-ratio-estimate/1`.
+- **Over the limit:** the newest replies and their tool results are undone until 2,048 tokens are free. A pinned note names the calls whose output did not fit and asks for room.
+- **Retries:** up to `max_retries` (6) times **per session**, across turns; user messages are never removed.
+- **Then:** once the retries are used, the note tells the model that this is its last turn and asks for its final answer, and any later over-limit request in the session ends the turn (`context_limit`). With `max_retries=0`, the first over-limit request ends the turn.
+
+**Notices,** kept in the history as user text (rollback notes pinned, the others editable):
+- each tool result in the request ends with `[context: about N of L tokens]` (`readouts`);
+- one reminder when the context is within 2,048 tokens of the limit, re-armed below it;
+- the finalize notice when at most 3 steps or calls are left.
+
+**Steps:** 60 task steps and 144 model calls per user turn. A response whose only calls are `context_apply`, every one accepted, is a free step. `context_read` and a rejected edit are task steps.
+
+**Integration:**
+- **The runner:** `ArmSession("paper_clm_tools", ..., tools=ToolsSettings(...))`, on the shared runner with the shared accounting, recorder and export.
+- **The launcher:** accepts the arm only when it is named. The default arm set (`ARMS`) is unchanged.
+- **Live plans** must state `arm_settings.paper_clm_tools.version`, `budget_tokens`, `max_retries` and `readouts` (§32.2).
+- **Continuation** after a limit-ended turn is refused (`p015-turn-endings/2` is not supported).
+- **The exposure report** counts its edits, rollbacks and reminders from trace records, because its notices persist in the history.
+- **The scripted investigator** has `tools_tidy` and `tools_keep` policies (and `bad_ops`) for offline checks.
+
+**Verification:** `tests/p015/test_paper_tools.py` (33 tests).
+
+*The operations, on synthetic messages:*
+- the block view and pinning;
+- a summary replacing a tool result stays paired;
+- deleting either half deletes both and merges neighbours;
+- `replace_text`, `substitute` and `insert`;
+- a whole history replaced by one note;
+- in-place change of the final request only when asked;
+- twelve kinds of invalid sets are refused with reasons and change nothing;
+- the current step's calls cannot be deleted;
+- paging and rollback;
+- the instructions state the mechanism and settings only;
+- a staged set that no longer applies at the commit is reported.
+
+*Sessions through `ArmSession` and Pydantic AI's Anthropic adapter over an in-memory transport:*
+- a replacement and a deletion reach the next request and the next turn, as do a later deletion and an inserted note;
+- every request body alternates roles and pairs each `tool_use` with its `tool_result`;
+- a rejected edit leaves the earlier context unchanged and is a task step;
+- a second edit in one step is refused;
+- `context_read` pages the current view.
+
+*Pressure and recovery (scripted model, small budget, `max_retries=1`):* in turn 1 the arm rolls back to the margin, the model's deletion is applied and the turn completes. In turn 2 the model is told it has no retries left and answers. In turn 3 the over-limit request ends the turn. Every request sent stayed within the limit. With no retries, the first over-limit request ends the turn. The step limit gives the finalize notice.
+
+*The launcher:*
+- eight-turn launches with `tools_keep` and `tools_tidy` complete 10/10;
+- every attempt is accounted;
+- the export verifies, and the exposure report counts the commits;
+- live plans must state the settings;
+- continuation is refused;
+- the proposed one-session live validation (`configs/p015/proposed-tools-dev1.json`, not authorised) passes the live-plan checks, and a scripted copy of it plans, runs and completes.
+
+**Not established:** how a real model uses the tools, whether its edits are accepted, and how the arm performs. No live call has been made with this arm.

@@ -1,4 +1,5 @@
-"""`ArmSession`: the p015 runner path for the paper and summary arms (`paper_clm_shell`, `token_tail_p015`).
+"""`ArmSession`: the p015 runner path for the paper and summary arms (`paper_clm_shell`, `paper_clm_tools`,
+`token_tail_p015`).
 
 It mirrors `GuardedSession` (which hosts guarded-clm and is unchanged): one Pydantic AI `Agent` per session, the
 same shared task tools through the same bridge, the same accounting wrapper, recorder and export, the same system
@@ -6,6 +7,8 @@ prompt and output type, one `agent.run` per user turn with the previous turn's `
 same `conversation_id`. Only the context capability differs:
 
 - `paper_clm_shell`: `PaperShellContext`, with its `bash` tool and a per-session sandbox (`paper.shell`);
+- `paper_clm_tools`: `PaperToolsContext` (`papertools`), with its `context_read` and `context_apply` tools and no
+  sandbox of its own;
 - `token_tail_p015`: `TokenTailSummary`, whose summariser calls go through a second accounting wrapper (category
   `summary`) sharing the ledger, the recorder and the attempt numbering.
 
@@ -47,14 +50,15 @@ from .arm_errors import ArmContextLimit, ArmStepLimit, SummaryCallCap
 from .loop import SessionLoop
 from .paper.capability import PaperSettings, PaperShellContext
 from .paper.shell import ShellSandbox
+from .papertools import EDIT_TOOL, READ_TOOL, PaperToolsContext, ToolsSettings
 from .provenance import harness_provenance, versions
 from .records import SessionRecorder
 from .session import ContinuationUnsupported, TurnOutcome
 from .summary.capability import SummarySettings, TokenTailSummary
 from .tools import bridge
 
-Arm = Literal["paper_clm_shell", "token_tail_p015"]
-ARMS: tuple[Arm, ...] = ("paper_clm_shell", "token_tail_p015")
+Arm = Literal["paper_clm_shell", "paper_clm_tools", "token_tail_p015"]
+ARMS: tuple[Arm, ...] = ("paper_clm_shell", "paper_clm_tools", "token_tail_p015")
 
 
 # Why the paper and summary arms cannot continue after a limit-ended turn (checked offline, 2026-10-19).
@@ -64,6 +68,11 @@ CONTINUATION_BLOCKER = (
     "so the next turn's question follows a tool-result request; Pydantic AI merges those two requests when it next "
     "cleans the history, and the arm's next turn then loses or repeats messages (or, from the earlier completed "
     "turn's history, never sees the new question). Continuing needs a reviewed change to the arm's bookkeeping."
+)
+# paper_clm_tools keeps no copy of its own, but continuing after a limit-ended turn is not part of its version 1.
+TOOLS_CONTINUATION_BLOCKER = (
+    "continuing after a limit-ended turn is not part of paper-clm-tools/1; it has not been specified or "
+    "verified"
 )
 
 
@@ -79,6 +88,7 @@ class ArmSession:
         price: ModelPrice | None,
         paper: PaperSettings | None = None,
         summary: SummarySettings | None = None,
+        tools: ToolsSettings | None = None,
         sandbox_image: str = "python:3.12-slim",
         system_prompt: str | Sequence[str] = (),
         task_tools: Sequence[TaskTool] = (),
@@ -106,7 +116,7 @@ class ArmSession:
             "retry": retry,
         }  # fmt: skip
         self.model = AccountedModel(model, category="main", **accounting)
-        self.capability: PaperShellContext | TokenTailSummary
+        self.capability: PaperShellContext | PaperToolsContext | TokenTailSummary
         if arm == "paper_clm_shell":
             settings = paper or PaperSettings()
             box = run_dir / "sandbox"
@@ -116,6 +126,10 @@ class ArmSession:
                                    timeout_s=settings.command_timeout_s)  # fmt: skip
             self.capability = PaperShellContext(sandbox, settings, on_record=self.recorder.trace)
             self.cap = settings.cap
+        elif arm == "paper_clm_tools":
+            tsettings = tools or ToolsSettings()
+            self.capability = PaperToolsContext(tsettings, on_record=self.recorder.trace)
+            self.cap = tsettings.cap
         elif arm == "token_tail_p015":
             ssettings = summary or SummarySettings()
             self.summary_model = AccountedModel(model, category="summary", **accounting)
@@ -149,7 +163,10 @@ class ArmSession:
             model={"system": model.system, "model_name": model.model_name},
             price=dataclasses.asdict(price) if price is not None else None,
             task_tools=[t.spec.to_api() for t in task_tools],
-            framework_tools=["bash"] if arm == "paper_clm_shell" else [],
+            framework_tools={
+                "paper_clm_shell": ["bash"],
+                "paper_clm_tools": [READ_TOOL, EDIT_TOOL],
+            }.get(arm, []),
             provenance={"harness": harness_provenance(), "versions": versions()},
         )
 
@@ -193,6 +210,19 @@ class ArmSession:
                 "edits_rejected_total": p.edits_rejected,
                 "rollbacks_total": p.rollbacks_total,
             }
+        if isinstance(cap, PaperToolsContext):
+            t = cap.state
+            return {
+                "steps": t.steps,
+                "free_steps": t.free_steps,
+                "calls": t.calls,
+                "retries_used": t.retries,
+                "final_turn": t.final_turn,
+                "edits_staged_total": t.edits_staged,
+                "edits_committed_total": t.edits_committed,
+                "edits_rejected_total": t.edits_rejected,
+                "rollbacks_total": t.rollbacks_total,
+            }
         s = cap.state
         return {
             "steps": s.steps,
@@ -209,8 +239,11 @@ class ArmSession:
         )
 
     def continue_after_limit(self) -> int:
-        """Not supported (p015-turn-endings/2): see `CONTINUATION_BLOCKER`."""
-        raise ContinuationUnsupported(f"{self.arm}: {CONTINUATION_BLOCKER}")
+        """Not supported (p015-turn-endings/2): see `CONTINUATION_BLOCKER` (`TOOLS_CONTINUATION_BLOCKER`)."""
+        blocker = (
+            TOOLS_CONTINUATION_BLOCKER if self.arm == "paper_clm_tools" else CONTINUATION_BLOCKER
+        )
+        raise ContinuationUnsupported(f"{self.arm}: {blocker}")
 
     def __enter__(self) -> ArmSession:
         return self

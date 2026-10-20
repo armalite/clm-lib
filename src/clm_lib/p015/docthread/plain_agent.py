@@ -13,6 +13,11 @@ Policies for the paper arm (what it does with the mirror file, through `bash`):
 - `never` (stress): never edits, so the arm's rollback and over-limit handling are exercised.
 `bad_edits` lists commands used, in order, in place of the first edits (to exercise the edit gate's rejections).
 
+Policies for `paper_clm_tools` (through `context_apply`; its notices start `[context manager]`):
+- `tools_tidy`: before each read, an edit-only step deleting every earlier tool call (and so its result);
+- `tools_keep`: the same edit, only after a rollback note, the size reminder or an edit that did not take effect.
+`bad_ops` lists operation lists used, in order, in place of the first edits.
+
 For the summary arm the policy is `none` (it has no context tool). It also plays the summariser: a request whose
 system text is the summariser's gets a deterministic extractive summary (the calls made and the answers given, never
 other tool-output facts), within the requested length, unless `summary_faults` says otherwise.
@@ -36,13 +41,14 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from ..paper.shell import MIRROR_FILE
+from ..papertools import EDIT_TOOL, NOTE, OVERFLOW, context_view
 from ..summary.capability import SUMMARY_SYSTEM_P015
 from .agent import Call, _parse_key, plan
 from .fixture import Fixture, mentions
 from .scoring import answer_block, true_answers
 from .task import TASK_V1, Question, questions
 
-PlainPolicy = Literal["tidy", "keep", "never", "none"]
+PlainPolicy = Literal["tidy", "keep", "never", "none", "tools_tidy", "tools_keep"]
 
 # Deletes every earlier call block and its result block; keeps user blocks, final answers and the last block (the
 # running command). Prints nothing, so a successful run is an edit-only step.
@@ -110,9 +116,11 @@ class PlainInvestigator:
         bad_edits: list[str] | None = None,
         summary_faults: dict[int, str] | None = None,
         task_version: str = TASK_V1,
+        bad_ops: list[list[dict[str, Any]]] | None = None,
     ) -> None:
         self.fx, self.policy, self.overrides = fx, policy, overrides or {}
         self.bad_edits = list(bad_edits or [])
+        self.bad_ops = list(bad_ops or [])
         self.summary_faults = (
             summary_faults or {}
         )  # summariser call number (from 1) -> "too_long" | "empty"
@@ -170,9 +178,17 @@ class PlainInvestigator:
                 None,
                 False,
             )
-        notices = "\n".join(self._notices(messages))
-        rolled = "rolled back" in notices
-        pressed = rolled or "only about" in notices or "over the" in notices or "within" in notices
+        tools = self.policy.startswith("tools_")
+        if tools:
+            notes = "\n".join(self._tools_notices(messages))
+            rolled = OVERFLOW in notes
+            pressed = rolled or "below your" in notes or "did not take effect" in notes
+        else:
+            notices = "\n".join(self._notices(messages))
+            rolled = "rolled back" in notices
+            pressed = (
+                rolled or "only about" in notices or "over the" in notices or "within" in notices
+            )
         answered = {p.tool_call_id for p in messages[-1].parts if isinstance(p, ToolReturnPart)}
         if self.last_id is not None and self.last_id in answered:
             if self.last_kind == "read":
@@ -184,9 +200,10 @@ class PlainInvestigator:
             pass  # an edit whose result was removed by its own edit cannot happen (the running block stays)
         previous = self.last_kind
         self.last_id, self.last_kind = None, None
-        wants_edit = self.policy == "tidy" or (self.policy == "keep" and pressed)
+        mode = self.policy.removeprefix("tools_")
+        wants_edit = mode == "tidy" or (mode == "keep" and pressed)
         if wants_edit and previous != "edit" and self._has_old_results(messages):
-            return self._edit()
+            return self._tools_edit(messages) if tools else self._edit()
         turn = self.questions[number - 1]
         calls = self.plans.get(number)
         if calls is None:
@@ -204,6 +221,23 @@ class PlainInvestigator:
         command = self.bad_edits.pop(0) if self.bad_edits else TIDY_COMMAND
         self.last_id, self.last_kind = f"b{self.calls}", "edit"
         return ModelResponse(parts=[ToolCallPart("bash", {"command": command}, self.last_id)])
+
+    @staticmethod
+    def _tools_notices(messages: list[ModelMessage]) -> list[str]:
+        return [
+            str(p.content)
+            for p in messages[-1].parts
+            if isinstance(p, UserPromptPart) and str(p.content).startswith(NOTE)
+        ]
+
+    def _tools_edit(self, messages: list[ModelMessage]) -> ModelResponse:
+        # Block numbers of the request seen here are those the arm stages against: the calling reply comes after.
+        self.calls += 1
+        ops = self.bad_ops.pop(0) if self.bad_ops else [
+            {"op": "delete", "blocks": [b.number for b in context_view(messages) if b.kind == "tool_call"]}
+        ]  # fmt: skip
+        self.last_id, self.last_kind = f"e{self.calls}", "edit"
+        return ModelResponse(parts=[ToolCallPart(EDIT_TOOL, {"ops": ops}, self.last_id)])
 
     def _read(self, call: Call) -> ModelResponse:
         self.calls += 1
