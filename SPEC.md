@@ -1,6 +1,6 @@
 # clm-lib: Technical Specification
 
-Version: 2.27 | 20 October 2026
+Version: 2.29 | 22 October 2026
 
 Repository: `clm-lib` | Python package: `clm_lib` | CLI: `clm-lib`
 
@@ -29,6 +29,8 @@ Version history:
 - 2.14: adds §26's W3 instances `w3-dev-3` and `w3-dev-4` (fresh seeds of the dev-1 and dev-2 schedules) and the replay's neutral `last_request` keys, for experiment 014's R1 matched development pilot.
 - 2.15: adds §27, shared foundations for programme 015 (opt-in, not yet wired into the runner): the native-tool transport `native-tools/1`, tool interfaces, versioned counters `session-counters/1`, the task-tool output cap `tool-output-cap/1` and accounted native dispatch. No arm, workload or live path uses them yet; §27.6 lists what is pending.
 - 2.16: adds §28, the programme 015 guarded-clm integration path (`clm_lib.p015`): opt-in, in a separate environment, verified offline with scripted and mocked models only.
+- 2.29: extends §40: `paper-clm-tools/2` refuses edits that would change a reply of the turn in progress carrying thinking (checked at staging, the commit, rollback and before dispatch; new ending `request_incompatible`). Offline-verified; not evaluated live.
+- 2.28: adds §40: `paper-clm-tools/2`, the thinking rule for rebuilt replies after the dev-tools1 provider refusal; version 1 kept and the default. Offline-verified; not evaluated live.
 - 2.27: adds §39: `paper_clm_tools` (`paper-clm-tools/1`), the structured-tools adaptation of model-managed context (`context_read`, `context_apply`), as a separately named arm on the shared runner; the other arms, the task and the scorer unchanged. Offline-verified; not evaluated live.
 - 2.26: adds §38: `paper-clm-shell/3`, the paper arm with a part-level context mirror (`ctx-part-mirror/1`) that accepts model-written summaries of completed tool exchanges and rebuilds valid provider messages; versions 1 and 2 kept. Offline-verified; not evaluated live.
 - 2.25: adds §37: the confirmation-instance checker (`p015-instance-check/1`) and the read-only exposure report (`p015-exposure/1`); offline-verified, no confirmation instance generated.
@@ -1472,3 +1474,82 @@ Invalid sets are refused with a reason (`REJECTED: ... Your context is unchanged
 - the proposed one-session live validation (`configs/p015/proposed-tools-dev1.json`, not authorised) passes the live-plan checks, and a scripted copy of it plans, runs and completes.
 
 **Not established:** how a real model uses the tools, whether its edits are accepted, and how the arm performs. No live call has been made with this arm.
+
+## 40. `paper-clm-tools/2`: thinking blocks in rebuilt replies (2026-10-21, offline-verified; not evaluated live)
+
+**Why:** in dev-tools1 (clm-lib-test-results 015 `dev-tools1-record.md`) the provider refused, with HTTP 400 ("`thinking` or `redacted_thinking` blocks in the latest assistant message cannot be modified"), the request carrying the second accepted edit.
+- **What happened:** the deletion emptied the messages between earlier replies. The rebuild merged them into one assistant message, which then held thinking blocks from three provider responses, two of them consecutive.
+- **What did not change:** no thinking text or signature.
+
+**The documented rules** (the provider's thinking and Messages API documentation, read 2026-10-21):
+- a reply's thinking blocks must come back as returned;
+- within a tool-use turn they must be passed back;
+- outside tool use, prior turns' thinking may be omitted;
+- consecutive assistant messages are combined into one, so keeping the replies apart would not help.
+
+**The rule (`papertools.ThinkingRule`), used by every rebuild (staging, the commit and rollback):**
+- **Omitted:** a reply the rebuild merged with another, or altered (a part removed or edited), is sent without its thinking blocks when every one of them came from an earlier user turn.
+- **Kept as returned:** replies echoed verbatim, and any reply holding thinking returned in the turn in progress. The turn's thinking is identified by its signatures, collected per run.
+- **Dropped:** a reply left with only thinking; its neighbouring requests merge.
+- **Recorded:** commit and rollback records give `thinking_omitted` (version 2 only).
+
+**Unchanged:**
+- the operations, rollback, notices, step rules, prompts, budgets, estimator, task and scoring;
+- thinking stays on, and the effort and model are unchanged;
+- version 1 is byte-identical and the default; `ToolsSettings.version = "paper-clm-tools/2"` selects version 2, and live plans must state it (§32.2);
+- no other arm is affected.
+
+**Verification:** `tests/p015/test_paper_tools_v2.py` (15).
+- **The observed shape, on synthetic signed thinking:** version 1 reproduces the refused message; version 2 omits only the merged earlier reply's thinking, and the deletion still applies.
+- **The other cases:** verbatim, altered, current-turn, merge and thinking-only replies.
+- **Through `ArmSession` and the installed Anthropic adapter over an in-memory transport, three turns:**
+  - the request carrying the edit lacks the deleted pages;
+  - every assistant message carrying thinking is one response as returned;
+  - every `tool_use` is paired;
+  - the next turn rebuilds identically.
+- **Version 1:** its tests are unchanged and pass.
+- **The turn in progress:**
+  - `turn_problem` on intact, altered, merged, trailing-removed and gap-removed replies;
+  - a staged set refused again at the commit;
+  - a rollback that cannot keep a reply intact stops with `request_incompatible`.
+- **Over the wire, three turns:**
+  - a current-turn deletion is refused before dispatch, with the context unchanged and the step counted;
+  - a current-turn summary of a tool result is accepted and delivered;
+  - the next turn applies the deletion as an earlier-turn edit;
+  - every request keeps each thinking reply as returned.
+- **A rollback inside a turn with thinking replies** removes only the newest steps, and later requests stay valid.
+
+**The turn in progress (2026-10-22, the same version):** within a tool-use turn, thinking must be passed back complete and unmodified, and no strip is documented, so version 2 refuses an edit that would break that.
+- **Provenance (`TurnReply`):** each reply returned in the current user turn that carries thinking is recorded in `after_model_request` as its original part objects, in order. Grouping is taken from this record, not inferred from thinking text or signatures.
+- **The check (`turn_problem`):** a candidate request is compatible when every recorded reply is one assistant message holding exactly its parts, as the same objects and in the same order. A missing reply is a problem, except that rollback may remove a trailing run (the newest steps).
+- **Where it applies:**
+  - **at staging:** an incompatible set is refused atomically with a reason naming the affected blocks and what to do instead; the context is unchanged;
+  - **at the commit:** rechecked; an incompatible set does not take effect and a note says why;
+  - **in rollback:** after undoing the newest steps, before any retry is counted; the undone replies leave the record;
+  - **before every dispatch:** a final guard.
+- **When rollback or the guard fails,** the turn ends as `request_incompatible` (`ArmRequestIncompatible`), a harness outcome the launcher reports as `harness_defect`, never as `context_limit`. Nothing is dispatched.
+- **Not stripped:** current-turn thinking is never removed.
+- **Unchanged:** the rollback rules and allowances.
+
+**What this prevents in the turn in progress,** for replies of that turn that carry thinking:
+- deleting their tool calls, and so deleting their tool results, which take the call with them: an earlier read of this turn cannot be deleted;
+- deleting or editing their thinking, text or call arguments; a `substitute` without a block list that would match such text is refused as a whole;
+- any deletion that empties the messages between two replies so that one carrying this turn's thinking would be merged, for example deleting the turn's question when the previous turn's last reply would join this turn's first reply.
+
+**What remains possible:**
+- every earlier-turn edit, with the thinking rule above;
+- rewriting this turn's tool results (`replace_text`, `replace_block`, `substitute` on results), for example as summaries;
+- inserting notes;
+- editing or deleting this turn's user text and notes, or replies without thinking, when no thinking reply would change.
+
+After the turn ends, the same deletions are earlier-turn edits and are allowed.
+
+**How refusals count:** under the existing step rules.
+- **A refusal at staging:** the receipt starts `REJECTED:`, so its step is a task step, not a free one.
+- **A refusal at the commit:** this follows an accepted receipt, so that step stayed free, and the note is user text in the next request.
+
+**The instructions do not mention the restriction** (the prompts are unchanged), so the model learns it from refusals. This is a compatibility restriction of this adaptation, not part of the paper's method.
+
+**Not established:**
+- **Provider acceptance:** local transports cannot show it, including for rewritten current-turn tool results.
+- **Models with preserved thinking:** prefix-bound thinking (Sonnet 5.5, Opus 5.5 and others) is out of scope.

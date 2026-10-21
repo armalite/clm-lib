@@ -110,7 +110,13 @@ KNOWN_ARMS = (*ARMS, TOOLS_ARM)
 EXIT_OK, EXIT_LOCKED, EXIT_CONTRACT, EXIT_SPEND, EXIT_STOPPED, EXIT_USAGE = 0, 3, 4, 5, 6, 2
 TERMINAL = ("finished", "uncertain", "interrupted", "stopped", "abandoned")
 ARM_FAILURES = ("context_limit", "step_limit", "call_cap", "summary_call_cap", "model_behaviour")
-HARNESS_DEFECTS = ("harness_defect", "sandbox_unavailable", "unclassified_error", "tool_failure")
+HARNESS_DEFECTS = (
+    "harness_defect",
+    "sandbox_unavailable",
+    "unclassified_error",
+    "tool_failure",
+    "request_incompatible",
+)
 RERUNNABLE_OUTCOMES = ("harness_defect", "provider_failure", "spend_stopped")
 TURN_ENDINGS_V1, TURN_ENDINGS_V2 = "p015-turn-endings/1", "p015-turn-endings/2"
 TURN_ENDINGS = (TURN_ENDINGS_V1, TURN_ENDINGS_V2)
@@ -152,7 +158,7 @@ def library_pin_problems(spec: dict[str, Any]) -> list[str]:
 # Rules the paper arm implements in code without a setting; a live plan must acknowledge each one explicitly.
 # paper_clm_tools: the settings a live plan must state (the code defaults are the structured-tools design's).
 TOOLS_LIVE_FIELDS = {
-    "version": f'"{TOOLS_VERSION}"',
+    "version": f'"{TOOLS_VERSION}" or "paper-clm-tools/2"',
     "budget_tokens": "an integer (the enforced limit is this minus reserve_tokens)",
     "max_retries": "an integer: rollback retries per session (0 ends the turn at the first over-limit request)",
     "readouts": "true or false: whether every tool result ends with the context size",

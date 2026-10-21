@@ -43,6 +43,15 @@ With `max_retries=0`, the first over-limit request ends the turn.
 **Steps:** 60 task steps and 144 model calls per user turn. A response whose only calls are `context_apply`, all of
 them accepted, is a free step; `context_read` and a refused edit are task steps.
 
+**Versions (`ToolsSettings.version`):**
+- `paper-clm-tools/1` (the default; what dev-tools1 ran): a rebuilt reply keeps every part it still has, thinking
+  included. A deletion that empties the messages between two replies merges them into one assistant message that
+  carries both replies' thinking blocks; the provider refused such a request in dev-tools1.
+- `paper-clm-tools/2` (2026-10-21): the same, except for the thinking rule (`ThinkingRule`). A reply the rebuild
+  merged or altered is sent without its thinking blocks when they all came from an earlier user turn; a reply
+  echoed verbatim, and any reply holding thinking from the turn in progress, keeps its thinking as returned. Every
+  other rule (operations, rollback, notices, steps, prompts) is unchanged.
+
 **Scope:** the mechanics follow an existing structured-tools implementation of this design, used as an engineering
 reference; the code and the wording are clm-lib's own, and the size estimate is clm-lib's (`p015-ratio-estimate/1`).
 The differences from it and from the shell arm are listed in clm-lib-test-results 015 `paper-clm-tools.md`.
@@ -67,6 +76,7 @@ from pydantic_ai.messages import (
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -74,13 +84,15 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import Model, ModelRequestParameters
 from pydantic_ai.toolsets import FunctionToolset
 
-from .arm_errors import ArmContextLimit, ArmStepLimit
+from .arm_errors import ArmContextLimit, ArmRequestIncompatible, ArmStepLimit
 from .estimate import ESTIMATE_VERSION, RatioEstimator, request_chars
 
 if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestContext
 
-TOOLS_VERSION = "paper-clm-tools/1"
+TOOLS_VERSION = "paper-clm-tools/1"  # the first version, kept unchanged, and the default
+TOOLS_V2 = "paper-clm-tools/2"  # adds the thinking rule for rebuilt replies (`ThinkingRule`)
+TOOLS_VERSIONS = (TOOLS_VERSION, TOOLS_V2)
 EDIT_TOOL, READ_TOOL = "context_apply", "context_read"
 NOTE = "[context manager]"
 ACCEPTED, REFUSED = (
@@ -366,13 +378,101 @@ def _with_parts(message: ModelMessage, parts: Sequence[Any]) -> ModelMessage:
     return dataclasses.replace(message, parts=list(parts))
 
 
-def _reassemble(messages: Sequence[ModelMessage], parts_by_message: list[list[Any]], *, in_place: bool) -> list[ModelMessage]:  # fmt: skip
+@dataclasses.dataclass
+class ThinkingRule:
+    """`paper-clm-tools/2`: thinking blocks in replies the rebuild did not echo verbatim.
+
+    The provider accepts an assistant message's thinking blocks only as the model returned them, and it combines
+    consecutive assistant messages into one. A reply the rebuild merged with another (because the messages between
+    them were emptied) or altered (a part removed or edited) is no longer as returned, so its thinking blocks are
+    left out, which the provider documents as allowed for earlier turns outside tool use. The rule applies only when
+    every thinking block of that reply came from an earlier user turn (`current` holds the identities of the
+    thinking parts returned in this turn, from `TurnReply` provenance); a reply that holds thinking from the turn in
+    progress keeps it, and `turn_problem` refuses any rebuild that changes such a reply. Replies echoed verbatim are
+    never touched.
+    """
+
+    current: frozenset[int]
+    omitted: int = 0
+
+    def apply(self, built: list[ModelMessage], verbatim: list[bool]) -> list[ModelMessage]:
+        out: list[ModelMessage] = []
+        for message, exact in zip(built, verbatim, strict=True):
+            thinking = [p for p in message.parts if isinstance(p, ThinkingPart)]
+            earlier = thinking and not any(id(p) in self.current for p in thinking)
+            if isinstance(message, ModelResponse) and not exact and earlier:
+                self.omitted += len(thinking)
+                rest = [p for p in message.parts if not isinstance(p, ThinkingPart)]
+                if not rest:
+                    continue  # a reply that held only thinking: its neighbours (requests) merge below
+                message = _with_parts(message, rest)
+            if out and isinstance(message, ModelRequest) and isinstance(out[-1], ModelRequest):
+                out[-1] = _with_parts(message, [*out[-1].parts, *message.parts])
+            else:
+                out.append(message)
+        return out
+
+
+@dataclasses.dataclass(frozen=True)
+class TurnReply:
+    """Provenance of one reply returned in the turn in progress that carries signed thinking: the part objects the
+    provider's response was parsed into, in order. Within a tool-use turn such a reply must be sent back exactly as
+    returned: one assistant message holding these parts and nothing else."""
+
+    response_id: str | None
+    parts: tuple[Any, ...]
+
+    @property
+    def thinking(self) -> list[ThinkingPart]:
+        return [p for p in self.parts if isinstance(p, ThinkingPart)]
+
+
+def turn_problem(messages: Sequence[ModelMessage], replies: Sequence[TurnReply], *, rollback: bool = False) -> list[int] | None:  # fmt: skip
+    """The replies of the turn in progress that `messages` would not send back exactly as returned (by index into
+    `replies`), or None when every one is intact. A reply is intact when one assistant message holds exactly its
+    parts, as the same objects and in the same order. With `rollback`, replies may also be missing as a trailing run
+    (the newest steps undone); otherwise a missing reply is a problem too."""
+    holders: dict[
+        int, dict[int, ModelResponse]
+    ] = {}  # part identity -> the messages holding it, by identity
+    for message in messages:
+        if isinstance(message, ModelResponse):
+            for part in message.parts:
+                holders.setdefault(id(part), {})[id(message)] = message
+    bad: list[int] = []
+    missing: list[int] = []
+    for i, reply in enumerate(replies):
+        held = {k: m for p in reply.parts for k, m in holders.get(id(p), {}).items()}
+        if not held:
+            missing.append(i)
+            continue
+        message = next(iter(held.values()))
+        if (
+            len(held) != 1
+            or len(message.parts) != len(reply.parts)
+            or not all(map(operator.is_, message.parts, reply.parts))
+        ):
+            bad.append(i)
+    if rollback:
+        present = [i for i in range(len(replies)) if i not in missing]
+        bad += [i for i in missing if present and i < max(present)]  # a gap, not a trailing run
+    else:
+        bad += missing
+    return sorted(bad) or None
+
+
+def _reassemble(messages: Sequence[ModelMessage], parts_by_message: list[list[Any]], *, in_place: bool,
+                thinking: ThinkingRule | None = None) -> list[ModelMessage]:  # fmt: skip
     """Build the conversation from new part lists: emptied messages go, neighbours of one kind merge, the trailing
-    request joins the final request (the one being sent), and the structure is checked."""
+    request joins the final request (the one being sent), and the structure is checked. With a `ThinkingRule`
+    (version 2), merged or altered replies from earlier turns lose their thinking blocks."""
     final = messages[-1]
     if not isinstance(final, ModelRequest):
         raise EditRefused("The conversation must end with a request.")
     built: list[ModelMessage] = []
+    verbatim: list[
+        bool
+    ] = []  # whether each built message is an original one, unchanged and unmerged
     for message, parts in zip(messages[:-1], parts_by_message[:-1], strict=True):
         if not parts:
             continue
@@ -381,8 +481,12 @@ def _reassemble(messages: Sequence[ModelMessage], parts_by_message: list[list[An
         )
         if built and type(built[-1]) is type(message):
             built[-1] = _with_parts(message, [*built[-1].parts, *parts])
+            verbatim[-1] = False
         else:
             built.append(message if unchanged else _with_parts(message, parts))
+            verbatim.append(unchanged)
+    if thinking is not None:
+        built = thinking.apply(built, verbatim)
     leading: list[Any] = (
         list(built.pop().parts) if built and isinstance(built[-1], ModelRequest) else []
     )
@@ -401,7 +505,11 @@ def _reassemble(messages: Sequence[ModelMessage], parts_by_message: list[list[An
 
 
 def apply_edit(
-    messages: Sequence[ModelMessage], ops: Iterable[Any], *, in_place: bool
+    messages: Sequence[ModelMessage],
+    ops: Iterable[Any],
+    *,
+    in_place: bool,
+    thinking: ThinkingRule | None = None,
 ) -> list[ModelMessage]:
     """Apply one operation set, all or nothing; block numbers are those of `context_view(messages)`.
 
@@ -446,10 +554,12 @@ def apply_edit(
          for p, part in enumerate(message.parts) if (m, p) not in removed] + added.get(m, [])
         for m, message in enumerate(messages)
     ]  # fmt: skip
-    return _reassemble(messages, parts_by_message, in_place=in_place)
+    return _reassemble(messages, parts_by_message, in_place=in_place, thinking=thinking)
 
 
-def undo_latest(messages: Sequence[ModelMessage]) -> tuple[list[ModelMessage], list[str]] | None:
+def undo_latest(
+    messages: Sequence[ModelMessage], thinking: ThinkingRule | None = None
+) -> tuple[list[ModelMessage], list[str]] | None:
     """The conversation without its latest reply and that reply's tool results, and the calls undone. None when
     nothing can be undone."""
     head = _last_reply(messages, 0)
@@ -473,7 +583,7 @@ def undo_latest(messages: Sequence[ModelMessage]) -> tuple[list[ModelMessage], l
     if not parts_by_message[-1]:
         parts_by_message[-1] = [UserPromptPart(UNDONE)]  # the caller replaces it with its note
     try:
-        return _reassemble(messages, parts_by_message, in_place=False), undone
+        return _reassemble(messages, parts_by_message, in_place=False, thinking=thinking), undone
     except EditRefused:
         return None
 
@@ -498,9 +608,9 @@ class ToolsSettings:
     version: str = TOOLS_VERSION
 
     def __post_init__(self) -> None:
-        if self.version != TOOLS_VERSION:
+        if self.version not in TOOLS_VERSIONS:
             raise ValueError(
-                f"unknown paper_clm_tools version {self.version!r}; expected {TOOLS_VERSION!r}"
+                f"unknown paper_clm_tools version {self.version!r}; expected one of {TOOLS_VERSIONS}"
             )
 
     @property
@@ -533,6 +643,9 @@ class ToolsState:
     params: ModelRequestParameters | None = None
     model: Model | None = None
     last_chars: int = 0
+    turn_replies: list[TurnReply] = dataclasses.field(
+        default_factory=list
+    )  # this turn's thinking replies (v2)
 
 
 def instructions(settings: ToolsSettings) -> str:
@@ -596,16 +709,17 @@ class PaperToolsContext(AbstractCapability[Any]):
 
     def record(self, entry: dict[str, Any]) -> None:
         if self.on_record is not None:
-            self.on_record({"variant": TOOLS_VERSION, **entry})
+            self.on_record({"variant": self.settings.version, **entry})
 
     def describe(self) -> dict[str, Any]:
-        return {"variant": TOOLS_VERSION, "estimate": ESTIMATE_VERSION, "settings": dataclasses.asdict(self.settings),
+        return {"variant": self.settings.version, "estimate": ESTIMATE_VERSION, "settings": dataclasses.asdict(self.settings),
                 "limit": self.settings.limit, "call_cap": self.settings.cap}  # fmt: skip
 
     async def for_run(self, ctx: RunContext[Any]) -> PaperToolsContext:
         del ctx  # a new user turn: fresh steps and calls; the session's retries and flags carry on
         st = self.state
         st.staged, st.steps, st.calls, st.pending = None, 0, 0, set()
+        st.turn_replies = []
         return self
 
     def get_instructions(self) -> str | None:
@@ -642,6 +756,38 @@ class PaperToolsContext(AbstractCapability[Any]):
         chars = request_chars(messages, st.params)
         return chars, self.estimator.tokens(st.model, chars)
 
+    def _thinking_rule(self) -> ThinkingRule | None:
+        """Version 2's rule for this turn; version 1 rebuilds replies with their thinking as it is."""
+        if self.settings.version != TOOLS_V2:
+            return None
+        return ThinkingRule(frozenset(id(p) for r in self.state.turn_replies for p in r.thinking))
+
+    def _turn_reason(
+        self, before: Sequence[ModelMessage], after: Sequence[ModelMessage]
+    ) -> str | None:
+        """Version 2: why `after` would not send this turn's thinking replies back as returned, naming their blocks
+        in `before` (the context the model sees); None when it would, or under version 1."""
+        if self.settings.version != TOOLS_V2:
+            return None
+        bad = turn_problem(after, self.state.turn_replies)
+        if bad is None:
+            return None
+        ids = {id(p) for i in bad for p in self.state.turn_replies[i].parts}
+        numbers = [
+            b.number
+            for b in context_view(before)
+            if id(before[b.where[0]].parts[b.where[1]]) in ids
+        ]
+        where = (
+            f" (block{'s' if len(numbers) > 1 else ''} {', '.join(map(str, numbers))})"
+            if numbers
+            else ""
+        )
+        return (f"This would change a reply you made earlier in this turn{where}. Until the turn ends, a reply that "
+                "carries thinking must be sent back exactly as it was returned, so its calls, text and thinking "
+                "cannot be deleted, edited or merged into another reply. You can rewrite this turn's tool results "
+                "instead (for example replace_block with a summary), or make this change in a later turn.")  # fmt: skip
+
     # ------------------------------------------------------------------ editing
 
     def stage(self, messages: Sequence[ModelMessage], ops: list[dict[str, Any]]) -> str:
@@ -666,9 +812,12 @@ class PaperToolsContext(AbstractCapability[Any]):
             return f"{REFUSED} {reason} Your context is unchanged."
 
         try:
-            result = apply_edit(current, ops, in_place=False)
+            result = apply_edit(current, ops, in_place=False, thinking=self._thinking_rule())
         except EditRefused as error:
             return refuse(str(error))
+        reason = self._turn_reason(current, result)
+        if reason is not None:
+            return refuse(reason, compatibility="current_turn_thinking")
         projected = (
             self._size(result)[1] if st.params is not None and st.model is not None else None
         )
@@ -692,11 +841,25 @@ class PaperToolsContext(AbstractCapability[Any]):
         st, s = self.state, self.settings
         ops, st.staged = st.staged or [], None
         try:
-            projected = self._size(apply_edit(messages, ops, in_place=False))[1]
+            candidate = apply_edit(messages, ops, in_place=False, thinking=self._thinking_rule())
         except EditRefused as error:
             _append(messages[-1], f"{NOTE} Your staged edit did not take effect: {error}")
             self.record({"type": "tools_commit_rejected", "reason": str(error)})
             return messages, False
+        reason = self._turn_reason(
+            messages, candidate
+        )  # rechecked: the turn may have moved on since staging
+        if reason is not None:
+            _append(messages[-1], f"{NOTE} Your staged edit did not take effect: {reason}")
+            self.record(
+                {
+                    "type": "tools_commit_rejected",
+                    "reason": reason,
+                    "compatibility": "current_turn_thinking",
+                }
+            )
+            return messages, False
+        projected = self._size(candidate)[1]
         if projected > s.limit:
             _append(messages[-1], f"{NOTE} Your staged edit did not take effect: afterwards your context would be "
                                   f"about {projected:,} tokens, more than your {s.limit:,}-token limit.")  # fmt: skip
@@ -709,11 +872,13 @@ class PaperToolsContext(AbstractCapability[Any]):
             )
             return messages, False
         before = request_chars(messages, st.params)
-        applied = apply_edit(messages, ops, in_place=True)
+        rule = self._thinking_rule()
+        applied = apply_edit(messages, ops, in_place=True, thinking=rule)
         st.edits_committed += 1
+        extra = {"thinking_omitted": rule.omitted} if rule is not None else {}
         self.record({"type": "tools_commit", "ops": ops, "chars_before": before,
                      "chars_after": request_chars(applied, st.params),
-                     "blocks_after": len(context_view(applied))})  # fmt: skip
+                     "blocks_after": len(context_view(applied)), **extra})  # fmt: skip
         return applied, True
 
     # ------------------------------------------------------------------ over the limit
@@ -728,17 +893,28 @@ class PaperToolsContext(AbstractCapability[Any]):
             )
             return ArmContextLimit(why)
 
+        rule = self._thinking_rule()
         if s.max_retries == 0 or st.final_turn:
             raise end(f"the request (about {tokens} tokens) would exceed the {s.limit}-token limit")
         candidate, steps = messages, 0
         undone: list[str] = []
         while tokens > s.limit - s.reserve_tokens:
-            step = undo_latest(candidate)
+            step = undo_latest(candidate, rule)
             if step is None:
                 raise end(f"nothing left to roll back; the request is about {tokens} tokens")
             candidate, calls = step
             undone, steps = [*calls, *undone], steps + 1
             tokens = self._size(candidate)[1]
+        if s.version == TOOLS_V2:
+            # Undoing the newest steps may remove this turn's replies only as a trailing run, the rest intact.
+            bad = turn_problem(candidate, st.turn_replies, rollback=True)
+            if bad is not None:
+                self.record({"type": "request_incompatible", "stage": "rollback", "replies": bad,
+                             "estimated_tokens": tokens})  # fmt: skip
+                raise ArmRequestIncompatible(
+                    "rollback could not keep this turn's thinking replies as returned; nothing was dispatched"
+                )
+            st.turn_replies = [r for r in st.turn_replies if turn_problem(candidate, [r]) is None]
         if st.retries < s.max_retries:
             st.retries += 1
             ask = f"Free some space with {EDIT_TOOL} and carry on (retry {st.retries} of {s.max_retries})."
@@ -759,8 +935,9 @@ class PaperToolsContext(AbstractCapability[Any]):
         _append(final, note)
         out = [*candidate[:-1], final]
         st.rollbacks_total += 1
+        extra = {"thinking_omitted": rule.omitted} if rule is not None else {}
         self.record({"type": "tools_rollback", "undone": undone, "steps_undone": steps, "retry": st.retries,
-                     "final_turn": st.final_turn, "tokens_after": tokens})  # fmt: skip
+                     "final_turn": st.final_turn, "tokens_after": tokens, **extra})  # fmt: skip
         return out, self._size(out)[1]
 
     # ------------------------------------------------------------------ notices
@@ -830,6 +1007,11 @@ class PaperToolsContext(AbstractCapability[Any]):
             edited = True
             self._notices(messages, tokens)
             chars, sent = self._size(messages)
+        if s.version == TOOLS_V2 and (bad := turn_problem(messages, st.turn_replies)) is not None:
+            self.record({"type": "request_incompatible", "stage": "request", "replies": bad})
+            raise ArmRequestIncompatible(
+                "the request would not send this turn's thinking replies as returned; nothing was dispatched"
+            )
         request_context.messages = messages
         st.last_chars = chars
         self.record({"type": "tools_request", "estimated_tokens": sent, "chars": chars, "edited": edited,
@@ -843,6 +1025,10 @@ class PaperToolsContext(AbstractCapability[Any]):
         st = self.state
         st.calls += 1
         self.estimator.observe(ctx.model, st.last_chars, response.usage.input_tokens)
+        if self.settings.version == TOOLS_V2 and any(
+            isinstance(p, ThinkingPart) for p in response.parts
+        ):
+            st.turn_replies.append(TurnReply(response.provider_response_id, tuple(response.parts)))
         calls = [p for p in response.parts if isinstance(p, ToolCallPart)]
         if calls and all(p.tool_name == EDIT_TOOL for p in calls):
             st.pending = {

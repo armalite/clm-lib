@@ -13,3 +13,8 @@ class ArmStepLimit(RuntimeError):
 
 class SummaryCallCap(RuntimeError):
     """The turn reached its summariser-call cap (`summary_call_cap`)."""
+
+
+class ArmRequestIncompatible(RuntimeError):
+    """The arm could not build a request that keeps the provider's documented structure for the turn in progress
+    (`request_incompatible`, a harness outcome): nothing was dispatched."""

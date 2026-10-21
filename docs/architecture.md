@@ -534,6 +534,15 @@ UV_PROJECT_ENVIRONMENT=.venv-p015 uv sync --no-config --frozen --no-dev --group 
 
 **Engineering reference and departures:** the mechanics (operations, pinning, pairing, rebuild, staging and commit, rollback to the margin, per-session retries, the final turn, readouts, the reminder, the free-step rule and the finalize notice) follow an existing structured-tools implementation. The code is written for clm-lib; none of it is copied. The deliberate departures from it are listed in clm-lib-test-results 015 `paper-clm-tools.md`: our own wording, clm-lib's size estimator, the 015 workload and settings, one capability instead of two, our trace records, and no end-of-session rule for a reported input over the budget. Where its settings differ from `paper_clm_shell`'s, both are kept as they are and the differences are recorded there; nothing was taken from the shell arm's failed runs.
 
+**Version 2 (2026-10-21, SPEC §40):** `ThinkingRule`, passed into `_reassemble()` by `apply_edit()` and `undo_latest()` when `ToolsSettings.version` is `paper-clm-tools/2`.
+- **How it decides:** `_reassemble()` marks each built message as verbatim (an original object, unchanged and unmerged) or not. For a non-verbatim reply whose thinking all predates the current user turn (signatures not in `ToolsState.turn_thinking`, collected per run in `after_model_request`), the rule removes the thinking parts. It then drops a reply left empty and merges the requests that become adjacent.
+- **Why:** the provider rejects a reply whose thinking is not as returned, and it combines consecutive assistant messages; omitting prior turns' thinking outside tool use is documented as allowed.
+- **The turn in progress (2026-10-22):** `ToolsState.turn_replies` holds `TurnReply` provenance, each this turn's thinking reply as its original part objects, recorded in `after_model_request`. `ThinkingRule.current` is the identities of their thinking parts.
+  - **The check:** `turn_problem(messages, replies, rollback=...)` is an identity check. Every recorded reply must be exactly one assistant message with exactly those parts, in order; rollback may drop a trailing run.
+  - **Where it runs:** `stage()` refuses with `_turn_reason()`, which names the affected blocks; `commit()` rechecks and adds a note; `recover()` checks after its undo loop, before counting a retry, and prunes the undone replies; `before_model_request` checks the request as sent.
+  - **When rollback or the guard fails,** it raises `ArmRequestIncompatible`: ending `request_incompatible`, which the launcher counts in `HARNESS_DEFECTS`.
+  - **This is a compatibility restriction,** not a strip. It narrows in-turn editing to result rewrites, notes, and changes that leave every thinking reply intact (SPEC §40).
+
 **Integration:**
 - **The launcher:** accepts `paper_clm_tools` only when named (`KNOWN_ARMS`). `ARMS`, the default comparison set, is unchanged.
 - **Live plans** must state the version, budget, retries and readouts.

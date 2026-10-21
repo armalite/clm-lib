@@ -112,6 +112,42 @@ Verification: `ruff check`, `ruff format --check` and `mypy src` are clean; **56
 
 Live phases: **still not run**. `ANTHROPIC_API_KEY` is still unset in the agent process (`doctor`). Live spend $0.00; cumulative $0.00 of $10.00.
 
+## Programme 015 `paper-clm-tools/2` (2026-10-21, offline; not evaluated)
+
+**The cause of the dev-tools1 refusal:** no thinking text or signature was changed. The arm's rebuild merged earlier replies, so one assistant message held thinking blocks from three provider responses. The provider requires a reply's thinking blocks as returned, and combines consecutive assistant messages.
+
+**The correction (SPEC §40):** a merged or altered reply from an earlier user turn is sent without its thinking, which the documentation allows outside tool use. Replies echoed verbatim and the turn in progress keep their thinking. Nothing else changes, and version 1 is kept.
+
+**Verification:**
+- **The regressions:** 10 tests with synthetic signed thinking, through the real runner and the installed Anthropic adapter over an in-memory transport. Version 1 reproduces the refused request; version 2's requests keep the deletion and send only verbatim replies with thinking.
+- **The affected tests:** 99 passed. Lint and types are clean.
+
+**The turn in progress (2026-10-22):** version 2 now refuses, before dispatch, any edit that would change a reply of the current turn carrying thinking.
+- **Refused:** deleting this turn's earlier tool exchanges, editing those replies, or merging them.
+- **Where:** at staging with a reason, at the commit, in rollback and in a final guard. A rollback that could not keep them intact would end as `request_incompatible`, a harness outcome.
+- **Still allowed:** rewriting this turn's tool results (for example as summaries), notes, and every earlier-turn edit.
+- **The checks:** 15 tests, including three-turn sessions over the adapter. 107 affected tests passed, and lint and types are clean.
+
+**Not established:** provider acceptance.
+
+**Spend:** none.
+
+**Details:** clm-lib-test-results `experiments/015-public-clm-comparison/paper-clm-tools-v2.md`.
+
+## Programme 015 live validation `dev-tools1` of `paper_clm_tools` (2026-10-21)
+
+**What ran:** one session of `paper-clm-tools/1` on `docthread-dev-1` (`docthread-task/2`, the shared settings). The arm differs from the shell arm in rollback, notices and the free-step rule as well as interface, so this is not an interface-only ablation.
+
+**The result:**
+- **Editing:** in turn 4 the model made two substantive deletions of tool exchanges. Both were accepted. The first reached the next request, and the provider accepted it.
+- **Compatibility: not established.** The provider rejected the request carrying the second edit (HTTP 400): "thinking blocks ... cannot be modified". The arm's rebuild had merged two replies that carry signed thinking blocks.
+- **The ending:** the session ended there as `provider_failure`. Turns 1–3 were correct: 4/10, recall 0/3.
+- **Blocker:** no comparison until a reviewed revision keeps thinking blocks unchanged.
+
+**Spend:** $0.270354, all confirmed (the 400 was not billed).
+
+**Details:** clm-lib-test-results `experiments/015-public-clm-comparison/dev-tools1-record.md`.
+
 ## Programme 015 `paper_clm_tools` (2026-10-20, offline; not evaluated)
 
 **What was built (SPEC §39):** the structured-tools paper-style arm, `paper-clm-tools/1`. The model manages its context through `context_read` and `context_apply`, with operations to replace, delete, substitute and insert, staged and applied all or nothing. Over the limit, it rolls back to a margin, with per-session retries and then a final turn. It is a separate arm, not a version of `paper_clm_shell`, whose versions are unchanged. The other arms, the task and the scorer are unchanged.

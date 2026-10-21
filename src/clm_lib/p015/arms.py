@@ -13,8 +13,9 @@ same `conversation_id`. Only the context capability differs:
   `summary`) sharing the ledger, the recorder and the attempt numbering.
 
 Endings are those of `GuardedSession`, with the arms' own errors: `context_limit` (`ArmContextLimit`), `step_limit`
-(`ArmStepLimit`), `call_cap`, `summary_call_cap` (`SummaryCallCap`) and `sandbox_unavailable` (the shell could not
-start an isolated container; nothing ran on the host).
+(`ArmStepLimit`), `call_cap`, `summary_call_cap` (`SummaryCallCap`), `request_incompatible` (`ArmRequestIncompatible`:
+`paper-clm-tools/2` could not build a request the provider's documented rules allow; nothing was dispatched) and
+`sandbox_unavailable` (the shell could not start an isolated container; nothing ran on the host).
 """
 
 from __future__ import annotations
@@ -46,7 +47,7 @@ from .accounting import (
     SpendGate,
     SpendRefused,
 )
-from .arm_errors import ArmContextLimit, ArmStepLimit, SummaryCallCap
+from .arm_errors import ArmContextLimit, ArmRequestIncompatible, ArmStepLimit, SummaryCallCap
 from .loop import SessionLoop
 from .paper.capability import PaperSettings, PaperShellContext
 from .paper.shell import ShellSandbox
@@ -183,6 +184,8 @@ class ArmSession:
             return "context_limit"
         if isinstance(exc, ArmStepLimit):
             return "step_limit"
+        if isinstance(exc, ArmRequestIncompatible):
+            return "request_incompatible"
         if isinstance(exc, SummaryCallCap):
             return "summary_call_cap"
         if isinstance(exc, UsageLimitExceeded):
