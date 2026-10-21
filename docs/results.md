@@ -112,6 +112,20 @@ Verification: `ruff check`, `ruff format --check` and `mypy src` are clean; **56
 
 Live phases: **still not run**. `ANTHROPIC_API_KEY` is still unset in the agent process (`doctor`). Live spend $0.00; cumulative $0.00 of $10.00.
 
+## Programme 015 live validation `dev-tools2` of `paper-clm-tools/2` (2026-10-22)
+
+**What ran:** one session of `paper-clm-tools/2` on `docthread-dev-1`, with dev-tools1's settings unchanged apart from the version.
+
+**The result:**
+- **Compatibility:** all 44 provider requests were accepted, including every request after the 7 committed edits (four of them omitted thinking from merged earlier-turn replies). Two current-turn edits that would have changed signed-thinking replies were refused before dispatch.
+- **Not exercised:** a current-turn tool-result rewrite, a commit-time refusal and an incompatible rollback, so these paths are untested.
+- **The ending:** turns 1–6 completed. Turn 7 ended at the ordinary context limit after the session's six rollback retries were used in turn 4.
+- **The score:** 7/10, recall 1/3.
+
+**Spend:** $0.947527, all confirmed.
+
+**Details:** clm-lib-test-results `experiments/015-public-clm-comparison/dev-tools2-record.md`.
+
 ## Programme 015 `paper-clm-tools/2` (2026-10-21, offline; not evaluated)
 
 **The cause of the dev-tools1 refusal:** no thinking text or signature was changed. The arm's rebuild merged earlier replies, so one assistant message held thinking blocks from three provider responses. The provider requires a reply's thinking blocks as returned, and combines consecutive assistant messages.
