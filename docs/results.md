@@ -112,6 +112,36 @@ Verification: `ruff check`, `ruff format --check` and `mypy src` are clean; **56
 
 Live phases: **still not run**. `ANTHROPIC_API_KEY` is still unset in the agent process (`doctor`). Live spend $0.00; cumulative $0.00 of $10.00.
 
+## Programme 015 prompt-caching review (2026-10-22, offline)
+
+**The method:** the confirm1 (guarded-clm, summary) and supp-tools1 (`paper-clm-tools/2`) requests were reconstructed through the pinned adapter and checked against the recorded cache usage.
+
+**The verdict:**
+- **Configuration:** every arm had automatic full-conversation caching plus the tool and system breakpoints, with a 5-minute TTL that fitted the observed request gaps (53 s at most).
+- **Reuse:** the summary agent and `paper-clm-tools/2` reused the whole previous request on every append-only call. guarded-clm's own builder sends one rebuilt user block, so it reuses only its tools and system prompt; that is a library design property, not a harness defect.
+- **The one avoidable harness cost:** the summariser calls wrote cache entries that could never be read, a US$0.20 premium, about 6.8% of the summary arm's cost.
+- **Cost results:** they stand. No caching rerun is needed.
+
+**Details:** clm-lib-test-results `experiments/015-public-clm-comparison/caching-review.md`.
+
+## Programme 015 supplemental evaluation `supp-tools1` of `paper-clm-tools/2` (2026-10-22)
+
+**What ran:** one pre-registered `paper-clm-tools/2` session on each of confirm1's six frozen instances, with the arm exactly as validated in dev-tools2. guarded-clm, the summary arm and the shell arm are compared through their frozen confirm1 results. This is supplemental: the arm was developed after confirm1, and this is not an interface-only ablation.
+
+**The result:**
+- **Points:** 36/60, against confirm1's guarded-clm 58, summary 59 and `paper_clm_shell` v2 20. The paired totals are −22, −23 and +16.
+- **Endings:** 2 of 6 sessions completed. Three ended at a context limit after the six per-session rollback retries were used, and one at the output limit.
+- **Lost points:** 20 of the 24 were answers missing from unrun turns.
+
+**The mechanism:**
+- all 193 provider requests were accepted, and there was no `request_incompatible`;
+- 25 edits were committed (20 earlier-turn, 5 current-turn tool-result or note rewrites), and every deletion was delivered;
+- 6 sets were refused by the current-turn thinking restriction.
+
+**Spend:** $3.821252, all confirmed.
+
+**Details:** clm-lib-test-results `experiments/015-public-clm-comparison/supp-tools1-record.md`.
+
 ## Programme 015 live validation `dev-tools2` of `paper-clm-tools/2` (2026-10-22)
 
 **What ran:** one session of `paper-clm-tools/2` on `docthread-dev-1`, with dev-tools1's settings unchanged apart from the version.
