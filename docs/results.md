@@ -112,6 +112,18 @@ Verification: `ruff check`, `ruff format --check` and `mypy src` are clean; **56
 
 Live phases: **still not run**. `ANTHROPIC_API_KEY` is still unset in the agent process (`doctor`). Live spend $0.00; cumulative $0.00 of $10.00.
 
+## Programme 015 `dev-cache1`: guarded-clm's original and recommended caching configurations (2026-10-23, live)
+
+**What ran:** one guarded session per configuration on docthread-dev-1, eight turns each, guarded-clm 0.2.0.dev2 at d1d6d1d, clm-lib 8fcec77. A is the original (one request block, automatic caching); B the recommendation (`segmented_task_last`, a 5-minute context cache point, tool and instruction breakpoints only). B started 397 s after A's last attempt.
+
+**The result:**
+- **Both completed 8/8 turns:** A 9/10, B 10/10, recall 3/3 each; all 70 requests accepted, no retries.
+- **Reuse:** B read its cached working context on all 22 ordinary calls and all 7 new-turn starts, and every one of its 36 requests read exactly the prefix the documented rules predict (a post-hoc check). A read only its tools and system prompt. Over the session, B read 75.7% of its input from cache, A 16.4%.
+- **After B's six accepted edits:** reuse fell back to the furthest earlier unchanged marker, three times only to the first request's head.
+- **Cost:** A US$1.129792, B US$0.613616, all confirmed. B processed 25% more input and 22% more output, with more tool calls, holds and refetches, so this is one data point, not an established saving. Billed as A's configuration bills, B's own input would have cost about US$1.26 instead of US$0.43.
+
+**Spend:** US$1.743408 of the US$5.00 authorised (two US$2.50 blocks); ledger US$109.561054 of US$131.657076, programme 015 US$21.461308. **Details:** clm-lib-test-results `experiments/015-public-clm-comparison/dev-cache1-record.md`.
+
 ## Programme 015 guarded-clm request layouts and the `dev-cache1` preparation (2026-10-23, offline)
 
 **What:** the guarded arm now passes guarded-clm 0.2.0.dev2's `request_layout` and `cache_point` (SPEC §41), and two proposed configurations prepare a two-session development check on docthread-dev-1: A, the original (one block, automatic caching); B, the library's recommendation (`segmented_task_last`, a 5-minute context cache point, tool and instruction breakpoints only).
