@@ -549,6 +549,16 @@ UV_PROJECT_ENVIRONMENT=.venv-p015 uv sync --no-config --frozen --no-dev --group 
 - **The exposure report** counts the arm's notices from trace records, because its notices persist in the history.
 - **The scripted investigator** gains the `tools_tidy` and `tools_keep` policies.
 
+## Programme 015 guarded-clm request layouts (2026-10-23)
+
+**What changed (SPEC §41, `p015-request-layout/1`):** the guarded arm passes guarded-clm's `request_layout` and `cache_point` through `GuardedSettings` to `clm_context()`. The library owns the layouts, the cache marker and message origin; the harness only chooses, validates and records.
+- **Validation:** `session.guarded_option_problems` checks a layout and cache point against the model's cache settings (TTL order, caching on, a segmented layout for a marker). `plan()` and `contract_problems()` both run it, so an invalid combination never reaches dispatch.
+- **Records:** the contract's `guarded_request`, `session.json`'s `settings` and `model_settings`, and the export manifest's `guarded_request` (only for sessions that record the options, so earlier exports keep verifying).
+- **The cache breakpoints stay in the shared model configuration** (`live.ModelConfig`). Configurations that need different breakpoints for the guarded arm are separate launches, each with its own authorisation and block.
+- **Message origin:** the runner never rewrites history. `result.all_messages()` and a limited run's captured messages are passed on as they are, which keeps the library's `ModelRequest.metadata`; the only capability is `clm_context()`, whose two parts are adjacent.
+
+**Historical configurations** are not migrated: they keep their 0.2.0.dev1 pin and are refused against any other library. Tests that exercise planning use `tests/p015/harness.as_current`, which gives a copy the loaded pin and the defaults it ran, stated explicitly.
+
 ## Design choices
 
 - **JSON-lines transcript with escaping** instead of nonce delimiters: it's simple and can't be forged.

@@ -1553,3 +1553,52 @@ After the turn ends, the same deletions are earlier-turn edits and are allowed.
 **Not established:**
 - **Provider acceptance:** local transports cannot show it, including for rewritten current-turn tool results.
 - **Models with preserved thinking:** prefix-bound thinking (Sonnet 5.5, Opus 5.5 and others) is out of scope.
+
+## 41. guarded-clm's request layout and context cache point (`p015-request-layout/1`; 2026-10-23, offline-verified; not evaluated live)
+
+**Why:** guarded-clm 0.2.0.dev2 (revision d1d6d1d, source `5da97515…`) adds two opt-in options to `clm_context()`: `request_layout` (`"single"`, the default; `"segmented"`; `"segmented_task_last"`) and `cache_point` (`"5m"`, `"1h"` or none). The task-last layout sends the working-context entries as separate blocks with a prompt-cache marker after the last one, and the task and status after it, so a provider can reuse the unchanged context within and across user turns. It tells its own rebuilt requests and runtime notes from user turns by `ModelRequest.metadata`, never by text (guarded-clm decisions P8 to P12). Its default stays `"single"` until a live check.
+
+**The options (`session.GuardedSettings`):**
+- `request_layout` and `cache_point`, with the library's defaults (`"single"`, none). They are passed to `clm_context()` unchanged when the session is built, so every turn uses them. A configuration that doesn't state them runs exactly as before.
+- `session.json` records them in `settings`, and records the session's Pydantic AI `model_settings`. Each attempt already records its settings.
+
+**Invalid combinations are refused** (`session.guarded_option_problems`), by `plan()` before anything is written and by `contract_problems()` before any dispatch:
+- an unknown layout or TTL;
+- a cache point with the `"single"` layout;
+- a cache point while `model.cache_ttl` is null (caching off), which would still send a breakpoint;
+- a TTL order the provider rejects: a cache point longer than the tool or instruction breakpoints before it, or shorter than the automatic one after it.
+
+**Live plans** must state both options (`launcher.GUARDED_LIVE_FIELDS`, as in §32.2). Plans made before this version ran the defaults; they are kept unchanged and, like every historical configuration, refused against a library other than the one they pin.
+
+**The contract** records the resolved options as `guarded_request` (`{"version": "p015-request-layout/1", "request_layout": ..., "cache_point": ...}`) whenever the guarded arm is planned; the configuration fingerprint covers it. Contracts made earlier lack the field and still verify (their fingerprints are recomputed from their own body).
+
+**Exports:** a session whose `settings` hold `request_layout` gets a `guarded_request` block in its manifest: the layout, the cache point and the session's `anthropic_cache*` settings. Earlier sessions' manifests are unchanged, so their exports still verify.
+
+**The lifecycle, as checked:**
+- **History between turns:** `GuardedSession` passes `result.all_messages()` on unchanged, so the rebuilt request keeps its metadata; the recorded JSON form of every turn keeps it too.
+- **After a step or call limit** (`p015-turn-endings/2`): the captured run messages keep the marked rebuilt request, so the continued turn folds the limited step in once.
+- **Capability order:** the session's only capability is `clm_context()` (`ClmStepLimit`, then `ClmContext`, adjacent), so the indices of the step limit's notes are intact when `ClmContext` reads them.
+- **Notes:** no component of the guarded path writes a user prompt part with the `[context manager]` prefix; only the library's own step limit adds notes, through `add_context_note()`.
+- **Save and restore:** the launcher never restores a session's history (an interrupted session is not redispatched; a rerun starts afresh).
+
+**The environment:** `uv.lock`'s editable guarded-clm entry is updated to 0.2.0.dev2 (one line), and `.venv-p015` is re-synced with the documented command, so the installed metadata (the `dependencies` provenance) agrees with the loaded module. No other package changed.
+
+**The caching development check `dev-cache1`** (proposed, not authorised): `configs/p015/proposed-cache-dev1-a.json` and `-b.json`, one guarded session each on docthread-dev-1, eight turns, confirm1's shared settings and guarded-clm d1d6d1d.
+- **A (original):** `"single"`, no cache point, confirm1's host caching (automatic, tool-definition and instruction breakpoints).
+- **B (recommended):** `"segmented_task_last"`, a 5-minute cache point, tool-definition and instruction breakpoints, no automatic (last-block) caching.
+- **Nothing else differs.** They are separate launches because the model configuration, which holds the cache breakpoints, is shared by every session of a contract. A runs first; B starts no sooner than 6 minutes after A's last attempt, so A's tool-definition cache entry (not session-specific) has expired.
+- The protocol is in clm-lib-test-results 015 `dev-cache1-protocol.md`.
+
+**Verification** (`tests/p015/test_request_layout.py`, 16): both configurations planned and run by the real launcher in live mode through the pinned Anthropic adapter over an in-memory transport, with a scripted provider, temporary ledgers and the network blocked.
+- **The configurations:** A and B differ only in the layout, the cache point and the automatic breakpoint; A's `clm_context()` arguments and model settings equal confirm1's guarded sessions'.
+- **Refusals:** each invalid combination is refused at planning, and a contract edited afterwards is refused before dispatch.
+- **On the wire:**
+  - A sends one user block with automatic caching;
+  - B sends the entries first, three breakpoints (the last tool, the system prompt, the last entry) and an unmarked tail holding the task and status;
+  - no request carries origin metadata.
+- **Eligible prefixes** (by the documented prefix rules; eligibility, not a hit): A only ever its tools and system prompt; B the previous request's last entry on every ordinary call and new-turn start, and only the first request's head after an accepted early edit.
+- **Turn records and edits:** the first answer appears once and protected; `t2.request` and `t2.answer` appear once; the deleted entry is gone; the refused edit of a protected record changes nothing; each turn's recorded history holds one marked rebuilt request in B and none in A.
+- **The runner in layout B:** later turns opening with `<working_context>`, `[context manager]` or `<task>` reach the request verbatim and become one protected record each. The finalize notice stays in the status, on the user's own request and on tool results. A step-limit continuation keeps the metadata and folds the limited step in once.
+- **Records:** contracts, session records, attempts and export manifests distinguish A from B; both exports verify.
+- **A check of the tests:** with the options dropped before `clm_context()`, the five wire-level tests fail.
+- **The historical configurations** (smoke-dev1/2, the comparison proposal, confirmation) stay byte-identical and pinned to 0.2.0.dev1 at cce58c1. Their tests now state that pin and its refusal against the loaded library, and plan copies migrated only as far as the loaded library requires (`harness.as_current`).

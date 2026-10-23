@@ -5,7 +5,6 @@ credentials, and no provider request is made."""
 
 from __future__ import annotations
 
-import copy
 import json
 from pathlib import Path
 from typing import Any
@@ -15,6 +14,8 @@ import pytest
 from clm_lib.p015 import launcher as L
 from clm_lib.p015.provenance import library_provenance
 from clm_lib.p015.records import read_jsonl
+
+from . import harness as h
 
 REPO = Path(__file__).resolve().parents[2]
 PROPOSED = json.loads((REPO / "configs/p015/proposed-comparison-0.2.0.dev1.json").read_text())
@@ -34,7 +35,7 @@ def loaded_pin() -> dict[str, Any]:
 
 
 def full_spec(tmp: Path, launch_id: str = "live1", **over: Any) -> dict[str, Any]:
-    spec = copy.deepcopy(PROPOSED) | {
+    spec = h.as_current(PROPOSED) | {
         "launch_id": launch_id, "instances": ["docthread-dev-1"], "questions": 1,
         "ledger": str(tmp / "ledger.json"), "ledger_ceiling_usd": 100.0, "authorisation": str(tmp / "auth.json"),
         "library": {"guarded_clm": loaded_pin()}, "task_version": "docthread-task/2",
@@ -50,15 +51,20 @@ def test_the_proposed_settings_pin_the_accepted_library_and_await_the_freeze_upd
     pin = PROPOSED["library"]["guarded_clm"]
     assert pin["version"] == "0.2.0.dev1" and pin["source_sha256"] == ACCEPTED_SOURCE
     assert (
-        pin["source_sha256"] == library_provenance()["source_sha256"]
-    )  # the library source is unchanged
+        pin["source_sha256"] == h.HISTORICAL_GUARDED_PIN["source_sha256"]
+    )  # the source confirm1 ran
     assert L.live_spec_problems(PROPOSED) == [
         "task_version is not set (one of docthread-task/1, docthread-task/2)",
         "turn_endings is not set (one of p015-turn-endings/1, p015-turn-endings/2)",
+        *h.GUARDED_REQUEST_UNSET,
         'arm_settings.paper_clm_shell.version is not set ("paper-clm-shell/1" or "paper-clm-shell/2")',
     ]
-    problems = L.library_pin_problems(PROPOSED)
-    assert all(p.startswith("library.guarded_clm.revision is ") for p in problems)
+    problems = L.library_pin_problems(
+        PROPOSED
+    )  # pinned to 0.2.0.dev1, refused against any other library
+    assert problems and {p.split(" is ")[0] for p in problems} <= {
+        f"library.guarded_clm.{k}" for k in L.LIBRARY_PIN_FIELDS
+    }
     assert PROPOSED["arm_settings"]["guarded_clm"] == {}  # no removed option
     assert "model.thinking adaptive" in PROPOSED["settings_status"]["proposed"]
 

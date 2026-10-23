@@ -30,14 +30,10 @@ from clm_lib.p015.session import GuardedSettings
 from . import harness as h
 
 REPO = Path(__file__).resolve().parents[2]
-# The accepted implementation: introduced at revision 3f18473; identified by its version and source fingerprint.
-# Later documentation-only commits move the checkout's revision without changing the source (2026-10-19: cce58c1).
+# The backstop's implementation was introduced at revision 3f18473 (0.2.0.dev1, source 51e6dbe8..., which
+# confirm1 ran at cce58c1). Later revisions keep it (2026-10-23: d1d6d1d, 0.2.0.dev2, the request layouts).
 ACCEPTED_REVISION = "3f184734362c4c9e24d7f5e2a2d6de5fa18153dd"
-ACCEPTED_SOURCE = "51e6dbe8df7669ff8265d725976260f61891b6624d9c2201c7edc83dfcf2d9e4"
-ACCEPTED = {
-    "version": "0.2.0.dev1",
-    "revision": library_provenance()["git"]["revision"],
-}  # the loaded checkout
+ACCEPTED = h.loaded_guarded_pin()  # the loaded checkout, stated as a pin
 
 
 def read_page(n: int, size: int) -> str:
@@ -110,9 +106,10 @@ def new_text_ratio(c: h.Case) -> float:
 
 
 def test_the_accepted_revision_is_loaded_and_the_option_is_gone() -> None:
+    """The loaded library descends from the backstop's revision, is clean, and has no strict_ratio_learning."""
     p = library_provenance()
     assert guarded_clm.__version__ == ACCEPTED["version"] == p["version"]
-    assert p["source_sha256"] == ACCEPTED_SOURCE and not p["git"]["package_dirty"]
+    assert p["source_sha256"] == ACCEPTED["source_sha256"] and not p["git"]["package_dirty"]
     checkout = Path(guarded_clm.__file__).resolve().parents[2]
     ancestry = subprocess.run(["git", "-C", str(checkout), "merge-base", "--is-ancestor", ACCEPTED_REVISION,
                                p["git"]["revision"]], check=False)  # fmt: skip
@@ -209,7 +206,7 @@ def test_the_superseded_configuration_is_refused(tmp_path: Path) -> None:
 
 
 def test_a_pin_that_differs_from_the_loaded_library_is_refused(tmp_path: Path) -> None:
-    pin = {**ACCEPTED, "source_sha256": library_provenance()["source_sha256"]}
+    pin = dict(ACCEPTED)
     for key, wrong in (
         ("revision", "db619a8a61eb2aebd4f127c05c9ab12f98ba8b6d"),
         ("version", "0.2.0.dev0"),
@@ -222,24 +219,27 @@ def test_a_pin_that_differs_from_the_loaded_library_is_refused(tmp_path: Path) -
 
 def test_version_revision_and_fingerprint_reach_contract_records_and_export(tmp_path: Path) -> None:
     prov = library_provenance()
-    pin = {**ACCEPTED, "source_sha256": prov["source_sha256"]}
+    pin = dict(ACCEPTED)
     contract = L.plan(scripted_spec(tmp_path, "rec1", library={"guarded_clm": pin}), tmp_path / "L")
     assert contract["library"] == {"guarded_clm": pin}
     assert contract["fingerprints"]["guarded_clm_source_sha256"] == prov["source_sha256"]
-    assert contract["fingerprints"]["dependencies"]["guarded-clm"] == "0.2.0.dev1"
+    assert (
+        contract["fingerprints"]["dependencies"]["guarded-clm"] == pin["version"]
+    )  # installed metadata agrees
     assert L.run(tmp_path / "L") == L.EXIT_OK
     run_dir = tmp_path / "L/runs/s01-docthread-dev-1-guarded_clm/r1"
     session = json.loads((run_dir / "session.json").read_text())
     recorded = session["provenance"]["guarded_clm"]
     assert (
-        recorded["version"] == "0.2.0.dev1" and recorded["git"]["revision"] == ACCEPTED["revision"]
+        recorded["version"] == pin["version"]
+        and recorded["git"]["revision"] == ACCEPTED["revision"]
     )
     assert recorded["source_sha256"] == prov["source_sha256"]
     assert "strict_ratio_learning" not in session["settings"]
     dest = export_session(run_dir, tmp_path / "export")
     assert verify_export(dest) == []
     manifest = json.loads((dest / "manifest.json").read_text())
-    assert manifest["guarded_clm"]["version"] == "0.2.0.dev1"
+    assert manifest["guarded_clm"]["version"] == pin["version"]
     assert manifest["guarded_clm"]["git"]["revision"] == ACCEPTED["revision"]
 
 

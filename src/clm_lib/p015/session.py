@@ -14,6 +14,14 @@ response stopped at `max_tokens`, `p015-truncation/1`), `provider_failure`,
 retry limit), `harness_defect` (an accounting-bound violation) and `unclassified_error` (any other exception, for
 example one raised by a framework tool that is not bridged, so the harness cannot attribute it).
 
+Request layout (`p015-request-layout/1`, 2026-10-23): `request_layout` and `cache_point` are passed to `clm_context()`
+unchanged on every turn. Their defaults are the library's (`"single"`, no cache point), so a configuration that
+doesn't state them behaves as before. `guarded_option_problems` refuses an invalid combination at planning and again
+before dispatch: an unknown layout or TTL, a cache point without a segmented layout or with caching off, or a cache
+point whose TTL breaks the provider's order (a longer TTL may not follow a shorter one). The library tells its rebuilt
+requests and runtime notes apart by `ModelRequest.metadata`; the runner passes `result.all_messages()` (or a limited
+run's captured messages) on unchanged, so that metadata survives every turn.
+
 Continuation (`p015-turn-endings/2`, 2026-10-19): after a turn that ended at the main model's step or call limit,
 `continue_after_limit()` lets the next turn start from that run's own messages (its last processed request, then the
 last step's response and tool results). guarded-clm folds that step into the working context at the next request,
@@ -25,9 +33,10 @@ from __future__ import annotations
 import dataclasses
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from guarded_clm import (
+    REQUEST_LAYOUTS,
     BudgetExceededError,
     ContextLimitError,
     ContextLimits,
@@ -84,6 +93,51 @@ def obsolete_setting_problems(guarded: dict[str, Any] | None) -> list[str]:
     ]
 
 
+REQUEST_LAYOUT_VERSION = "p015-request-layout/1"
+CACHE_TTLS = ("5m", "1h")
+_TTL_ORDER = {"5m": 0, "1h": 1}
+
+
+def guarded_option_problems(
+    guarded: dict[str, Any] | None, model: dict[str, Any] | None
+) -> list[str]:
+    """An invalid `request_layout`/`cache_point` combination, given the model's cache settings (`p015-model/1`).
+
+    The provider caches tools, then the system prompt, then messages, and a breakpoint with a longer TTL may not follow
+    one with a shorter TTL. The tool and instruction breakpoints come before the context's cache point, the automatic
+    one (on the last block) after it."""
+    g, m = guarded or {}, model or {}
+    layout, point = g.get("request_layout", "single"), g.get("cache_point")
+    out = []
+    if layout not in REQUEST_LAYOUTS:
+        out.append(
+            f"arm_settings.guarded_clm.request_layout {layout!r} is not one of {', '.join(REQUEST_LAYOUTS)}"
+        )
+    if point is None:
+        return out
+    if point not in CACHE_TTLS:
+        return [
+            *out,
+            f"arm_settings.guarded_clm.cache_point {point!r} is not one of 5m, 1h or null",
+        ]
+    if layout == "single":
+        out.append("arm_settings.guarded_clm.cache_point needs a segmented request_layout")
+    ttl = m.get("cache_ttl", "5m")
+    if ttl is None:
+        out.append(
+            "arm_settings.guarded_clm.cache_point is set but model.cache_ttl is null (caching off)"
+        )
+        return out
+    breakpoints = set(m.get("cache_breakpoints", ("automatic", "tool_definitions", "instructions")))
+    if breakpoints & {"tool_definitions", "instructions"} and _TTL_ORDER[ttl] < _TTL_ORDER[point]:
+        out.append(f"arm_settings.guarded_clm.cache_point {point} follows {ttl} tool or instruction breakpoints; "
+                   "a longer TTL may not follow a shorter one")  # fmt: skip
+    if "automatic" in breakpoints and _TTL_ORDER[ttl] > _TTL_ORDER[point]:
+        out.append(f"the automatic {ttl} breakpoint follows arm_settings.guarded_clm.cache_point {point}; "
+                   "a longer TTL may not follow a shorter one")  # fmt: skip
+    return out
+
+
 @dataclasses.dataclass(frozen=True)
 class GuardedSettings:
     """`clm_context()`'s arguments. The defaults are the library's. `strict_ratio_learning` was removed with
@@ -99,6 +153,10 @@ class GuardedSettings:
     max_entries: int = 200
     max_body_chars: int = 24_000
     max_total_chars: int = 120_000
+    request_layout: Literal["single", "segmented", "segmented_task_last"] = (
+        "single"  # the library's default
+    )
+    cache_point: Literal["5m", "1h"] | None = None  # see guarded_option_problems
 
     @property
     def cap(self) -> int:
@@ -118,6 +176,8 @@ class GuardedSettings:
                 max_total_chars=self.max_total_chars,
             ),
             on_record=on_record,
+            request_layout=self.request_layout,
+            cache_point=self.cache_point,
         )
 
 
@@ -215,6 +275,7 @@ class GuardedSession:
         self.recorder.write_meta(
             settings=dataclasses.asdict(self.settings),
             call_cap=self.settings.cap,
+            model_settings=dict(model_settings or {}),
             mode=mode,
             conversation_id=conversation_id,
             model={"system": model.system, "model_name": model.model_name},

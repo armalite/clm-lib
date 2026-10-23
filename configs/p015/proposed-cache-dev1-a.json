@@ -1,0 +1,56 @@
+{
+ "note": "PROPOSED, NOT AUTHORISED, NOT RUN (2026-10-23). Programme 015 guarded-clm caching development check, configuration A (original) of two (A runs first, then B, no sooner than 6 minutes after A's last attempt): one guarded_clm session, eight turns, docthread-dev-1, with confirm1's shared settings and guarded-clm 0.2.0.dev2 (d1d6d1d). A and B differ only in the request layout, the context cache point and the message-level cache breakpoint. A development check of the complete configurations, not a comparison of their parts. Running it needs the maintainer's explicit authorisation and an authorisation file. Protocol: clm-lib-test-results experiments/015-public-clm-comparison/dev-cache1-protocol.md.",
+ "launch_id": "dev-cache1-a",
+ "experiment": "015",
+ "mode": "live",
+ "instances": [
+  "docthread-dev-1"
+ ],
+ "arms": [
+  "guarded_clm"
+ ],
+ "questions": 8,
+ "ledger": "runs/ledger.json",
+ "authorisation": "runs/p015-dev-cache1-a-authorisation.json",
+ "library": {
+  "guarded_clm": {
+   "version": "0.2.0.dev2",
+   "revision": "d1d6d1dd6040b526c50b491979771b75abe3d19e",
+   "source_sha256": "5da9751503c8fab143ba5400e9e416422404fce868554c68f7f3c8a531823f07"
+  }
+ },
+ "model": {
+  "model": "claude-sonnet-5",
+  "thinking": "adaptive",
+  "effort": "high",
+  "max_tokens": 8192,
+  "cache_ttl": "5m",
+  "cache_breakpoints": [
+   "automatic",
+   "tool_definitions",
+   "instructions"
+  ],
+  "max_retries": 2,
+  "timeout_s": 600.0,
+  "session_tag": true
+ },
+ "retry_policy": "p015-retry/1",
+ "task_version": "docthread-task/2",
+ "turn_endings": "p015-turn-endings/1",
+ "arm_settings": {
+  "guarded_clm": {
+   "budget_tokens": 32000,
+   "max_steps": 60,
+   "call_cap": 144,
+   "request_layout": "single",
+   "cache_point": null
+  }
+ },
+ "settings_status": {
+  "chosen": [
+   "configuration A, the original: request_layout single, no context cache point, and confirm1's host caching (automatic, tool-definition and instruction breakpoints)",
+   "shared confirm1 settings: claude-sonnet-5, adaptive thinking, effort high, max_tokens 8192, 5-minute caching, at most 2 retries per logical call; budget 32,000, 60 steps, 144 calls per turn; docthread-task/2; p015-turn-endings/1; p015-truncation/1; guarded-clm 0.2.0.dev2 at d1d6d1d (source 5da97515...)"
+  ],
+  "authorisation": "not given"
+ }
+}

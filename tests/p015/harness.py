@@ -514,3 +514,52 @@ CASES: dict[str, Case] = {
         Case("provider_failure", _provider_failure, ["Go."]),
     ]
 }
+
+
+# ---------------------------------------------------------------------- historical configurations and the loaded library
+
+# The guarded-clm that the historical configurations (smoke-dev1/2, the comparison proposal, confirm1) pin and ran.
+HISTORICAL_GUARDED_PIN = {
+    "version": "0.2.0.dev1",
+    "revision": "cce58c1f2aa27b247ddb451fb16e6f84b92ba2ad",
+    "source_sha256": "51e6dbe8df7669ff8265d725976260f61891b6624d9c2201c7edc83dfcf2d9e4",
+}
+# What a live plan from before p015-request-layout/1 now leaves unstated (it ran the library defaults).
+GUARDED_REQUEST_UNSET = [
+    'arm_settings.guarded_clm.request_layout is not set ("single", "segmented" or "segmented_task_last")',
+    'arm_settings.guarded_clm.cache_point is not set ("5m", "1h", or null for no context cache point)',
+]
+
+
+def loaded_guarded_pin() -> dict[str, Any]:
+    from clm_lib.p015.provenance import library_provenance
+
+    p = library_provenance()
+    return {
+        "version": p["version"],
+        "revision": p["git"]["revision"],
+        "source_sha256": p["source_sha256"],
+    }
+
+
+def pin_problems_against_loaded(pin: dict[str, Any]) -> list[str]:
+    """What the launcher reports for a spec pinned to `pin` while the loaded library differs."""
+    from clm_lib.p015 import launcher as L
+
+    return L.library_pin_problems({"library": {"guarded_clm": pin}})
+
+
+def as_current(spec: dict[str, Any]) -> dict[str, Any]:
+    """A copy of a historical spec migrated only as far as planning it with the loaded library requires: the loaded
+    guarded-clm pin and, for the guarded arm, the request options it ran (the library defaults) stated explicitly.
+    The configuration files themselves are never changed; this is for testing the planning mechanics."""
+    import copy
+
+    out = copy.deepcopy(spec)
+    if "library" in out:
+        out["library"] = {**out["library"], "guarded_clm": loaded_guarded_pin()}
+    if "guarded_clm" in out.get("arms", ["guarded_clm"]):
+        guarded = out.setdefault("arm_settings", {}).setdefault("guarded_clm", {})
+        guarded.setdefault("request_layout", "single")
+        guarded.setdefault("cache_point", None)
+    return out

@@ -95,9 +95,11 @@ from .provenance import library_provenance, tree_fingerprint, versions
 from .records import read_jsonl
 from .session import (
     CONTINUABLE_ENDINGS,
+    REQUEST_LAYOUT_VERSION,
     ContinuationUnsupported,
     GuardedSession,
     GuardedSettings,
+    guarded_option_problems,
     obsolete_setting_problems,
 )
 from .spend import SPEND_VERSION, SpendGate
@@ -136,6 +138,11 @@ LIVE_MODEL_FIELDS = {
 }
 # A live plan names the guarded-clm implementation it was made for; plan() checks it against what is loaded.
 LIBRARY_PIN_FIELDS = ("version", "revision", "source_sha256")
+# guarded-clm's request layout and context cache point (p015-request-layout/1): a live plan states both.
+GUARDED_LIVE_FIELDS = {
+    "request_layout": '"single", "segmented" or "segmented_task_last"',
+    "cache_point": '"5m", "1h", or null for no context cache point',
+}
 
 
 def library_pin_problems(spec: dict[str, Any]) -> list[str]:
@@ -192,6 +199,10 @@ def live_spec_problems(spec: dict[str, Any]) -> list[str]:
         for key in LIBRARY_PIN_FIELDS:
             if not pin.get(key):
                 out.append(f"library.guarded_clm.{key} is not set (the accepted guarded-clm {key})")
+        guarded = settings.get("guarded_clm", {})
+        for key, allowed in GUARDED_LIVE_FIELDS.items():
+            if key not in guarded:
+                out.append(f"arm_settings.guarded_clm.{key} is not set ({allowed})")
     if "paper_clm_shell" in arms:
         paper = settings.get("paper_clm_shell", {})
         for key, allowed in (
@@ -306,6 +317,14 @@ def plan(spec: dict[str, Any], launch_dir: Path) -> dict[str, Any]:
             "the spec uses settings that no longer exist; nothing was written. Migrate it:\n- "
             + "\n- ".join(obsolete)
         )
+    arms = list(spec.get("arms", ARMS))
+    if "guarded_clm" in arms:
+        invalid = guarded_option_problems(
+            (spec.get("arm_settings") or {}).get("guarded_clm"), spec.get("model")
+        )
+        if invalid:
+            raise ValueError("the guarded-clm request options are invalid; nothing was written:\n- "
+                             + "\n- ".join(invalid))  # fmt: skip
     pin = library_pin_problems(spec)
     if pin:
         raise ValueError("the spec's guarded-clm pin does not match the loaded library; nothing was written:\n- "
@@ -362,6 +381,7 @@ def plan(spec: dict[str, Any], launch_dir: Path) -> dict[str, Any]:
         "turn_endings": spec.get("turn_endings", TURN_ENDINGS_V1),
         "truncation": TRUNCATION_VERSION,
         "paper_rules": spec.get("paper_rules", PAPER_RULES_IMPLEMENTED),
+        **({"guarded_request": resolved_request(spec)} if "guarded_clm" in arms else {}),
         "library": spec.get(
             "library"
         ),  # the stated guarded-clm pin, if any (required for live plans)
@@ -394,6 +414,13 @@ def plan(spec: dict[str, Any], launch_dir: Path) -> dict[str, Any]:
     return contract
 
 
+def resolved_request(spec: dict[str, Any]) -> dict[str, Any]:
+    """The guarded arm's request options as they will run (the stated values, or the library's defaults)."""
+    settings = GuardedSettings(**((spec.get("arm_settings") or {}).get("guarded_clm") or {}))
+    return {"version": REQUEST_LAYOUT_VERSION, "request_layout": settings.request_layout,
+            "cache_point": settings.cache_point}  # fmt: skip
+
+
 def contract_problems(launch_dir: Path) -> list[str]:
     out = []
     text = (launch_dir / "contract.json").read_text(encoding="utf-8")
@@ -402,6 +429,10 @@ def contract_problems(launch_dir: Path) -> list[str]:
         out.append("contract.json does not match its recorded digest")
     contract = json.loads(text)
     out += obsolete_setting_problems((contract.get("arm_settings") or {}).get("guarded_clm"))
+    if any(s["arm"] == "guarded_clm" for s in contract.get("sessions", [])):
+        out += guarded_option_problems(
+            (contract.get("arm_settings") or {}).get("guarded_clm"), contract.get("model")
+        )
     out += version_problems({**contract, "arms": [s["arm"] for s in contract.get("sessions", [])]})
     body = {k: v for k, v in contract.items() if k != "fingerprints"}
     now = fingerprints(body)

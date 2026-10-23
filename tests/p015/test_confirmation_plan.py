@@ -4,7 +4,6 @@ planned into a temporary directory; no fixture is generated and nothing is run. 
 
 from __future__ import annotations
 
-import copy
 import json
 from pathlib import Path
 from typing import Any
@@ -15,13 +14,22 @@ from clm_lib.budget import Ledger
 from clm_lib.p015 import launcher as L
 from clm_lib.p015.paper.capability import PaperSettings
 
+from . import harness as h
+
 REPO = Path(__file__).resolve().parents[2]
 CONFIRM = json.loads((REPO / "configs/p015/proposed-confirmation.json").read_text())
 SMOKE = json.loads((REPO / "configs/p015/smoke-dev2.json").read_text())
 
 
 def test_the_confirmation_spec_is_complete_and_pinned() -> None:
-    assert L.live_spec_problems(CONFIRM) == [] and L.library_pin_problems(CONFIRM) == []
+    """confirm1 ran with guarded-clm 0.2.0.dev1 and the library's default request layout. The file is kept as it
+    ran: it pins that library, so the launcher refuses it against any other, and it predates the explicit request
+    options that new live plans state."""
+    assert CONFIRM["library"]["guarded_clm"] == h.HISTORICAL_GUARDED_PIN
+    assert L.live_spec_problems(CONFIRM) == h.GUARDED_REQUEST_UNSET
+    assert L.library_pin_problems(CONFIRM) == h.pin_problems_against_loaded(
+        h.HISTORICAL_GUARDED_PIN
+    )
     assert L.version_problems(CONFIRM) == []
     assert (CONFIRM["task_version"], CONFIRM["turn_endings"]) == (
         "docthread-task/2",
@@ -74,8 +82,8 @@ def test_it_plans_18_balanced_sessions_without_generating_a_fixture(
     Ledger.open(
         tmp_path / "ledger.json", 100.0
     )  # a temporary ledger; the active one is never touched
-    spec = copy.deepcopy(CONFIRM) | {"ledger": str(tmp_path / "ledger.json"),
-                                     "authorisation": str(tmp_path / "missing.json")}  # fmt: skip
+    spec = h.as_current(CONFIRM) | {"ledger": str(tmp_path / "ledger.json"),
+                                    "authorisation": str(tmp_path / "missing.json")}  # fmt: skip
     contract = L.plan(spec, tmp_path / "L")
     assert len(contract["sessions"]) == 18
     order = [(s["instance"], s["arm"]) for s in contract["sessions"]]

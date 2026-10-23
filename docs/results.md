@@ -112,6 +112,14 @@ Verification: `ruff check`, `ruff format --check` and `mypy src` are clean; **56
 
 Live phases: **still not run**. `ANTHROPIC_API_KEY` is still unset in the agent process (`doctor`). Live spend $0.00; cumulative $0.00 of $10.00.
 
+## Programme 015 guarded-clm request layouts and the `dev-cache1` preparation (2026-10-23, offline)
+
+**What:** the guarded arm now passes guarded-clm 0.2.0.dev2's `request_layout` and `cache_point` (SPEC §41), and two proposed configurations prepare a two-session development check on docthread-dev-1: A, the original (one block, automatic caching); B, the library's recommendation (`segmented_task_last`, a 5-minute context cache point, tool and instruction breakpoints only).
+
+**Offline verification:** both configurations are planned and run by the real launcher through the pinned Anthropic adapter over an in-memory transport, with the network blocked (`tests/p015/test_request_layout.py`). The options reach every request, invalid combinations are refused before dispatch, turn records, edits and runtime notes behave as specified, and the records distinguish the configurations. Under the documented prefix rules, B's previous context marker is eligible on ordinary calls and new-turn starts; A's only eligible prefix is its tools and system prompt. **That is eligibility, not a measured cache hit.** Checks: the main suite 349 passed, the p015 suite 315 passed, ruff and mypy clean.
+
+**Not run:** no provider call, spend or authorisation. The protocol, readiness and analysis script are in clm-lib-test-results `experiments/015-public-clm-comparison/dev-cache1-*`.
+
 ## Programme 015 prompt-caching review (2026-10-22, offline)
 
 **The method:** the confirm1 (guarded-clm, summary) and supp-tools1 (`paper-clm-tools/2`) requests were reconstructed through the pinned adapter and checked against the recorded cache usage.

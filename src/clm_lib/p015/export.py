@@ -61,6 +61,16 @@ def summarise(run_dir: Path) -> dict[str, Any]:
         "trace_records": _count(r["type"] for r in read_jsonl(run_dir / "trace.jsonl")),
         "tool_events": _count(r["event"] for r in read_jsonl(run_dir / "tools.jsonl")),
     }
+    settings = session.get("settings") or {}
+    if (
+        "request_layout" in settings
+    ):  # guarded sessions recorded with p015-request-layout/1; earlier ones unchanged
+        out["guarded_request"] = {
+            "request_layout": settings["request_layout"],
+            "cache_point": settings.get("cache_point"),
+            "cache_settings": {k: v for k, v in sorted((session.get("model_settings") or {}).items())
+                               if k.startswith("anthropic_cache")},
+        }  # fmt: skip
     if "arm" in session:  # absent from guarded-clm sessions, whose manifests are unchanged
         out["arm"] = session["arm"]
         out["attempts"]["by_category"] = _count(a.get("category", "main") for a in finished)
