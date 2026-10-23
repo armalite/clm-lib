@@ -112,6 +112,19 @@ Verification: `ruff check`, `ruff format --check` and `mypy src` are clean; **56
 
 Live phases: **still not run**. `ANTHROPIC_API_KEY` is still unset in the agent process (`doctor`). Live spend $0.00; cumulative $0.00 of $10.00.
 
+## Programme 015 supplemental evaluation `supp-cache1` of guarded-clm's recommended caching configuration (2026-10-23, live)
+
+**What ran:** one pre-registered guarded session on each of confirm1's six frozen instances, in dev-cache1 B's configuration exactly (guarded-clm 0.2.0.dev2 at d1d6d1d, `segmented_task_last`, a 5-minute context cache point, tool and instruction breakpoints only). Sessions ran one at a time, about 395 s apart. It is supplemental: the instances were used before, and confirm1's guarded-clm and summary results are reused baselines, not contemporaneous ones.
+
+**The result:**
+- **Completion and scores:** all six completed 8/8 turns, 60/60, against confirm1's guarded-clm 58 and summary 59.
+- **Failures:** no provider error, retry, defect, limit ending or rejected edit.
+- **Reuse:** all 122 ordinary calls and all 42 new-turn starts read the previous request's cached context. The prospective boundary check matched 199 of 200 attempts exactly, with one consistent fallback and no mismatch. No session read a prefix from another.
+- **Cost:** US$3.251979, against guarded-clm's US$6.40432 (−49%, cheaper on every instance) and the summary arm's US$2.959886 (+10%). The new sessions did more work: 17% more attempts and 25% more input than confirm1's guarded sessions. Billed as the original configuration bills, their input would have cost an estimated US$7.12 instead of US$2.30.
+- **The default:** the protocol's criteria for supporting guarded-clm's planned default change are met, within the stated limits (one model and workload, reused instances, combined changes). The decision is the maintainer's.
+
+**Spend:** US$3.251979 of a US$10 block, all confirmed; the ledger is at US$112.813033 of US$131.657076, programme 015 at US$24.713287. **Details:** clm-lib-test-results `experiments/015-public-clm-comparison/supp-cache1-record.md`.
+
 ## Programme 015 `dev-cache1`: guarded-clm's original and recommended caching configurations (2026-10-23, live)
 
 **What ran:** one guarded session per configuration on docthread-dev-1, eight turns each, guarded-clm 0.2.0.dev2 at d1d6d1d, clm-lib 8fcec77. A is the original (one request block, automatic caching); B the recommendation (`segmented_task_last`, a 5-minute context cache point, tool and instruction breakpoints only). B started 397 s after A's last attempt.
